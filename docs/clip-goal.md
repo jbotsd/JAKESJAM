@@ -521,6 +521,258 @@ frame budget untouched). Re-taped: frame 0 now opens on both duelists
 fully formed mid-fight; probe ALL PASS 8/8. RETIRED: C1. REGRESSED:
 none. NEW: none outstanding.
 
+**STUDY 3 (2026-07-27)** — batch footage-study of ALL 12 clips rendered
+2026-07-27 (`server/.clips/{e2314eee,181fee23,909e0a8a,8c92b0b0,4245f13a,
+d97dcb8c,e8bd644d,41971b84,0e21238e,80ea1663,5652baba,3e6a056c}*.mp4`), each
+probed/2fps-read/burst-verified independently. Counts: **0 clean** (every
+clip carries at least one indexed defect), **REGRESSED across 8 of 9
+pillars** (CL.A/B/C/D/E/F/G + the never-closed CL.A nameplate-collision
+note), **4 NEW cross-clip defects indexed (D1–D4, plus D5–D8 minor/
+one-off)**, **1 still-open item finally reproduced on tape** (nameplate
+collision), **B1/faststart/C1 hold RETIRED**. One clip (`41971b84`) shipped
+with an empty per-clip report (probe/leadSentence/defects all placeholder)
+— back-filled here via direct ffprobe since the file exists on disk; flagged
+as a DATA-GAP for the study process, not a footage defect.
+
+**THE STRUCTURAL FINDING — this batch is two different clip populations,
+only one of which the CL.0–CL.G sprint ever touched.** Five of the twelve
+files (`181fee23`, `d97dcb8c`, `5652baba`, `3e6a056c`, `41971b84`) carry a
+`<id>.dims.json` sidecar next to the mp4. `server/src/clipStore.ts:318-329`
+writes that sidecar ONLY when the upload's multipart form includes
+`width`/`height` fields — and the only call site that appends those fields
+is `client/src/game/highlights/ClipRecorder.ts:495-498`, the **opt-in,
+client-side, consent-gated "record my own gameplay" recorder**
+(`clipConsent.ts`), a genuinely different feature from
+`matchHost → clipRenderQueue.ts → ReplayScene` offline render that every
+CL.0–CL.G pillar was built and verified against (`ReplayScene.ts:826`
+uploads with no width/height fields — no sidecar, ever). ClipRecorder.ts
+was never in scope of this goal doc, was never touched by any CL pillar,
+and captures the live spectator canvas (full HUD, whatever fps Chromium's
+software H.264 sustains, `--mute-audio` inherited from its own older
+capture assumptions). That is why these 5 files individually reproduce
+nearly the ENTIRE original B1–B11 signature at once — not because CL.A–G
+regressed, but because this population was never fixed in the first place
+and nobody had separated the two clip sources until this study cross-
+referenced `.dims.json` presence against the code. **Action needed in the
+next /goal: either extend CL.0–CL.G's pillars to cover ClipRecorder.ts
+explicitly, or mark it formally out-of-scope in this doc's Constraints
+section** — right now a stranger who lands on a share page has no way to
+know which of the two experiences they're about to get, and 5/12 of
+today's output is the bad one.
+
+RETIRED (holds, confirmed on the other 7 clips — `e2314eee`, `909e0a8a`,
+`8c92b0b0`, `4245f13a`, `e8bd644d`, `0e21238e`, `80ea1663` — all produced
+via the real clipRenderQueue/ReplayScene path, no `.dims.json`): **B1**
+(1920×1080 exact on all 7); **faststart** (moov-before-mdat on all 12,
+including the 5 ClipRecorder.ts files — the one thing that never broke
+anywhere); **C1** (no opening noodle-rig/rig-streak on any of the 7 render-
+path clips).
+
+REGRESSED, in the 5 ClipRecorder.ts-path clips only (functionally the exact
+pre-sprint experience, though the fixed pipeline itself is untouched):
+- **B1** resolution — `41971b84` alone: 1824×1026 (ffprobe this session:
+  `width=1824,height=1026`), matching the original shrunken-viewport
+  failure mode exactly.
+- **B2** fps/duration/metadata — all 5: `181fee23` 194f/9.9775s=19.44fps
+  (nominal 57600/1); `d97dcb8c` 222f/9.987s≈22.2fps (57600/1); `5652baba`
+  247f/11.638s=21.22fps (57600/1); `3e6a056c` 194f/10.008s≈19.39fps
+  (57600/1); `41971b84` 197f/9.926s≈19.84fps (nominal 161/6, this session's
+  ffprobe) — every one worse than or matching the original 21.6fps.
+- **B3** zero audio streams — all 5, confirmed via ffprobe `-select_streams
+  a` returning empty (`41971b84` confirmed this session).
+- **B4** bitrate over the 9Mbps CL.0 ceiling — `181fee23` 9.35Mbps,
+  `5652baba` 9.10Mbps (probe-clip.ts FAIL), `3e6a056c` ≈9.75Mbps,
+  `41971b84` 9.92Mbps (this session); `d97dcb8c` 8.47Mbps is the one PASS.
+- **B6** static camera, no punch-in, kills off-frame/edge-clipped —
+  `181fee23` (burstA-25/35 vs burstB-16/24, identical zoom across two
+  kills), `d97dcb8c` (burst-open vs burst-hs1 vs burst-end, star drifts to
+  the far-right wall, never reframed), `5652baba` (burst-open/b-01 vs
+  burst-kill/b-10 vs burst-roster/b-15, ~9s unchanged framing),
+  `3e6a056c` (burst-open/b-01..b-40, no zoom/scale change across the kill
+  moment, action pushed toward the clipped right edge).
+- **B7** full spectator chrome (roster, hotbar, round timer, dev latency
+  badge) baked into every frame — `181fee23` (f-01..f-20, crop-roster-f14),
+  `d97dcb8c` (f-01..f-20, badge 146ms→164ms), `5652baba` (f-01..f-23,
+  badge 141ms→231ms), `3e6a056c` (f-01/f-19-20, badge 231ms→156ms).
+- **B8/B9** duplicate/ghosting banners and damage text — `181fee23`
+  (MULTI KILL fires twice ~1s apart, burstA-20/30 vs burstB-24, each
+  instance also drifting/fading/right-edge-clipped); `d97dcb8c` and
+  `5652baba` both show a translucent DOUBLE-KILL ghost bleeding through
+  under a fresh TRIPLE-KILL/MULTI-KILL banner (both at burst-open/b-10 and
+  b-15); `3e6a056c` shows ≥4 stacked "14 HEADSHOT"/"3 HEADSHOT" copies
+  smeared together from frame 0 (burst-frame0/b-01, burst-open/b-01..
+  b-06) — a worse recurrence than the original single duplicate pair.
+- **B10** illegible damage numbers — `d97dcb8c` (burst-hs1/b-32, b-36),
+  `5652baba` (burst-open/b-01, burst-kill/b-01).
+- **B11** no watermark/lower-third — `181fee23`, `d97dcb8c`, `3e6a056c`
+  all confirmed absent across every sampled frame.
+- **B5-sibling (no resolution beat at all, worse than the original "wrong
+  banner" ending)** — all 4 non-placeholder ClipRecorder.ts clips end on
+  raw mid-fight dead air with zero banner/fade/hold: `181fee23`
+  (f-23/burst-end/b-01, FIGHT 0:40, no conclusion), `d97dcb8c`
+  (burst-end/b-21, fresh hit mid-flight, no kill), `5652baba`
+  (f-23/burst-end/b-01, ordinary mid-fight pose), `3e6a056c`
+  (burst-end/b-19, HP 17/100, mid-hit, hard cut in the red).
+
+REGRESSED, found this session in the OTHER 7 (real render-path) clips —
+these are genuine CL.C/D/E/G gaps the sprint's own tests didn't catch,
+not ClipRecorder.ts noise:
+- **CL.E** (camera relationship-framing/punch-in/slow-mo) fails to fire in
+  6 of the 7 render-path clips: `e2314eee` (f-01..f-08, zero camera
+  reaction across the whole 4.02s), `4245f13a` (openburst-01 through
+  endburst-18, pixel-static scale/position start to end), `e8bd644d`
+  (even-07 vs even-20 identical composition + diffviz.png pixel-diff
+  showing only codec noise), `8c92b0b0` (burst-25/30/35 — the camera
+  actively ZOOMS OUT to isolate the star alone at the exact kill moment,
+  the opposite of the shipped punch-in doctrine), `0e21238e` (f-05/f-14/
+  f-20/f-24 — identical zoom/composition throughout). `909e0a8a`'s follow-
+  cam itself still moves smoothly (burstA-01..40) but has nothing valid to
+  key off (see D1) so the punch-in system never triggers.
+- **CL.C** (trim/window law: IN ~1.5s before first cluster kill, OUT ~2s
+  after last, never a foreign-banner ending) violated in its "misses the
+  kill" direction: `80ea1663`'s entire render window sits AFTER the
+  credited double-kill already happened — audio is total digital silence
+  for seconds 0-3 exactly where the kill should be (per-second astats:
+  sec0-1/1-2/2-3 = -91.0dB mean&max) and the clip is pure aftermath;
+  `0e21238e`'s lower-third doesn't appear until ~t=6.8s of a 12.52s clip
+  with no interim escalation state, i.e. the window's approach lead-in is
+  ~6.8s instead of the ~1.5s the law specifies (burst1/b-026 vs b-031).
+- **CL.D** lower-third exit-before-out-point violated: `909e0a8a`'s
+  "SHADY_BASS_MAN — DOUBLE KILL" is still full-opacity on the literal last
+  video frame per ffprobe pts (burstB-24.png, pts_time=4.1667s of
+  4.2200s duration) — explicit regression against CL.D.2's stated fade-
+  before-outpoint behavior; `80ea1663`'s "VVOC / DOUBLE KILL" rides all
+  the way to the hard cut with no exit cue at all (burst-end-40).
+- **CL.G** (weapon-hot stance / muzzle beat, fixes the AFK look) fails to
+  hold across the credited action in 4 of 7: `e2314eee` (one frozen
+  crouch pose the entire 4s, startburst-01 vs endburst-21), `909e0a8a`
+  (plain walk-cycle throughout, never enters combat stance — f-01/f-04/
+  f-08/burstA-13/burstB-11), `8c92b0b0` ("reads AFK for most of the
+  runtime" — f-11..f-16, idle for ~9 of 12.5s including the nominal
+  double-kill window), `e8bd644d` (idle landing-recovery hold the whole
+  clip, even-14..even-24, never weapon-hot).
+- **CL.B (kill-audio sync sub-check, CL.B.1)** — separate from the B3
+  zero-stream regression above: `0e21238e`'s track is present and non-
+  silent throughout but shows NO loudness spike anywhere near the banner's
+  ~t=6.8s entrance (flat -34.8..-35.3dB across three ~4s thirds) — no
+  audible kill SFX at all, failing the ±150ms-of-kill-frame sync
+  requirement CL.B.1 pinned.
+- **STILL-OPEN, not actually retired despite CL.A/CL.D/CL.F all closing**:
+  the adjacent-bot-nameplate-collision defect CL.A's ledger entry noted
+  in passing ("Noted for CL.D/F: adjacent bot nameplates collide/
+  overlap") 2026-07-17 but no pillar ever assigned it a test — it
+  reproduces on tape for the first time this session: `0e21238e`
+  (burst-open/o-001.png, t≈0.03s, VVOC/BOT·PISTON nameplates garbled
+  together). Recommend a real CL-numbered pillar next /goal instead of a
+  parenthetical.
+
+NEW (this session, indexed D1–D8, continuing the B→C→D per-study letter
+convention):
+
+- **D1 — the credited kill has no visual corroboration ("invisible kill"),
+  100% of the 7 render-path clips.** The lower-third/banner announces a
+  kill, double-kill, or multi-kill and the footage shows no shot, no
+  death-pop, no damage number, and often no victim in frame at all: proof
+  is one clip per line below —
+  `e2314eee` (openburst-01/burst-21/endburst-18 — victim off-frame or
+  half-cropped the entire runtime, zero VFX);
+  `909e0a8a` (f-01..f-08 — only bystander VVOC on screen, never engages);
+  `8c92b0b0` (burst-35..burst-50 — camera isolates the star alone at the
+  claimed kill moment);
+  `4245f13a` (openburst-01 vs endburst-18 — both actors alive/full-HP at
+  both bookends of "THE KILL");
+  `e8bd644d` (even-07/even-20/even-24 — two actors standing side by side,
+  no exchange, ever);
+  `0e21238e` (f-14 vs f-15 — banner appears mid-idle-traversal with no
+  kill event visible before or after);
+  `80ea1663` (burst-open through burst-kill — zero combat in the entire
+  visible window; kill happened pre-IN, see CL.C above).
+  This is the single most damaging finding of the batch — it fails the
+  goal's own North Star ("a stranger... understands what happened") in
+  every clip that isn't ClipRecorder.ts noise. Plausible shared root
+  cause: CL.C's window computation and/or CL.E's victim-anchor resolve
+  against a kill/follow entity that doesn't match what's actually
+  rendered as the followed "star" — see D3, likely the same underlying
+  followId/kill-credit mismatch.
+- **D2 — HARD RULE FLAG: hexagram-in-ring renders on in-world spawn/
+  landing markers, 2 of 12 clips, explicit prohibited pattern.**
+  `4245f13a` (ring-crop-1.png, ring-crop-2.png — gold ring with an
+  inscribed six-pointed hexagram, near-constant frame t=0 through end) and
+  `e8bd644d` (ringzoom-left.png, ringzoom-right.png — same asset under
+  BOTH characters, on screen ~t=0.3s to past t=3.9s of a 4.02s clip) both
+  show the exact two-overlapping-triangles pattern the standing house rule
+  prohibits in any Jake visual ("no triangle-in-rings/eye-at-center/
+  hexagram reads... tender subject"). Two more clips show the same gold-
+  ring FAMILY asset without the hexagram inscribed (`e2314eee` — plain
+  ring under the platform; `80ea1663` — plain ring under the star's feet,
+  screen/character-anchored) — worth checking whether the asset is
+  randomized/version-drifted, since ring-alone and ring+hexagram both
+  shipped in the same 12-clip batch. **This needs an asset audit ahead of
+  its normal art-nits queue position per the standing rule — not a
+  synthesis-pass afterthought.**
+- **D3 — in-world nameplate ≠ lower-third identity for the same player,
+  code-confirmed, 4 of 12 clips.** `client/src/game/scenes/
+  ReplayScene.ts:428` — `renderState()`'s rig-name assignment reads
+  `name: isBotId(pid) ? botLabel(pid) : pid.slice(-4)`: bots get their
+  real label, but humans get a raw 4-character player-ID fragment (e.g.
+  "VVOC") instead of their callsign, while the lower-third correctly
+  resolves the SAME player's real name via `players.find(p => p.playerId
+  === this.followId)?.name` (confirmed present in the codebase this
+  session, unchanged since 2026-07-10, `82b13c73`/`5d1947fa` — i.e. this
+  bug predates and was never touched by the entire CL.0-G sprint).
+  Reproduces in `e2314eee` (f-04..f-08, VVOC nameplate + SHADY_BASS_MAN
+  lower-third same frame), `909e0a8a` (f-01..f-08), `8c92b0b0` (f-17/f-24,
+  code-cited), `0e21238e` (f-16/f-20, code-cited again). One-line fix:
+  resolve the human's real name the same way the lower-third does.
+- **D4 — see "THE STRUCTURAL FINDING" above** (dual clip-origin
+  population via ClipRecorder.ts, 5 of 12 clips).
+- **D5 — attention-misdirecting reticle on an inert bystander**,
+  `80ea1663` only: a targeting reticle draws around BOT·PISTON (f-14
+  through f-18) mid-clip even though that bot never moves, fires, or dies
+  — a "look here" cue pointing at a dead end.
+- **D6 — world geometry bleeds through always-on-top HUD**, `181fee23`
+  only: a scrolling wood-plank platform texture renders directly over the
+  "GEO BOT · BOLT" roster row for ~t=5.0-5.8s (crop-roster-A30/A35 vs the
+  clean f-01 baseline) — a HUD/world layering or camera-partition bug,
+  distinct from (and in addition to) B7's baked-in-chrome regression on
+  the same clip.
+- **D7 — probe-clip.ts motion-check methodology gap**: `e8bd644d`'s
+  motion check (0 byte-identical consecutive sampled frames) PASSES even
+  though the visible action is perceptually static for 3+ of 4.02s — a
+  direct pixel-diff (even-14.png vs even-24.png, diffviz.png) confirms the
+  only variance is sub-visible H.264 quantization noise. The dropped-frame
+  check and the "nothing is actually happening" check are different
+  failure modes and CL.0 only covers the first; flag for the verifier's
+  own next hardening pass rather than filing as a footage defect.
+- **D8 — tentative, unconfirmed** — `5652baba`'s frame 0 shows two thin
+  vertical antenna-like limb lines on BOT·PISTON (burst-frame0/b-01),
+  visually similar to the pre-C1 noodle-rig opening artifact. Likely NOT
+  an actual C1 regression: `5652baba` is a ClipRecorder.ts-path clip (D4)
+  and C1's fix (20 uncaptured warm-up render passes) was applied only
+  inside ReplayScene's render-mode path, which this clip never runs
+  through — more likely this is either an unrelated charge/telegraph VFX
+  or evidence ClipRecorder.ts has its own, never-fixed version of the same
+  spring-convergence issue. Needs direct pixel confirmation before
+  indexing further.
+
+**Baseline/pillar map for this study:** B1 → RETIRED (7/7 render-path) /
+REGRESSED (1/5 ClipRecorder.ts). B2/B4/faststart → RETIRED (render-path) /
+REGRESSED (ClipRecorder.ts, all 5). B3 → REGRESSED both populations (zero-
+stream in ClipRecorder.ts; silent-despite-present-stream in `e2314eee`;
+sync-miss in `0e21238e`). B5 → sibling regression (no-resolution ending,
+ClipRecorder.ts) + CL.C window-miss regression (`80ea1663`, `0e21238e`,
+render-path). B6 → REGRESSED (ClipRecorder.ts) folding into the CL.E
+regression (render-path, worse: opposite-direction zoom-out in
+`8c92b0b0`). B7/B11 → REGRESSED, ClipRecorder.ts only. B8/B9/B10 →
+REGRESSED, ClipRecorder.ts only (render-path shows zero-feedback instead,
+filed under D1). C1 → RETIRED (render-path); D8 flags an unconfirmed
+ClipRecorder.ts-side lookalike. Nameplate-collision → STILL-OPEN,
+reproduced (`0e21238e`). NEW: D1 (7/12, top priority), D2 (HARD RULE,
+2/12 explicit + 2/12 adjacent), D3 (4/12, code-cited one-line fix), D4
+(5/12, structural/process), D5-D7 (1/12 each, minor), D8 (unconfirmed).
+
+---
+
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
 1896×950 @ 21.6fps real (215/360 expected frames, 9.96s of 12s intent),
 57600/1 fps metadata, zero audio streams, 10.8Mbps, ends on a bot's
