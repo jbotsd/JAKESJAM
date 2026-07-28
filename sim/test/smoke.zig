@@ -3911,8 +3911,11 @@ test "ally substrate: Rally Light — cast opens the source window; a TEAMMATE i
     equipSlot(&duo, 0, 0, .rally_light);
     duo.players[0].current_keys = SLOT1_BIT;
     _ = root.world.stepWorld(&duo, 16.0); // tick 1: cast
-    // header.tick(1) + 1 + ceil(5000ms / 16ms = 312.5 -> 313) = 315.
-    try std.testing.expectEqual(@as(u32, 315), duo.players[0].rally_light_until_tick);
+    // header.tick(1) + ceil(5000ms / 16ms = 312.5 -> 313) = 314. (No extra
+    // `+1` — stepAbilityDispatch runs AFTER header.tick's per-step
+    // increment, so header.tick is already the post-increment tick; see
+    // the tick-base fix comment on the `.rally_light` arm in world.zig.)
+    try std.testing.expectEqual(@as(u32, 314), duo.players[0].rally_light_until_tick);
     duo.players[0].current_keys = 0;
 
     // Inject p1's shard so section 3's motion lands it INSIDE p2's body
@@ -4001,8 +4004,9 @@ test "ally substrate: Aegis Share — window stamps; a caster with NO ally insid
     equipSlot(&solo, 0, 0, .aegis_share);
     solo.players[0].current_keys = SLOT1_BIT;
     _ = root.world.stepWorld(&solo, 1000.0); // tick 1
-    // header.tick(1) + 1 + ceil(3000/1000 = 3) = 5.
-    try std.testing.expectEqual(@as(u32, 5), solo.players[0].aegis_share_until_tick);
+    // header.tick(1) + ceil(3000/1000 = 3) = 4. (No extra `+1` — same
+    // tick-base fix as rally_light's own arm, see world.zig.)
+    try std.testing.expectEqual(@as(u32, 4), solo.players[0].aegis_share_until_tick);
     try std.testing.expectApproxEqAbs(@as(f64, 100.0), solo.players[0].kindling, 1e-9);
 
     // Duo half: teammate 200px away — inside the widened radius
@@ -4017,6 +4021,6 @@ test "ally substrate: Aegis Share — window stamps; a caster with NO ally insid
     equipSlot(&duo, 0, 0, .aegis_share);
     duo.players[0].current_keys = SLOT1_BIT;
     _ = root.world.stepWorld(&duo, 1000.0);
-    try std.testing.expectEqual(@as(u32, 5), duo.players[0].aegis_share_until_tick);
+    try std.testing.expectEqual(@as(u32, 4), duo.players[0].aegis_share_until_tick);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), duo.players[0].kindling, 1e-9);
 }
