@@ -117,6 +117,133 @@ A 393x852 (Pixel-class) sweep drove a batch of fixes, all client-side:
   cleanly.
 - Desktop unaffected: touch overlay gated off; full client suite (563) green.
 
+## QA sweep (2026-07-28, wave 1)
+
+The 2026-07-28 mobile QA deep-iteration pass (22 findings across HUD/action-bar,
+kill-feel/construct-VFX, venue, and card-draft clusters) landed a fix commit
+(`3293315`) covering all 5 CRITICAL and 6 of the MAJOR findings. This wave
+closes the loop on that fix pass: a **fresh** round of 393×852 portrait-touch
+screenshots against the rebuilt client (same emulation method this doc has
+used since 2026-07-04/07-09), confirming what actually holds, plus a couple
+of spot-checks on surfaces the fix pass didn't touch. Screenshots referenced
+below live in the fix pass's own scratch capture directory (not committed —
+same convention as every prior sweep in this doc).
+
+### Confirmed holding (surfaces touched this wave)
+
+- **ActionBarSystem safe-area + touch-zone clearance** (clusterA-01/02) — a
+  fresh arena entry (no pre-existing identity, real touch-drag input, not
+  keyboard) shows the HP/shield/ability bar sitting clear of both the OS
+  safe-area inset and the floating move-stick's drag zone
+  (`clusterA01-02-actionbar-hud-steadystate.png`).
+- **RoundBanner clears the touch FTUE legend** (clusterA-04) — a genuinely
+  first-ever match (fresh pilot id, `jakesjam-ftue-controls-shown` unset)
+  shows the "ROUND N" banner painting well below the staged
+  "LEFT STICK move / RIGHT STICK aim & fire" legend for the legend's whole
+  ~9s life, never overlapping (`clusterA04-banner-legend-t0..t5.png`).
+- **MainMenuScene decorative rig cluster** (C2) — with the DOM splash panel
+  hidden (`[data-splash]`), the rig + "vessel"/SIGNATURE cluster renders
+  fully on-screen at 393px, matching the fix's own before/after evidence
+  (`c2-mainmenu-rig-cluster.png`).
+- **Card draft timer bar** (D1) — the green countdown track measures a
+  non-zero height (4px track, not the pre-fix 0px collapse) in every
+  viewport tried: 393×852 portrait-touch, 810×1080 tablet, 1280×720
+  desktop (`d1-d2-portrait-fresh-offer.png`).
+- **Card draft fits without vertical overflow on portrait touch** (D2) —
+  measured directly: stage `scrollHeight === clientHeight` (782 === 782) at
+  393×852, the offer riding the horizontal scroll-snap row exactly as
+  designed (`d1-d2-portrait-fresh-offer.png`).
+- **Off-screen pick scrolls into view before the reveal** (D3) — scrolled
+  the row so the 3rd card (Contagion) started off-screen, picked it, and
+  measured its plate fully inside the viewport bounds immediately after
+  (`left:54, right:354` inside a 393px viewport) — the reveal beat plays
+  on-screen, not wherever the row happened to be scrolled
+  (`d3-portrait-after-pick-card3-reveal-onscreen.png`).
+- **Distinct seals for six-axes/catalog ability cards** (D4) — Crimson
+  Tithe / Borrowed Time / Contagion (the exact trio the original bug
+  report named) now render LEECH · sōk / MARK · tōš / MULTITUDE · mēš
+  respectively — three different seals, not three copies of "LIGHT · phōs"
+  (`d1-d2-portrait-fresh-offer.png` shows Crimson Tithe's corrected seal).
+
+### Regression spot-checks (surfaces NOT touched this wave)
+
+- **Offline Practice (MatchScene)** — shares `ActionBarSystem` +
+  `mobile.ts`'s `safeAreaInsetBottomPx()`/zone-clearance logic with the
+  online path but wasn't itself edited. Touch controls present (left/right
+  zones both found), nameplate renders correctly, no visible regression
+  (`r1-practice-hud-portrait.png`).
+- **Cold-boot splash / email gate** — unchanged this wave, still the
+  expected first-visit flow (`r2-splash-portrait.png`).
+- **CardDraftOverlay at non-portrait-touch viewports** — 810×1080 tablet
+  and 1280×720 short-desktop both still resolve `hasHorizScroll: false`
+  and the portrait-only compaction path (`CARDS_CONTAINER_STYLE_PORTRAIT_TOUCH`)
+  correctly does NOT engage outside portrait-touch.
+
+### New finding this wave (not from the original 22 — filed for wave 2)
+
+- **HangoutScene: venue feed collides with the duo-queue hint on narrow
+  widths.** C1's own fix moved `feedText` down to `y=46` in compact mode
+  (< 520px) specifically to clear the top-right MENU/CLIPS pill — but
+  `duoHintText` ("`[T] DUO QUEUE: ON/OFF`") is still hard-coded to a fixed
+  `y=44` regardless of width. The two now sit almost exactly on top of each
+  other in the venue at 393px: both fully opaque, producing illegible
+  double-exposed text at the top-left the entire time a player is in the
+  venue (confirmed persistent across a 6.5s window, not a transient
+  crossfade — `c1-venue-feed-portrait.png`,
+  `c1-venue-feed-portrait-t2.png`, `c1-venue-feed-portrait-t3.png`). C1's
+  original bug (clipping off both screen edges) IS fixed — this is a new
+  collision the repositioning itself introduced. Real fix needs
+  `duoHintText` to also drop in compact mode, ideally anchored beneath
+  `feedText`'s actual (now two-line) measured height rather than another
+  fixed constant.
+- **Minor, lower-confidence:** `[data-splash-cta]` ("Play"/Lobby) measured
+  with a bounding-box `y≈897` against an 852px-tall portrait viewport — i.e.
+  below the fold, requiring a scroll before the primary CTA is reachable.
+  Not verified against the documented short-landscape scrollable-lobby
+  behavior from the 2026-07-04 sweep — may be expected/pre-existing rather
+  than a regression, flagging for wave 2 to confirm either way.
+
+### Left for wave 2
+
+Everything the fix pass itself deliberately deferred is still open:
+clusterA-03 (dual touch-UI naming), clusterA-05/06 (name overflow /
+nameplate clip), B1 (camera-kick clamp ordering), B3-B5, C3 (loadout
+station touch abilities), C4/C5/C6/C7 (venue ActionBar/touch targets/gate
+ordering), D5 (generic ability glyphs) — see the fix pass's own report for
+the reasoning on each. Add to that list from this sweep: the
+venue-feed/duo-hint collision above, and the splash-CTA-below-the-fold
+question.
+
+### Verification method
+
+Two capture paths, both against the real rebuilt client (`bun run build`
+re-run clean before this sweep; server serves `client/dist` and needs no
+restart for these client-only fixes):
+
+- **Direct-import overlay checks** (`CardDraftOverlay` D1-D4): same
+  convention the fix pass itself used (`checkTimerBar.ts`/
+  `checkHorizScroll.ts`) — import the real class + real card data against
+  the vite dev server, `showWithTimer()` a real 3-card offer, measure/
+  screenshot.
+- **Live product-journey checks** (ActionBar/RoundBanner/MainMenuScene/
+  HangoutScene/Practice): a real touch-emulated Playwright context against
+  the shared `:8088` world server, walking the actual venue → bell → queue
+  → arena flow. Notable gotcha hit and worked around: under a
+  touch-emulated context (`hasTouch:true, isMobile:true`), `isTouchPrimary()`
+  reads true and **keyboard input for movement is a dead no-op** (confirmed
+  directly: holding a WASD key for 5s moved the player 0px) — the earlier
+  fix-pass capture script's keyboard-based walk (`scripts/captureClusterA.ts`)
+  would not actually have driven movement under this harness either. Real
+  touch-drag (CDP `Input.dispatchTouchEvent`) was needed instead, with two
+  further quirks worked around: a single continuous touch stops being read
+  by the game after ~2s in this headless setup (cycle fresh touchStart/End
+  every <2s), and a pure-horizontal drag stalls dead at a real platform gap
+  partway to the bell (drag diagonally up-left so up-tilt/jetpack clears
+  it). Also hit and worked around: a genuinely fresh identity's first
+  "Play" tap opens the Vessel Signature cosmetics creator before joining
+  the venue (real onboarding gate, unrelated to any of this wave's fixes) —
+  accept the defaults and re-tap to proceed.
+
 ## Not yet / future
 
 - Haptics (`navigator.vibrate`) on hit/kill for Android (iOS ignores it).
