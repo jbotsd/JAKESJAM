@@ -801,6 +801,20 @@ export class OnlineMatchScene extends Phaser.Scene {
     // lower still — at 393px the score row + build pills reach into the
     // legend's right-anchored column (seen overlapping in portrait QA).
     let y = this.touchControls ? 112 : 48;
+
+    // clusterA-04 mobile-QA fix (2026-07-28): the touch legend's column
+    // (right-anchored, y=112..~250 at 393px) and the round banner (centred,
+    // ~0.32*uiHeight) previously painted on top of each other for this
+    // legend's whole life — narrow-portrait "FIGHT!" is wide enough to reach
+    // the legend's x range too. Desktop's legend starts much higher (y=48)
+    // on a much wider viewport, so it was never at risk — scoped to touch.
+    if (this.touchControls) {
+      const legendBottomPx = 250; // 112 start + this file's own 58+40+40 group heights
+      this.roundBannerSystem?.setLegendClearance(legendBottomPx + 40);
+      this.time.delayedCall(LEGEND_LIFE_MS + 380, () => {
+        this.roundBannerSystem?.setLegendClearance(0);
+      });
+    }
     for (const [i, lines] of groups.entries()) {
       const text = this.add
         .text(uiWidth(this) - 20, y, lines.join("\n"), {

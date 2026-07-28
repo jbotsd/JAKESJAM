@@ -33,6 +33,7 @@ import type { HudChip } from "./HudSystem.js";
 import type { AcquiredAbility, AcquiredAbilityKind } from "./acquiredAbilities.js";
 import { drawActiveGlyph } from "./actionBarGlyphs.js";
 import type { ClassId } from "../types/game.js";
+import { isPortraitMobile, safeAreaInsetBottomPx } from "../input/mobile.js";
 
 // ── Chassis-verb naming (2026-07-18 legibility pass, Jake: "we still have
 // shift shield and mouse right click in the game what do we do about those
@@ -145,6 +146,20 @@ export type ActionBarVitals = {
 
 const PAD_BOTTOM = 20;
 const PAD_BOTTOM_COMPACT = 14;
+// clusterA-01/clusterA-02 mobile-QA fix (2026-07-28): on touch+portrait,
+// TouchControls.ts's `.tc-zone` joystick drag surface AND its floating-
+// joystick base occupy the bottom `--tc-band` slice of the viewport
+// (style.css, `@media (orientation: portrait)`, default 34vh) — a fixed
+// bottom-padding constant here had no idea that band existed, so the bar's
+// HP/shield orbs and M1/M2/E diamonds rendered INSIDE it: a floating stick
+// spawning under the thumb could fully eclipse them (they're read-only HUD,
+// not a touch target, so they have no business living in the drag zone at
+// all). TOUCH_ZONE_CLEAR_MARGIN is the visual breathing room above the
+// zone's top edge; kept independent of style.css's own `--tc-band` var
+// (Phaser Graphics can't read a DOM custom property) via the matching
+// fraction below — if that default ever changes, update both.
+const TOUCH_BAND_VH_FRAC = 0.34;
+const TOUCH_ZONE_CLEAR_MARGIN = 12;
 // Full-size bar: HP orb + 6 slots + shield orb spans ~460px — overflows a
 // 400px phone viewport (orbs clipped off both edges). Compact sizing keeps
 // the same layout ratios at a scale that fits with margin either side.
@@ -243,7 +258,7 @@ export class ActionBarSystem {
     this.orbGap = this.compact ? ORB_GAP_COMPACT : ORB_GAP;
     this.slotR = this.compact ? SLOT_R_COMPACT : SLOT_R;
     this.slotGap = this.compact ? SLOT_GAP_COMPACT : SLOT_GAP;
-    this.padBottom = this.compact ? PAD_BOTTOM_COMPACT : PAD_BOTTOM;
+    this.padBottom = this.resolvePadBottom();
 
     this.g = s.add.graphics().setScrollFactor(0).setDepth(depth + 1);
 
@@ -317,10 +332,26 @@ export class ActionBarSystem {
     this.layout();
   }
 
+  /** Bottom clearance for the bar: the OS safe-area inset (home indicator /
+   *  gesture-nav bar, `env(safe-area-inset-bottom)` — desktop's is 0) plus,
+   *  on touch+portrait only, enough extra to clear TouchControls' bottom
+   *  `.tc-zone` joystick band entirely (clusterA-01/clusterA-02 — see the
+   *  constants' doc comment above). Read live (not just at build()) so a
+   *  device rotation between landscape and portrait re-derives this without
+   *  needing a width-threshold crossing to trigger a rebuild. */
+  private resolvePadBottom(): number {
+    const base = this.compact ? PAD_BOTTOM_COMPACT : PAD_BOTTOM;
+    const safeBottom = safeAreaInsetBottomPx();
+    if (!isPortraitMobile()) return base + safeBottom;
+    const bandPx = uiHeight(this.scene) * TOUCH_BAND_VH_FRAC;
+    return Math.max(base, bandPx + TOUCH_ZONE_CLEAR_MARGIN) + safeBottom;
+  }
+
   /** Positions everything that doesn't move frame-to-frame (labels) — the
    *  Graphics itself is fully redrawn each update() call regardless. */
   private layout(): void {
     const s = this.scene;
+    this.padBottom = this.resolvePadBottom();
     const w = uiWidth(s);
     const h = uiHeight(s);
     const centerX = w / 2;

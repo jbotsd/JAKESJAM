@@ -27,6 +27,7 @@
 // real listeners — never from the governor's own resize) removes that
 // window entirely while still tracking real device/orientation changes.
 let cachedTouchPrimary: boolean | null = null;
+let cachedSafeAreaBottomPx: number | null = null;
 
 /** Force a re-read of touch/pointer state on the next isTouchPrimary() call.
  *  Call ONLY from genuine external signals (window resize, orientationchange,
@@ -34,6 +35,7 @@ let cachedTouchPrimary: boolean | null = null;
  *  governor's internal resize, which isn't a real device change. */
 export function invalidateMobileDetectionCache(): void {
   cachedTouchPrimary = null;
+  cachedSafeAreaBottomPx = null;
 }
 
 function readTouchPrimary(): boolean {
@@ -68,6 +70,41 @@ export function isPortrait(): boolean {
 /** Touch device currently held upright — the target mobile layout. */
 export function isPortraitMobile(): boolean {
   return isTouchPrimary() && isPortrait();
+}
+
+/**
+ * `env(safe-area-inset-bottom)` in CSS px, readable from plain JS/Canvas
+ * code — TouchControls.ts (a DOM overlay) gets this for free via CSS
+ * `env()`, but the canvas-drawn HUD (ActionBarSystem et al) has no CSS box
+ * to inherit it from and was rendering flush to the raw viewport bottom on
+ * every device with a bottom safe-area inset (iPhone home indicator,
+ * Android gesture-nav bar — commonly 20-34px). Standard probe technique: a
+ * detached 1x1 element with `padding-bottom: env(safe-area-inset-bottom)`
+ * gets that inset resolved into its computed `paddingBottom` by the UA, no
+ * layout/paint cost since it's never attached visibly. Cached (see
+ * invalidateMobileDetectionCache) — the inset is a device/orientation
+ * property, not a per-frame read.
+ */
+function readSafeAreaInsetBottomPx(): number {
+  if (typeof document === "undefined" || typeof getComputedStyle !== "function") return 0;
+  const probe = document.createElement("div");
+  probe.style.position = "fixed";
+  probe.style.inset = "0";
+  probe.style.pointerEvents = "none";
+  probe.style.visibility = "hidden";
+  probe.style.paddingBottom = "env(safe-area-inset-bottom, 0px)";
+  document.body.appendChild(probe);
+  const px = parseFloat(getComputedStyle(probe).paddingBottom || "0");
+  probe.remove();
+  return Number.isFinite(px) ? px : 0;
+}
+
+/** Cached `env(safe-area-inset-bottom)` reading, in CSS px — 0 on desktop /
+ *  devices without a bottom inset. Refreshed on the same genuine-external-
+ *  signal cadence as isTouchPrimary() (see invalidateMobileDetectionCache). */
+export function safeAreaInsetBottomPx(): number {
+  if (cachedSafeAreaBottomPx === null) cachedSafeAreaBottomPx = readSafeAreaInsetBottomPx();
+  return cachedSafeAreaBottomPx;
 }
 
 /**

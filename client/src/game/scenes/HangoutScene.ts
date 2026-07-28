@@ -1094,6 +1094,21 @@ export class HangoutScene extends Phaser.Scene {
         .setDepth(1000);
     }
 
+    // C1 mobile-QA fix (2026-07-28): this feed string ("THE ARENA —
+    // FIGHTING · ROUND N · N FIGHTER(S) · N BOTS / NEXT BELL M:SS") had no
+    // wordWrapWidth, no compact-width branching, and no truncation — at
+    // 13px monospace it's comfortably wider than a 393px phone, so it
+    // clipped off BOTH edges every frame in the venue (exactly the class of
+    // bug HudSystem's compact mode already handles elsewhere in this same
+    // file). Also nudges below the fixed top-right MENU/CLIPS ON pill
+    // (match-chrome, ~44px tall on narrow widths per style.css) instead of
+    // letting the centred block run underneath it.
+    const uiW = uiWidth(this);
+    const compact = uiW < 520;
+    this.feedText.setFontSize(compact ? 11 : 13);
+    this.feedText.setWordWrapWidth(Math.min(560, uiW - 32), true);
+    this.feedText.setPosition(uiW / 2, compact ? 46 : 14);
+
     const bellMs = Math.max(0, s.nextBellMs - (nowMs - this.venueStatusAtMs));
     const bellSec = Math.ceil(bellMs / 1000);
     const mm = Math.floor(bellSec / 60);
@@ -1111,7 +1126,6 @@ export class HangoutScene extends Phaser.Scene {
     this.feedText.setText(
       `THE ARENA — ${phaseLabel} · ROUND ${s.roundIndex + 1} · ${fighters}${bots}\nNEXT BELL ${mm}:${ss}`,
     );
-    this.feedText.setPosition(uiWidth(this) / 2, 14);
 
     if (this.bellLabel) {
       const queuedCount = s.queued.length;

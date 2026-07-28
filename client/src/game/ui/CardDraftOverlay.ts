@@ -214,7 +214,10 @@ export class CardDraftOverlay {
     timerTrack.appendChild(this.timerBar);
 
     this.cardsContainer = document.createElement("div");
-    Object.assign(this.cardsContainer.style, CARDS_CONTAINER_STYLE);
+    Object.assign(
+      this.cardsContainer.style,
+      isPortraitMobile() ? CARDS_CONTAINER_STYLE_PORTRAIT_TOUCH : CARDS_CONTAINER_STYLE,
+    );
 
     // Class row sits ABOVE the catalog: chassis first, spec second — same
     // order the canon reads (class = body, cards = spec layer).
@@ -273,6 +276,14 @@ export class CardDraftOverlay {
         ? "Pick one. It rewrites your build next round; BUILD CHANGED will explain exactly what changed. It lasts for this match. The timer will choose if you do not."
         : "Pick one card. Auto-selects when the timer expires.";
     }
+    // Re-applied on every offer (not just construction) so an orientation
+    // flip between drafts (portrait <-> landscape) picks up the right
+    // layout mode — same re-evaluation cadence makeCardElement's own
+    // isTouchPrimary()/isPortraitMobile() branch already gets per-card.
+    Object.assign(
+      this.cardsContainer.style,
+      isPortraitMobile() ? CARDS_CONTAINER_STYLE_PORTRAIT_TOUCH : CARDS_CONTAINER_STYLE,
+    );
     this.cardsContainer.replaceChildren();
 
     cards.forEach((card, i) => {
@@ -441,6 +452,17 @@ export class CardDraftOverlay {
     const others = Array.from(
       this.cardsContainer.querySelectorAll<HTMLElement>("[data-card-plate]"),
     ).filter((el) => el !== winnerEl);
+
+    // D3 mobile-QA fix (2026-07-28): on a scrollable offer (portrait touch's
+    // horizontal card row, or the stage's own vertical overflow on very
+    // short viewports), tapping card 2 or 3 played its whole reveal beat
+    // (rarity flash, orb pop-in, name/seal fade-up, gold glow) wherever it
+    // already sat in the scrolled document — mostly or entirely off-screen
+    // for whoever just tapped it. Scrolling it into view BEFORE the reveal
+    // starts (not after) means the beat plays on-screen for the player who
+    // earned it. `block/inline: "nearest"` — a card already fully visible
+    // (the common desktop case) doesn't shift at all.
+    winnerEl?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
 
     for (const el of others) {
       el.style.transition = "opacity 260ms ease, transform 260ms ease";
@@ -863,7 +885,15 @@ export class CardDraftOverlay {
     if (isTouchPrimary()) {
       el.style.minHeight = "0";
       el.style.padding = "16px 16px";
-      if (isPortraitMobile()) el.style.width = "min(280px, 78vw)";
+      if (isPortraitMobile()) {
+        el.style.width = "min(280px, 78vw)";
+        // D2 mobile-QA fix: cards ride a horizontal scroll-snap row on
+        // portrait touch (see CARDS_CONTAINER_STYLE_PORTRAIT_TOUCH) — never
+        // shrink below their own width in that flex row, and snap to
+        // center on scroll settle (the standard swipeable-card-picker feel).
+        el.style.flexShrink = "0";
+        el.style.scrollSnapAlign = "center";
+      }
     }
 
     // Matte plate — glyph silhouette + copy carry identity. Minimal radiance.
@@ -1152,6 +1182,16 @@ const HINT_STYLE: Partial<CSSStyleDeclaration> = {
 const TIMER_TRACK_STYLE: Partial<CSSStyleDeclaration> = {
   width: "100%",
   height: "4px",
+  // D1 mobile-QA fix (2026-07-28): STAGE_STYLE is a flex column with
+  // maxHeight+overflowY:auto — once the six-axes card content (seal block,
+  // buckets row, LORE/flavor) pushed total content past that cap on a
+  // touch/portrait viewport, the flexbox sizing algorithm shrank every flex
+  // child to fit, and this near-content-less 4px track (default flexShrink:
+  // 1) was the first thing squeezed to 0 — the auto-pick timer the hint
+  // text right above it promises became invisible on phone. flexShrink:0
+  // makes the LARGER siblings (header, hint, card row) absorb all of that
+  // pressure instead, never this bar.
+  flexShrink: "0",
   borderRadius: "2px",
   background: "rgba(255,255,255,0.08)",
   overflow: "hidden",
@@ -1170,6 +1210,35 @@ const CARDS_CONTAINER_STYLE: Partial<CSSStyleDeclaration> = {
   gap: "18px",
   flexWrap: "wrap",
   justifyContent: "center",
+};
+
+// D2 mobile-QA fix (2026-07-28): at 393px the wrapped-grid layout above puts
+// exactly one ~280px card per row (justifyContent:center on a container
+// narrower than 2 cards), so the mandatory 3-card offer becomes a vertical
+// stack roughly 3x a single card's height — combined with the header/hint/
+// seal block above it, only ~45% of the stage was visible without heavy
+// scrolling (measured: 1748px of content vs 782px of stage). The house's own
+// 2026-07-09 doc claims "cards compact on touch so all offers are scannable"
+// — true for card WIDTH, never true for the vertical stack this produces.
+// Fix: on portrait touch, cards become a horizontal swipeable row (the
+// established mobile card-picker pattern — Hearthstone/Slay the Spire draft
+// screens) instead of a vertical stack, so the stage's own height is capped
+// by ONE card's height, not three stacked, and the timer/header/hint sit
+// above a single screen's worth of content. A sliver of the next card peeks
+// past the container edge — the swipe affordance IS the peek, so the player
+// never has to guess there's more without trying it.
+const CARDS_CONTAINER_STYLE_PORTRAIT_TOUCH: Partial<CSSStyleDeclaration> = {
+  display: "flex",
+  gap: "14px",
+  flexWrap: "nowrap",
+  justifyContent: "flex-start",
+  overflowX: "auto",
+  overflowY: "visible",
+  width: "100%",
+  scrollSnapType: "x mandatory",
+  paddingLeft: "18px",
+  paddingRight: "18px",
+  paddingBottom: "4px",
 };
 
 const CARD_STYLE: Partial<CSSStyleDeclaration> = {

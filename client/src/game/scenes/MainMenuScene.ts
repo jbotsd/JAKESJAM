@@ -24,7 +24,7 @@ export class MainMenuScene extends Phaser.Scene {
     const { width, height } = this.scale;
     this.add.rectangle(width / 2, height / 2, width, height, 0x0a0e1a);
     this.add.rectangle(width / 2, height - 58, width - 96, 30, 0x141b2d);
-    this.add.rectangle(190, height - 122, 180, 22, 0x161d2f);
+    this.add.rectangle(this.leftClusterCenterX() - 40, height - 122, 180, 22, 0x161d2f);
     this.add.rectangle(width - 210, height - 172, 220, 22, 0x161d2f);
 
     this.add.circle(width - 260, height - 190, 7, 0xc9a84c);
@@ -55,7 +55,7 @@ export class MainMenuScene extends Phaser.Scene {
     this.elapsedMs += delta;
     const { width, height } = this.scale;
     const seconds = this.elapsedMs / 1000;
-    const x = 230 + Math.sin(seconds * 1.15) * 64;
+    const x = this.leftClusterCenterX() + Math.sin(seconds * 1.15) * 64;
     const velocityX = Math.cos(seconds * 1.15) * 74;
 
     this.previewRig?.update(delta, {
@@ -65,6 +65,26 @@ export class MainMenuScene extends Phaser.Scene {
       grounded: true,
       crouching: false,
     });
+  }
+
+  /**
+   * C2 mobile-QA fix (2026-07-28): this scene's decorative rig/pips are
+   * honest world-camera content at zoom 1 (no installHudCamera, unlike
+   * every combat HUD system) — `this.scale.width/height` here is therefore
+   * the RAW backing-store extent (CSS px × current renderScale), which on
+   * phone/potato quality tiers is meaningfully narrower than the CSS
+   * viewport (measured live: 295px backing width for a 393px-wide phone).
+   * A flat `230` assumed a backing store with enough room for that plus
+   * the rig's own oscillation amplitude (±64) and sprite half-width;
+   * on a narrow one the rig's max excursion (294) sat at the literal right
+   * edge of a 295px-wide canvas, clipping almost the whole sprite. Clamped
+   * to the same "up to 230, but never closer than 90px to the true right
+   * edge" rule the SIGNATURE button and its backdrop panel now share too —
+   * identical result on every desktop-width backing store tested so far
+   * (>=320px), gracefully narrower only where it was actually overflowing.
+   */
+  private leftClusterCenterX(): number {
+    return Math.max(80, Math.min(230, this.scale.width - 90));
   }
 
   /**
@@ -94,7 +114,7 @@ export class MainMenuScene extends Phaser.Scene {
    *  class dropdown). */
   private createSignatureButton(): void {
     const { height } = this.scale;
-    const x = 230;
+    const x = this.leftClusterCenterX();
     const y = height - 58;
     const w = 140;
     const h = 30;

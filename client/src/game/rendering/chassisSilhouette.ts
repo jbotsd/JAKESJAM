@@ -116,22 +116,45 @@ export function headCrestGeometry(
     // header) before/after, and against all 3 sibling classes' current
     // in-game silhouettes at the same harness scale — not just kindled-v2.jpg
     // in isolation, per the "match the shipped 3, not just concept art" call.
-    const paladinRootY = head.y - 16 * s;
+    // REVISED 2026-07-28 (mobile-QA B2 finding: still "barely-visible ~2-3px
+    // sliver" one day after the 07-27 pass above). Root-caused against the
+    // REAL in-game scale, not the harness's own preview scale: every caller
+    // that actually spawns a match player resolves scale from
+    // `PLAYER_VISUAL_SCALE (0.78) * character.sizeScale` (OnlineMatchScene.ts/
+    // MatchScene.ts's getVisualScale) — Kindled's "heavy" archetype
+    // (sizeScale 1.18) puts real `s` at ≈0.92, NOT the harness/dev-render
+    // scale (1.15, constructHarness.ts) the 07-27 fix was eyeballed against.
+    // At s≈0.92 the 07-27 geometry's darkBase collapses to a ~5×11px sliver
+    // (`(-2.4s..+3s) wide × (16s..25s) tall` → ~5px × ~11px) — technically
+    // non-degenerate, genuinely on-screen, but far too thin to read as
+    // "the biggest thing in the room" next to Interstice's wide raked fin
+    // (Interstice reads not because it's tall — its own crest is only 3*s
+    // tall — but because it sweeps WIDE, 24*s horizontally, clear of the
+    // hood in every direction). Paladin's crest is deliberately vertical
+    // (the sword-echo silhouette, not a horizontal sweep — see 07-18 note
+    // above), so the only lever left is width + clearance: widened the
+    // base ~60% (2.4/3.0 -> 3.8/4.6, 1.2/1.8 -> 2.0/2.6) and lifted the root
+    // further clear of the hood's peak (16*s -> 19*s — was a 3*s gap above
+    // the hood's `-13*s` peak, now 6*s) so the whole shape sits unambiguously
+    // above the hood with real margin instead of grazing it. Tip stays at
+    // 25*s (unchanged) — the nameplate-clearance ceiling from the 07-18 note
+    // is still the hard constraint on how much taller this can ever get.
+    const paladinRootY = head.y - 19 * s;
     const tipX = head.x;
     const tipY = head.y - 25 * s;
     return {
       darkBase: [
-        { x: rootX - f * 2.4 * s, y: paladinRootY + 3 * s },
+        { x: rootX - f * 3.8 * s, y: paladinRootY + 3 * s },
         { x: tipX, y: tipY },
-        { x: rootX + f * 3.0 * s, y: paladinRootY - 1.5 * s },
+        { x: rootX + f * 4.6 * s, y: paladinRootY - 1.5 * s },
       ],
       brightPlate: [
-        { x: rootX - f * 1.2 * s, y: paladinRootY + 1.5 * s },
+        { x: rootX - f * 2.0 * s, y: paladinRootY + 1.5 * s },
         { x: tipX, y: tipY + 2 * s },
-        { x: rootX + f * 1.8 * s, y: paladinRootY - 0.8 * s },
+        { x: rootX + f * 2.6 * s, y: paladinRootY - 0.8 * s },
       ],
       edgeLine: [
-        { x: rootX + f * 1.8 * s, y: paladinRootY - 0.8 * s },
+        { x: rootX + f * 2.6 * s, y: paladinRootY - 0.8 * s },
         { x: tipX, y: tipY + 2 * s },
       ],
       tipGlow: { x: tipX, y: tipY + 2 * s },

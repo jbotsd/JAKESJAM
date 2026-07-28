@@ -42,10 +42,29 @@ export class RoundBanner {
   private lastBeat: CountdownBeat = "none";
   private lastPhase: RoundBannerState["phase"] | "hidden" = "hidden";
   private popTween?: Phaser.Tweens.Tween;
+  /** clusterA-04 mobile-QA fix (2026-07-28): extra downward px, ADDED to the
+   *  normal cy, while the touch FTUE controls legend (OnlineMatchScene's
+   *  right-anchored "RIGHT STICK aim & fire" / "SHIELD / DASH buttons"
+   *  column, y=112..~250 on a 393px phone) is on screen — first-ever-match
+   *  only, ~9s life. The legend and this banner are both centre-ish at
+   *  narrow portrait widths and previously painted directly on top of each
+   *  other with no coordination between the two systems. Zero by default
+   *  (every other case — no legend, desktop, subsequent matches) so this
+   *  can't reopen A8's "on top of a mid-arena rig" regression the base 0.32
+   *  fraction was tuned to avoid. */
+  private legendClearancePx = 0;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     this.build();
+  }
+
+  /** See `legendClearancePx` — OnlineMatchScene calls this for the exact
+   *  window its touch FTUE legend is visible, then clears it back to 0. */
+  setLegendClearance(px: number): void {
+    if (this.legendClearancePx === px) return;
+    this.legendClearancePx = px;
+    this.onResize();
   }
 
   update(state: RoundBannerState): void {
@@ -94,12 +113,20 @@ export class RoundBanner {
 
   // ─── Private ──────────────────────────────────────────────────────────────
 
+  /** A8 (footage list): 0.32 sat the beat text on top of mid-arena rigs in
+   *  real spawns — lift above the platform band. Shared by build() and
+   *  onResize() (previously build() used a stale 0.22 that only ever got
+   *  corrected once Phaser's own first "resize" event fired onResize —
+   *  harmless in practice since that happens before the player can see
+   *  anything, but two different numbers for one position was a footgun). */
+  private computeCy(): number {
+    return uiHeight(this.scene) * 0.32 + this.legendClearancePx;
+  }
+
   private build(): void {
     const s = this.scene;
     const cx = uiWidth(s) / 2;
-    // A8 (footage list): 0.32 sat the beat text on top of mid-arena rigs
-    // in real spawns — lift above the platform band.
-    const cy = uiHeight(s) * 0.22;
+    const cy = this.computeCy();
 
     this.subText = s.add
       .text(cx, cy - 44, "", {
@@ -153,7 +180,7 @@ export class RoundBanner {
 
   private onResize(): void {
     const cx = uiWidth(this.scene) / 2;
-    const cy = uiHeight(this.scene) * 0.32;
+    const cy = this.computeCy();
     this.mainText.setPosition(cx, cy);
     this.subText.setPosition(cx, cy - 44);
     this.scoreText.setPosition(cx, cy + 46);

@@ -8,7 +8,7 @@
 // Mapping is structural (rarity + primary bucket/category), not per-id spam,
 // so new cards inherit a seal without hand-authoring 61 phrases.
 
-import type { CardDefinition, WeaponBucket } from "../../sim/data/cardTypes.js";
+import type { CardDefinition, WeaponBucket, AbilityRole } from "../../sim/data/cardTypes.js";
 
 /** One instrument seal — Coptic glyph-row + how to say it + what it means. */
 export type CardSeal = {
@@ -133,6 +133,52 @@ const SEALS = {
     english: "withdraw",
     motif: "settle / dock; anti level-up energy",
   },
+  // ── D4 mobile-QA fix (2026-07-28): the whole `category: "ability"` family
+  // (six-axes Layer 2 + all 40 classId-gated catalog cards,
+  // docs/class-ability-catalogs-v1.md) fell through to the plain rarity
+  // fallback below — sealForCard had zero coverage for it, so e.g. Crimson
+  // Tithe (lifesteal), Borrowed Time (heal-then-drain), and Contagion
+  // (AOE fire-spread) — three mechanically distinct RARE abilities — all
+  // rendered the identical "ⲪⲰⲤ · phōs · LIGHT" seal, restating the rarity
+  // tier a second time instead of identifying the card. These five entries
+  // resolve the family structurally (six-axes membership, then catalog
+  // `role`) — one derivation per doctrine, same discipline as the bucket/
+  // category rules above, not per-id spam.
+  /** Mystery axis (six-axes) — the hidden/void-leaning cast coupling. */
+  mystery: {
+    coptic: "ⲘⲨⲤⲦⲎⲢⲒⲞⲚ",
+    latin: "mystērion",
+    english: "mystery",
+    motif: "six-axes: Mystery coupling (void/hidden)",
+  },
+  /** Technique axis (six-axes) — the honed/precision cast coupling. */
+  technique: {
+    coptic: "ⲦⲈⲬⲚⲎ",
+    latin: "technē",
+    english: "technique",
+    motif: "six-axes: Technique coupling (craft/precision)",
+  },
+  /** Drain axis (six-axes) — leech/siphon, distinct from cursed "darkness". */
+  leech: {
+    coptic: "ⲤⲰⲔ",
+    latin: "sōk",
+    english: "leech",
+    motif: "six-axes: Drain coupling (siphon life)",
+  },
+  /** Buff role (catalog) — self/ally strengthening actives. */
+  buff: {
+    coptic: "ⲦⲀϪⲢⲞ",
+    latin: "tajro",
+    english: "fortify",
+    motif: "catalog role: buff",
+  },
+  /** Single role (catalog) — precision single-target actives. */
+  precision: {
+    coptic: "ⲦⲰϢ",
+    latin: "tōš",
+    english: "mark",
+    motif: "catalog role: single-target",
+  },
 } as const satisfies Record<string, CardSeal>;
 
 type SealKey = keyof typeof SEALS;
@@ -163,12 +209,57 @@ const CARD_SEAL_OVERRIDES: Partial<Record<string, SealKey>> = {
 };
 
 /**
+ * D4 mobile-QA fix — the five class-blind six-axes ability cards
+ * (six-axes-goal.md Layer 2) predate the catalog `role` field, so they
+ * resolve by their OWN axis instead: one seal per axis, structural (same
+ * doctrine as everything else in this file), not a per-id table. Ward
+ * reuses `cover` (shield/parry systems — exactly what Shelter Seal is) and
+ * Stride reuses `motion` — both already the right concept; Drain/Mystery/
+ * Technique get the fresh entries above since "darkness"/nothing existing
+ * fit without colliding with an unrelated dimension (cursed rarity).
+ */
+const SIX_AXES_CARD_SEAL: Partial<Record<string, SealKey>> = {
+  "crimson-tithe": "leech", // Drain
+  "shelter-seal": "cover", // Ward
+  "shadow-step": "motion", // Stride
+  "veil-of-nought": "mystery", // Mystery
+  "severing-answer": "technique", // Technique
+};
+
+/**
+ * D4 mobile-QA fix — the 40 classId-gated catalog ability cards
+ * (docs/class-ability-catalogs-v1.md) carry a `role: AbilityRole` (exactly
+ * six locked roles) but no `buckets`/bucket-mappable fields — this is the
+ * ONE derivation from role to seal, so every catalog card across all four
+ * classes inherits a differentiated seal without per-id authoring.
+ */
+const CATALOG_ROLE_SEAL: Record<AbilityRole, SealKey> = {
+  defense: "cover",
+  offense: "strike",
+  buff: "buff",
+  aoe: "multitude",
+  single: "precision",
+  movement: "motion",
+};
+
+/**
  * Resolve the single instrument seal for a card plate.
  * Priority: id override → cursed → legendary Autogenes → bucket → category.
  */
 export function sealForCard(card: CardDefinition): CardSeal {
   const override = CARD_SEAL_OVERRIDES[card.id];
   if (override) return SEALS[override];
+
+  // D4 mobile-QA fix: resolve the whole `category: "ability"` family
+  // (six-axes + all four class catalogs) BEFORE the cursed/legendary rarity
+  // shortcuts below — those shortcuts would otherwise still collapse every
+  // cursed or legendary ability card back onto the generic darkness/
+  // autogenes seal (Veil of Nought and Severing Answer are both legendary).
+  if (card.category === "ability") {
+    const sixAxes = SIX_AXES_CARD_SEAL[card.id];
+    if (sixAxes) return SEALS[sixAxes];
+    if (card.role) return SEALS[CATALOG_ROLE_SEAL[card.role]];
+  }
 
   if (card.rarity === "cursed") return SEALS.darkness;
   if (card.rarity === "legendary") return SEALS.autogenes;
