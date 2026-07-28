@@ -3290,11 +3290,19 @@ fn stepAbilityDispatch(
             // NO LONGER stubbed (Track Z1c "team peel" item, landed after
             // this field was bridged) — the field was carried + bridged
             // here FIRST so that port could consume it without another
-            // growth cut; the solo Kindling branch is live either way. `+1`
-            // matches the ward_shell/self_lattice tick-convention
-            // correction (Zig's header.tick is already TS's tick+1 at
-            // dispatch time, and Zig consumption sites compare against the
-            // new tick — see ward_shell's own arm).
+            // growth cut; the solo Kindling branch is live either way.
+            //
+            // TICK BASE — corrected (was `+ 1 + dur_ticks`, same off-by-one
+            // class as kindled_resolve's own fix, see that arm's comment
+            // for the full derivation): `stepAbilityDispatch` runs AFTER
+            // `state.header.tick += 1` already ran for this step, so
+            // `state.header.tick` here is ALREADY numerically equal to TS's
+            // `state.tick + 1`. TS's "aegis-share" case computes
+            // `state.tick + 1 + durTicks`; the Zig-side equivalent is
+            // therefore `state.header.tick + dur_ticks` — no extra `+1`.
+            // The stale `+1` here double-counted and landed the window one
+            // tick late vs TS on every cast; covered by
+            // aegisShareRallyLightCastParity.test.ts.
             .aegis_share => {
                 const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
                 const solo_ally = findNearestAllyIdx(
@@ -3303,7 +3311,7 @@ fn stepAbilityDispatch(
                     WARD_PEEL_RADIUS_PX * KIN_AEGIS_SHARE_RADIUS_MULTIPLIER,
                     false,
                 );
-                attacker.aegis_share_until_tick = state.header.tick + 1 + dur_ticks;
+                attacker.aegis_share_until_tick = state.header.tick + dur_ticks;
                 if (solo_ally < 0) {
                     attacker.kindling = @min(KINDLING_MAX, attacker.kindling + KIN_AEGIS_SHARE_SOLO_KINDLING_FEED);
                 }
@@ -3348,10 +3356,22 @@ fn stepAbilityDispatch(
             // multiplies its OWN speed/damage; see that helper). Consumed
             // at section 7's speed-mul composition, section 4's ranged
             // amp, and resolveInstantAoeCasts — the exact TS consumption
-            // set. Same `+1` tick-convention correction as aegis_share.
+            // set.
+            //
+            // TICK BASE — corrected (was `+ 1 + dur_ticks`, same off-by-one
+            // class as kindled_resolve's own fix and aegis_share's own arm
+            // just above, see either for the full derivation):
+            // `stepAbilityDispatch` runs AFTER `state.header.tick += 1`
+            // already ran for this step, so `state.header.tick` here is
+            // ALREADY numerically equal to TS's `state.tick + 1`. TS's
+            // "rally-light" case computes `state.tick + 1 + durTicks`; the
+            // Zig-side equivalent is therefore `state.header.tick +
+            // dur_ticks` — no extra `+1`. The stale `+1` here double-
+            // counted and landed the window one tick late vs TS on every
+            // cast; covered by aegisShareRallyLightCastParity.test.ts.
             .rally_light => {
                 const dur_ticks: u32 = @intFromFloat(@ceil((active_spec.duration_ms orelse 0) / @max(1.0, eff_dt)));
-                attacker.rally_light_until_tick = state.header.tick + 1 + dur_ticks;
+                attacker.rally_light_until_tick = state.header.tick + dur_ticks;
                 activated = true;
             },
             // Kindled Resolve (Paladin) — CONSUMPTION side shipped Phase 4a
