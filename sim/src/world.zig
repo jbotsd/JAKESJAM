@@ -518,29 +518,59 @@ fn maybeAwardFirstBlood(
 // SCOPE (v1 — deliberately narrower than TS's full chain; each cut was a
 // recorded gap, not an oversight, and each is orthogonal to whether the
 // core "hitscan build deals same-tick damage" behavior is correct).
-// Track Z5 item 3 (finish-line-goal.md) closed 3 of the 5 v1 cuts —
-// STATUS as of that pass:
-//   - STILL CUT: candidates are alive non-owner PLAYERS + static walls
-//     only. TS's `resolveHitscanShot` also sweeps Paper Double decoys and
-//     destructibles as candidate pools — unported here (a real geometry
-//     change: a THIRD candidate-kind category plus decoy/destructible
-//     damage-application hookup, bigger than the other 4 sub-items — left
-//     for a future pass, not attempted this one).
+// Track Z5 item 3 (finish-line-goal.md) closed 3 of the 5 v1 cuts in its
+// first pass, then a follow-up pass closed a 4th — STATUS as of that
+// follow-up:
+//   - CLOSED (follow-up pass): candidates were alive non-owner PLAYERS +
+//     static walls only. TS's `resolveHitscanShot` also sweeps Paper
+//     Double decoys and destructibles as candidate pools (World.ts:2393-
+//     2488) — this is now ported as a THIRD/FOURTH candidate-kind category
+//     alongside players, mirroring section 4's own projectile ×
+//     {destructible, paper-double, player} resolution pattern (the
+//     nearest-across-all-pools sweep + swap-remove-on-consume shape lives
+//     in `sweepHitscanCandidates` just below `applyHitscanHitOnPlayer`).
+//     A direct decoy/destructible hit takes raw `base_damage` only (no
+//     headshot/chaos/shooter-amp — those are player-hit-only, matching
+//     TS's `pellet.damage` used for `pendingPaperDoubleDamage`/
+//     `pendingHangoutDestructibleDamage`, distinct from the amp-scaled
+//     `finalDamage` chain `resolveRangedHit` composes for players). A
+//     decoy killed this way is picked up by this file's existing "6y"
+//     Paper Double death/expiry burst scan generically (no extra event
+//     needed at the hit site — that scan doesn't care which system zeroed
+//     the health); a destructible killed this way emits `.destructible_
+//     broken` directly, same as the real-projectile site, and (matching
+//     TS's own `pendingHangoutDestructibleDamage` apply site, World.ts:
+//     6926-6952, which every non-projectile damage source funnels
+//     through, melee included) does NOT trigger the exploding-barrel
+//     chain-AOE-vs-players reaction — that chain is a real-projectile-
+//     only path in TS too (`stepDestructibles`' own collision loop), never
+//     wired to the direct-damage funnel non-projectile sources use.
 //   - STILL CUT: pierce (ordered multi-hit along one ray, wall-terminated)
-//     IS ported. Split-spawn at the ray's terminal point is NOT — moot
+//     IS ported (and now walks decoy/destructible candidates too, not just
+//     players). Split-spawn at the ray's terminal point is NOT — moot
 //     today, since no Zig code path (real projectiles included) reads
 //     `split_count` to spawn children yet; hitscan isn't a NEW gap here,
 //     the same pre-existing one — there is no equivalent-projectile-path
 //     pattern to mirror, so this isn't a "small port" the way the other 4
-//     sub-items were.
-//   - CLOSED (partial — player-hit case only): impact-AOE routing
-//     (explosive/slow-field) now detonates into `pending_instant_aoe` at
-//     the ray's terminal point exactly like World.ts's own
-//     `pellet.impact === "explosive" || "slow-field"` branch, replacing
-//     per-hit direct damage entirely. A direct decoy/destructible hit
-//     ALSO taking its own point damage before the splash (World.ts:3047-
-//     3062) still depends on the decoy/destructible candidates cut above
-//     — not covered.
+//     sub-items were. Re-confirmed during the follow-up pass: `projectile.
+//     zig`'s `projectileSplitVelocities` computes the child-velocity fan
+//     (bit-exact parity-tested against TS's `spawnSplit` in
+//     `projectileLifecycleParity.test.ts`) but nothing in `world.zig`'s
+//     `stepWorld` ever CALLS it — no real-projectile death/expiry site
+//     materialises split children into `state.projectiles`, so the
+//     primitive exists in isolation with no orchestrator wired to any
+//     delivery path. Building that orchestrator from scratch is a
+//     separate, larger task (a new spawn site touching projectile
+//     lifecycle end-of-life handling generally, not a hitscan-specific
+//     port) — out of scope here, left exactly as documented.
+//   - CLOSED: impact-AOE routing (explosive/slow-field) detonates into
+//     `pending_instant_aoe` at the ray's terminal point exactly like
+//     World.ts's own `pellet.impact === "explosive" || "slow-field"`
+//     branch, replacing per-hit direct damage entirely. A direct decoy/
+//     destructible hit ALSO takes its own point damage before/alongside
+//     the splash (World.ts:3172-3204) — closed alongside the candidates
+//     cut above (same follow-up pass); the player-hit case was already
+//     covered by the first pass.
 //   - CLOSED: mirror shield's TS-side behavior ("no real projectile to
 //     reverse, so re-trace once back at the attacker instead") is now
 //     ported — see `HitscanHitOutcome` + `resolveHitscanMirrorBounce`.
@@ -949,16 +979,91 @@ fn applyHitscanHitOnPlayer(
     return .{}; // normal (non-mirror-shield) hit — no retrace requested.
 }
 
+/// Which of the three candidate-kind pools a hitscan ray's nearest hit
+/// belongs to (Track Z5 item 3's "decoy/destructible hitscan candidates"
+/// sub-item, follow-up pass) — mirrors `resolveHitscanShot`'s own
+/// `hitPlayerId` / `hitDecoyId` / `hitDestructibleId` triple (World.ts:
+/// 2428-2460), collapsed to one tagged result instead of three nullable
+/// fields since Zig has no natural "exactly one of three" union-of-null
+/// idiom as ergonomic as a plain enum here.
+const HitscanCandidateKind = enum(u8) { none = 0, player = 1, decoy = 2, destructible = 3 };
+
+/// Result of one `sweepHitscanCandidates` call: which pool won (if any),
+/// its index INTO THAT POOL's own `*_idx`/`*_box` arrays (not a world
+/// entity index — callers resolve that via `cand_idx`/`decoy_idx`/
+/// `dest_idx`), and the winning sweep `t` (defaults to the wall's own `t`
+/// when nothing beats it, matching `bestT = wallT` — the floor every
+/// candidate must beat — in `resolveHitscanShot`).
+const HitscanCandidateHit = struct {
+    kind: HitscanCandidateKind = .none,
+    slot: u32 = 0,
+    t: f64 = 1.0,
+};
+
+/// One swept-AABB pass per candidate-kind pool, keeping the SAME priority
+/// order `resolveHitscanShot` uses for its own three sequential `if
+/// (...Hit && ...Hit.t < bestT)` checks (World.ts:2434-2460): player
+/// checked first, then decoy overrides only if STRICTLY closer, then
+/// destructible overrides only if STRICTLY closer still. This ordering
+/// only matters on an exact-tie `t` between two different candidate
+/// kinds (an astronomically unlikely float coincidence with real per-tick
+/// positions, same caveat the existing player-pool doc comment above
+/// already makes for the pierce swap-remove vs. TS's order-preserving
+/// splice) — kept anyway for byte-for-byte behavioral parity with TS's
+/// own tie-break, not just "close enough."
+fn sweepHitscanCandidates(
+    mover: collision_types.AABB,
+    vxr: f64,
+    vyr: f64,
+    player_box: []const collision_types.AABB,
+    decoy_box: []const collision_types.AABB,
+    dest_box: []const collision_types.AABB,
+    wall_t: f64,
+) HitscanCandidateHit {
+    var result: HitscanCandidateHit = .{ .t = wall_t };
+
+    var player_hit: collision_types.SweepHit = undefined;
+    if (player_box.len > 0 and
+        collision_types.sweepAABB(mover, vxr, vyr, 1.0, player_box, &player_hit) and
+        player_hit.t < result.t)
+    {
+        result = .{ .kind = .player, .slot = @intCast(player_hit.index), .t = player_hit.t };
+    }
+
+    var decoy_hit: collision_types.SweepHit = undefined;
+    if (decoy_box.len > 0 and
+        collision_types.sweepAABB(mover, vxr, vyr, 1.0, decoy_box, &decoy_hit) and
+        decoy_hit.t < result.t)
+    {
+        result = .{ .kind = .decoy, .slot = @intCast(decoy_hit.index), .t = decoy_hit.t };
+    }
+
+    var dest_hit: collision_types.SweepHit = undefined;
+    if (dest_box.len > 0 and
+        collision_types.sweepAABB(mover, vxr, vyr, 1.0, dest_box, &dest_hit) and
+        dest_hit.t < result.t)
+    {
+        result = .{ .kind = .destructible, .slot = @intCast(dest_hit.index), .t = dest_hit.t };
+    }
+
+    return result;
+}
+
 /// Ray-trace ONE hitscan pellet from `(origin_x, origin_y)` along
 /// `aim_angle` out to `range_px`, gathering ordered hits against alive
-/// non-owner PLAYERS (v1 candidate pool — see the section header above
-/// for the full scope line) and applying damage immediately via
-/// `applyHitscanHitOnPlayer` — mirrors World.ts's `resolveHitscanShot`
-/// geometry for the player-hit case. Unlike TS's own `pendingHitscanHits`
-/// batch (deferred to avoid a stale-copy-on-write overwrite hazard on
-/// `players`, a per-tick RECORD there), Zig's `state.players` is a flat,
-/// directly-mutated array — a hit lands immediately with no equivalent
-/// hazard to defer around.
+/// non-owner PLAYERS, non-owner live Paper Double decoys, and live
+/// destructibles (Track Z5 item 3's "decoy/destructible hitscan
+/// candidates" sub-item closed this pool out to all three kinds — see the
+/// section header above for the full scope line) and applying damage
+/// immediately: players via `applyHitscanHitOnPlayer` (full mitigation
+/// chain), decoys/destructibles via a direct raw-`base_damage` write (no
+/// mitigation — mirrors World.ts's `resolveHitscanShot` geometry +
+/// `pendingPaperDoubleDamage`/`pendingHangoutDestructibleDamage` push for
+/// those two candidate kinds). Unlike TS's own `pendingHitscanHits` batch
+/// (deferred to avoid a stale-copy-on-write overwrite hazard on `players`,
+/// a per-tick RECORD there), Zig's `state.players`/`state.paper_doubles`/
+/// `state.destructibles` are flat, directly-mutated arrays — a hit lands
+/// immediately with no equivalent hazard to defer around.
 fn resolveHitscanFire(
     state: *world_state.WorldState,
     shooter_idx: u32,
@@ -1027,6 +1132,57 @@ fn resolveHitscanFire(
         }
     }
 
+    // Decoy candidate pool (Track Z5 item 3's "decoy/destructible hitscan
+    // candidates" sub-item, follow-up pass) — mirrors `resolveHitscanShot`'s
+    // own decoy pool build (World.ts:2393-2403): every live (health > 0 AND
+    // remaining_ms > 0) Paper Double NOT owned by the shooter. Owner-
+    // exclusion matches section 4's real-projectile × decoy loop precedent
+    // ("a caster's own shot never pops their own decoy").
+    var decoy_idx: [world_state.MAX_PAPER_DOUBLES]u32 = undefined;
+    var decoy_box: [world_state.MAX_PAPER_DOUBLES]collision_types.AABB = undefined;
+    var decoy_n: u32 = 0;
+    {
+        const shooter_id_len = state.players[shooter_idx].id_len;
+        const shooter_id = state.players[shooter_idx].id_bytes[0..shooter_id_len];
+        var pdi: u32 = 0;
+        while (pdi < state.paper_double_count) : (pdi += 1) {
+            const pd = &state.paper_doubles[pdi];
+            if (pd.health <= 0 or pd.remaining_ms <= 0) continue;
+            if (pd.owner_id_len == shooter_id_len and
+                std.mem.eql(u8, pd.owner_id_bytes[0..pd.owner_id_len], shooter_id))
+            {
+                continue;
+            }
+            decoy_idx[decoy_n] = pdi;
+            decoy_box[decoy_n] = .{
+                .x = pd.x - PAPER_DOUBLE_BODY_HALF_W,
+                .y = pd.y - PAPER_DOUBLE_BODY_HALF_H,
+                .w = PAPER_DOUBLE_BODY_HALF_W * 2.0,
+                .h = PAPER_DOUBLE_BODY_HALF_H * 2.0,
+            };
+            decoy_n += 1;
+        }
+    }
+
+    // Destructible candidate pool (same sub-item) — mirrors
+    // `resolveHitscanShot`'s own destructible pool build (World.ts:2405-
+    // 2413): every destructible with health > 0. No owner exclusion —
+    // matches section 4's real-projectile × destructible loop, which has
+    // none either (anyone's shot can break a barrel/dummy).
+    var dest_idx: [world_state.MAX_DESTRUCTIBLES]u32 = undefined;
+    var dest_box: [world_state.MAX_DESTRUCTIBLES]collision_types.AABB = undefined;
+    var dest_n: u32 = 0;
+    {
+        var ddi: u32 = 0;
+        while (ddi < state.destructible_count) : (ddi += 1) {
+            const d = &state.destructibles[ddi];
+            if (d.health <= 0) continue;
+            dest_idx[dest_n] = ddi;
+            dest_box[dest_n] = destructible.centerToAABB(d.x, d.y, d.width, d.height);
+            dest_n += 1;
+        }
+    }
+
     // Impact-AOE routing (Track Z5 item 3's "impact-AOE routing" sub-item)
     // — mirrors World.ts's own `pellet.impact === "explosive" || "slow-
     // field"` branch (World.ts:3044-3068) EXACTLY: for these two impact
@@ -1040,21 +1196,38 @@ fn resolveHitscanFire(
     // shortcut — neither impact kind combines with `pierceCount` in the
     // shipped card pool (Explosive Facet/Cataclysmic Prism/Slow Field/
     // Frost Prism all resolve at pierceCount 0, the same fact World.ts's
-    // own comment there relies on). PARTIAL vs TS: a direct hit on a decoy
-    // or destructible additionally takes its own point damage before the
-    // splash there (World.ts:3047-3062) — this function's candidate pool
-    // is still players-only (item 3's OWN "decoy/destructible hitscan
-    // candidates" sub-item, unported, see the section header above), so
-    // that half stays a recorded gap, not silently claimed here.
+    // own comment there relies on). A direct hit on a decoy or destructible
+    // additionally takes its own point damage before/alongside the splash
+    // (World.ts:3172-3204's "an explosive shot must still be able to pop a
+    // dummy/decoy directly") — now ported below (follow-up pass), matching
+    // the raw-`base_damage`-only rule the pierce loop further down uses for
+    // the same two candidate kinds.
     if (impact_kind == .explosive or impact_kind == .slow_field) {
-        var player_hit: collision_types.SweepHit = undefined;
-        const player_found = if (cand_n > 0)
-            collision_types.sweepAABB(mover, vxr, vyr, 1.0, cand_box[0..cand_n], &player_hit)
-        else
-            false;
-        const best_t: f64 = if (player_found and player_hit.t < wall_t) player_hit.t else wall_t;
-        const hx = origin_x + vxr * best_t;
-        const hy = origin_y + vyr * best_t;
+        const nearest = sweepHitscanCandidates(
+            mover,
+            vxr,
+            vyr,
+            cand_box[0..cand_n],
+            decoy_box[0..decoy_n],
+            dest_box[0..dest_n],
+            wall_t,
+        );
+        const hx = origin_x + vxr * nearest.t;
+        const hy = origin_y + vyr * nearest.t;
+        switch (nearest.kind) {
+            .decoy => {
+                const pd_ptr = &state.paper_doubles[decoy_idx[nearest.slot]];
+                pd_ptr.health = @max(0.0, pd_ptr.health - base_damage);
+            },
+            .destructible => {
+                const dest_ptr = &state.destructibles[dest_idx[nearest.slot]];
+                dest_ptr.health = destructible.applyDamage(dest_ptr.health, base_damage);
+                if (dest_ptr.health <= 0) {
+                    emitEvent(state, .destructible_broken, -1, -1, dest_ptr.id, 0, dest_ptr.x, dest_ptr.y);
+                }
+            },
+            .player, .none => {},
+        }
         if (state.pending_instant_aoe_count < world_state.MAX_PENDING_INSTANT_AOE) {
             state.pending_instant_aoe[state.pending_instant_aoe_count] = .{
                 .x = hx,
@@ -1083,79 +1256,122 @@ fn resolveHitscanFire(
     const max_hits = pierce_budget + 1;
     var hits: u32 = 0;
     while (hits < max_hits) : (hits += 1) {
-        var player_hit: collision_types.SweepHit = undefined;
-        const player_found = if (cand_n > 0)
-            collision_types.sweepAABB(mover, vxr, vyr, 1.0, cand_box[0..cand_n], &player_hit)
-        else
-            false;
-
-        var best_t: f64 = wall_t;
-        var hit_idx: i32 = -1;
-        var hit_slot: u32 = 0;
-        if (player_found and player_hit.t < best_t) {
-            best_t = player_hit.t;
-            hit_slot = @intCast(player_hit.index);
-            hit_idx = @intCast(cand_idx[hit_slot]);
-        }
-
-        if (hit_idx < 0) break; // wall, or a clean miss at max range — ray ends.
-
-        const hx = origin_x + vxr * best_t;
-        const hy = origin_y + vyr * best_t;
-        const half_h = cand_box[hit_slot].h / 2.0;
-        const outcome = applyHitscanHitOnPlayer(
-            state,
-            @intCast(hit_idx),
-            @intCast(shooter_idx),
-            hx,
-            hy,
-            half_h,
-            base_damage,
-            element,
-            chaos_profile,
-            origin_x,
-            origin_y,
-            aim_angle,
-            eff_dt,
-            is_fighting,
-            leech_fraction,
+        const nearest = sweepHitscanCandidates(
+            mover,
+            vxr,
+            vyr,
+            cand_box[0..cand_n],
+            decoy_box[0..decoy_n],
+            dest_box[0..dest_n],
+            wall_t,
         );
+        if (nearest.kind == .none) break; // wall, or a clean miss at max range — ray ends.
 
-        // Mirror-shield retrace (Track Z5 item 3's "mirror-shield retrace"
-        // sub-item) — mirrors World.ts's own post-`resolveRangedHit` bounce
-        // exactly (World.ts:4950-4995): ONE fresh ray back the way this
-        // pellet came, fired FROM the blocker's own position, now owned by
-        // the blocker. `backAngle = atan2(pending.source.vy, pending.
-        // source.vx) + PI` in TS reduces to `aim_angle + PI` here (TS's
-        // pellet vx/vy are `cos(aimAngle)`/`sin(aimAngle)`, the exact same
-        // unit vector `vxr`/`vyr` above are scaled from) — no separate
-        // atan2 round-trip needed. Single bounce only, no further
-        // reflection (TS: "never pierces — [0] is always the only trace" —
-        // this discards the retrace's OWN `HitscanHitOutcome`, so a second
-        // mirror shield on the bounced-back target never chains again),
-        // and it never touches this ray's own `cand_*`/pierce bookkeeping —
-        // a fully separate, self-contained side event.
-        if (outcome.mirror_bounce) {
-            resolveHitscanMirrorBounce(
-                state,
-                outcome.bouncer_idx,
-                aim_angle,
-                range_px,
-                radius,
-                base_damage,
-                element,
-                chaos_profile,
-                eff_dt,
-                is_fighting,
-                leech_fraction,
-            );
+        const hx = origin_x + vxr * nearest.t;
+        const hy = origin_y + vyr * nearest.t;
+
+        switch (nearest.kind) {
+            .none => unreachable,
+            .player => {
+                const hit_slot = nearest.slot;
+                const hit_idx = cand_idx[hit_slot];
+                const half_h = cand_box[hit_slot].h / 2.0;
+                const outcome = applyHitscanHitOnPlayer(
+                    state,
+                    hit_idx,
+                    @intCast(shooter_idx),
+                    hx,
+                    hy,
+                    half_h,
+                    base_damage,
+                    element,
+                    chaos_profile,
+                    origin_x,
+                    origin_y,
+                    aim_angle,
+                    eff_dt,
+                    is_fighting,
+                    leech_fraction,
+                );
+
+                // Mirror-shield retrace (Track Z5 item 3's "mirror-shield
+                // retrace" sub-item) — mirrors World.ts's own post-
+                // `resolveRangedHit` bounce exactly (World.ts:4950-4995): ONE
+                // fresh ray back the way this pellet came, fired FROM the
+                // blocker's own position, now owned by the blocker.
+                // `backAngle = atan2(pending.source.vy, pending.source.vx) +
+                // PI` in TS reduces to `aim_angle + PI` here (TS's pellet
+                // vx/vy are `cos(aimAngle)`/`sin(aimAngle)`, the exact same
+                // unit vector `vxr`/`vyr` above are scaled from) — no
+                // separate atan2 round-trip needed. Single bounce only, no
+                // further reflection (TS: "never pierces — [0] is always the
+                // only trace" — this discards the retrace's OWN
+                // `HitscanHitOutcome`, so a second mirror shield on the
+                // bounced-back target never chains again), and it never
+                // touches this ray's own `cand_*`/pierce bookkeeping — a
+                // fully separate, self-contained side event. Player-only,
+                // matching TS's own bounce call (World.ts:5084-5096 passes
+                // `undefined, undefined` for decoys/destructibles) —
+                // `resolveHitscanMirrorBounce` is untouched by this pass.
+                if (outcome.mirror_bounce) {
+                    resolveHitscanMirrorBounce(
+                        state,
+                        outcome.bouncer_idx,
+                        aim_angle,
+                        range_px,
+                        radius,
+                        base_damage,
+                        element,
+                        chaos_profile,
+                        eff_dt,
+                        is_fighting,
+                        leech_fraction,
+                    );
+                }
+
+                // Splice the pierced candidate out of the live pool so the
+                // next pass's sweep finds whatever's next behind it.
+                cand_n -= 1;
+                cand_idx[hit_slot] = cand_idx[cand_n];
+                cand_box[hit_slot] = cand_box[cand_n];
+            },
+            .decoy => {
+                // Decoy/destructible hitscan candidates (Track Z5 item 3,
+                // follow-up pass) — direct point damage only, no mitigation
+                // chain (mirrors World.ts's `pendingPaperDoubleDamage` push:
+                // raw `pellet.damage`, no headshot/chaos/shooter-amp — those
+                // only apply to `resolveRangedHit`'s player path). A death
+                // discovered here (health drops to <= 0) is picked up
+                // generically by this tick's own "6y" Paper Double death/
+                // expiry burst scan further down this file — no separate
+                // event needed at this site, matching TS's own "just apply
+                // the damage, stepPaperDoubles' burst detection finds it
+                // later" shape. A pierce budget lets the ray continue past a
+                // popped decoy exactly like a pierced player.
+                const hit_slot = nearest.slot;
+                const pd_ptr = &state.paper_doubles[decoy_idx[hit_slot]];
+                pd_ptr.health = @max(0.0, pd_ptr.health - base_damage);
+                decoy_n -= 1;
+                decoy_idx[hit_slot] = decoy_idx[decoy_n];
+                decoy_box[hit_slot] = decoy_box[decoy_n];
+            },
+            .destructible => {
+                // Same sub-item — mirrors World.ts's
+                // `pendingHangoutDestructibleDamage` push exactly: raw
+                // `pellet.damage`, `destructible-broken` on kill, no
+                // exploding-barrel chain-AOE (that chain is real-projectile-
+                // only in TS too, see the section-header note above).
+                const hit_slot = nearest.slot;
+                const dest_ptr = &state.destructibles[dest_idx[hit_slot]];
+                dest_ptr.health = destructible.applyDamage(dest_ptr.health, base_damage);
+                if (dest_ptr.health <= 0) {
+                    emitEvent(state, .destructible_broken, -1, -1, dest_ptr.id, 0, dest_ptr.x, dest_ptr.y);
+                }
+                dest_n -= 1;
+                dest_idx[hit_slot] = dest_idx[dest_n];
+                dest_box[hit_slot] = dest_box[dest_n];
+            },
         }
-
-        // Splice the pierced candidate out of the live pool so the next
-        // pass's sweep finds whatever's next behind it.
-        cand_n -= 1;
-        cand_idx[hit_slot] = cand_idx[cand_n];
-        cand_box[hit_slot] = cand_box[cand_n];
     }
 }
 

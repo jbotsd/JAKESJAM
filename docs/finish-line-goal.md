@@ -173,20 +173,42 @@ precedent as convergence-goal.md.
   margin; bench baseline refreshed and stepPlayer reversal settled)
 - Z4 flip: **AWAITING JAKE** (unblocked — Z3 is done, ready to ask)
 - Z5 residuals: **DONE, item 1 + item 2 fully closed; item 3 (hitscan v1
-  scope cuts) closed 3 of 5 sub-items** (2026-07-26): kindled_resolve cast
-  wired (KIN_KINDLED_RESOLVE_KINDLING_COST added, parity test in
-  sim/test/smoke.zig — search "Kindled Resolve: cast"); all 9
-  classModifiers-codegen-gap cards now cross (8 via a generalized
+  scope cuts) closed 4 of 5 sub-items** (2026-07-26, follow-up pass
+  2026-07-28): kindled_resolve cast wired (KIN_KINDLED_RESOLVE_KINDLING_COST
+  added, parity test in sim/test/smoke.zig — search "Kindled Resolve: cast");
+  all 9 classModifiers-codegen-gap cards now cross (8 via a generalized
   `patchClassModifierGapFields` stopgap in fireConfigShared.ts, Stolen
   Fangs' leech already had one — parity in
   classModifierGapFieldsParity.test.ts); hitscan's shooter-side amp chain +
   Ghost Guard evasion and mirror-shield retrace are now ported (parity in
   hitscanZ5ScopeCutsParity.test.ts) and impact-AOE routing is ported for
-  the player-hit case. Still open: decoy/destructible hitscan candidates
-  (a real geometry change, bigger than a small port) and split-spawn (no
-  Zig substrate exists for ANY delivery path yet, real-projectile
-  included — not a hitscan-specific gap, nothing to mirror). See
-  world.zig's "Hitscan resolution" section header for the authoritative
+  the player-hit case. Follow-up pass (2026-07-28) closed decoy/destructible
+  hitscan candidates too: `resolveHitscanFire`'s ray sweep now treats live
+  non-owner Paper Double decoys and destructibles as a third/fourth
+  candidate-kind pool alongside players, mirroring section 4's own
+  projectile x {destructible, paper-double, player} resolution pattern
+  (raw-`base_damage`-only writes, no headshot/chaos/shooter-amp — those
+  stay player-hit-only; a decoy killed this way is picked up for free by
+  the pre-existing generic Paper Double death/expiry burst scan; a
+  destructible killed this way emits `destructible_broken` with NO
+  exploding-barrel chain-AOE, matching TS's own real-projectile-only chain
+  path) — 9 new parity tests in sim/test/smoke.zig (search "Hitscan
+  decoy/destructible candidates"); no JS/TS lockstep coverage exists for
+  the decoy half specifically since `worldStateBridge.ts`'s
+  `packWorldState`/`unpackWorldState` don't pack/unpack Paper Doubles at
+  all yet (a separate, pre-existing, already-documented bridge gap — see
+  that file's own `PAPER_DOUBLE_ENTITY_SIZE` comment), so those tests drive
+  `stepWorld` natively instead. Still open: split-spawn — RE-CONFIRMED
+  during the follow-up pass, still true: no Zig code path (real
+  projectiles included) reads `split_count` to spawn children yet.
+  `projectile.zig`'s `projectileSplitVelocities` computes the child-
+  velocity fan (bit-exact parity-tested against TS's `spawnSplit` in
+  `projectileLifecycleParity.test.ts`) but nothing in `world.zig`'s
+  `stepWorld` ever calls it — no death/expiry site materialises split
+  children into `state.projectiles` for ANY delivery path, so there is no
+  equivalent-projectile-path pattern to mirror onto hitscan; building that
+  orchestrator from scratch is a separate, larger task, not attempted here.
+  See world.zig's "Hitscan resolution" section header for the authoritative
   per-sub-item STATUS list.
 - F1 STAB verb: **DONE — reviewed, MERGED, deployed live** (2026-07-26/27,
   commit 66c5e1f). TS FSM + Zig mirror + parity gate (meleeSwingMemoryBridge
