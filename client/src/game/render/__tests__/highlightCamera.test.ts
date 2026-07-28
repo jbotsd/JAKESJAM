@@ -41,12 +41,49 @@ describe("highlight camera (CL.E)", () => {
     expect(Math.abs(victim.x - s.x)).toBeLessThan(halfW);
   });
 
-  test("impossible separation: the star wins the frame", () => {
-    const star = { x: 500, y: 900 };
-    const victim = { x: 4000, y: 900 };
-    const s = settle(star, victim);
+  test("D9 (clip-goal STUDY 4): long-range kill during the final-kill punch beat still frames both", () => {
+    // The reproduced bug: STUDY 4's real clip B showed the camera at its
+    // (old) widest right before the credited kill, then punching in
+    // exactly on the kill-credit frame — the punch multiply happening
+    // AFTER fitZoom was computed re-violated containment at the one moment
+    // that mattered. 2000px separation is well within a single production
+    // map's width (production arenas run to 3000+), and finalPunch=1 is the
+    // exact kill-credit condition (killBeatEnvelope's hold phase).
+    const star = { x: 200, y: 900 };
+    const victim = { x: 2200, y: 900 };
+    const s = settle(star, victim, 1, true);
     const halfW = VIEW_W / (2 * s.zoom);
     expect(Math.abs(star.x - s.x)).toBeLessThan(halfW);
+    expect(Math.abs(victim.x - s.x)).toBeLessThan(halfW);
+  });
+
+  test("D9: extreme separation approaching the largest registered arena's diagonal still frames both, mid-punch", () => {
+    // Generated arenas run up to 3000×2200 (docs/clip-goal.md D9); a
+    // corner-to-corner duel exercises both axes at once, during the same
+    // finalPunch condition that broke containment before this fix.
+    const star = { x: 100, y: 2050 };
+    const victim = { x: 2900, y: 150 };
+    const s = settle(star, victim, 1, true);
+    const halfW = VIEW_W / (2 * s.zoom);
+    const halfH = VIEW_H / (2 * s.zoom);
+    expect(Math.abs(star.x - s.x)).toBeLessThan(halfW);
+    expect(Math.abs(victim.x - s.x)).toBeLessThan(halfW);
+    expect(Math.abs(star.y - s.y)).toBeLessThan(halfH);
+    expect(Math.abs(victim.y - s.y)).toBeLessThan(halfH);
+  });
+
+  test("beyond any real arena: falls back to a fair midpoint rather than deleting the victim", () => {
+    // Separation past what even the lowered floor can contain (no real map
+    // is this big — this is a defensive/graceful-degradation check, not a
+    // reproduced case). The old behavior snapped fully to the star here,
+    // which is exactly the "victim never appears" symptom D9 reproduced;
+    // the fix should split the difference instead of favoring either actor.
+    const star = { x: 500, y: 900 };
+    const victim = { x: 8500, y: 900 };
+    const s = settle(star, victim);
+    const distFromStar = Math.abs(star.x - s.x);
+    const distFromVictim = Math.abs(victim.x - s.x);
+    expect(distFromStar).toBeCloseTo(distFromVictim, 0);
   });
 
   test("vertical bias: an upper-platform victim re-frames the camera upward", () => {

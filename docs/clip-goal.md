@@ -1104,6 +1104,43 @@ C1, B7, B11 → RETIRED, confirmed clean on all 3 fresh clips. CL.B.1, D5,
 D6, B2 → not independently reconfirmed this session (see above; not
 regressed, just not tractable with this footage/budget). D9 → NEW.
 
+**D9 FIX (2026-07-28) — zoom-to-fit floor lowered + punch beat made
+containment-safe, RETIRED (unit-tested; no fresh capture this pass).** Two
+compounding root causes in `highlightCamera.ts`, both fixed:
+- **The floor itself.** `HIGHLIGHT_MIN_ZOOM` (1.25) was a "never zoom wider
+  than this" cap that silently overrode the fit computation whenever true
+  separation demanded going wider — exactly backwards for a long-range kill.
+  Lowered to 0.35, derived from the largest registered arena (generated
+  arenas run 3000×2200; vessel-nexus/skyseam 3000×1100) so the fit box can
+  actually reach any separation those maps can produce, with margin.
+- **The punch beat re-broke containment on top of a correct fit.** The
+  kill-beat "punch in" (+15%/+25% zoom) was applied AFTER `fitZoom` was
+  computed, so a duel framed exactly at the fit boundary got pushed past it
+  right on the kill-credit frame — the one moment the death has to read.
+  This independently reproduces the clip-B symptom even at separations well
+  inside a single map (a 2000px duel, not a corner-to-corner extreme). Fix:
+  the fit box is now discounted by the SAME punch multiplier before
+  `fitZoom` is clamped, so `targetZoom` (fitZoom × multiplier) can never
+  exceed what containment allows, through the whole punch envelope.
+- **Fallback fairness.** `clampAnchor`'s "can't fit" branch used to snap
+  fully to the star (the literal "victim never appears" symptom); it now
+  splits to the midpoint. With the two fixes above this branch should be
+  unreachable on any registered map — kept as a defensive last resort, not
+  a primary mechanism.
+- Tests: `highlightCamera.test.ts` — new coverage for a long-range kill
+  during a full final-punch beat (2000px separation, the isolated
+  punch-interaction case), a corner-to-corner duel on the largest arena's
+  diagonal mid-punch, and the beyond-any-real-map fallback (now asserts fair
+  midpoint framing, not "star wins" — the old assertion literally pinned the
+  bug being fixed here, updated accordingly). Full client suite green
+  (1905 pass/3 skip), server suite green (334 pass), both typechecks clean.
+- **Not done this pass:** no fresh real capture re-confirming on tape (the
+  merge-coordinator's STUDY 5, if one follows, should re-run clip B's exact
+  scenario — a long-range multi-kill cluster — through the live pipeline to
+  close the loop the way STUDY 4 did for D1). This lands as unit-tested
+  framing-math coverage per the task's own stated minimum bar, not a
+  re-verified clip.
+
 ---
 
 **BASELINE (2026-07-17)** — study of `/c/dff7f450-55dc-4316-8df7-654ebf4e2ccb`:
