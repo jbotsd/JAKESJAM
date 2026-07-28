@@ -533,6 +533,375 @@ test "paper double: owner-exclusion — a caster's own projectile never damages 
     try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
 }
 
+// ── Hitscan decoy/destructible candidates (Track Z5 item 3, follow-up
+//    pass, finish-line-goal.md) — `resolveHitscanFire`'s ray sweep now
+//    treats Paper Double decoys and destructibles as full candidate-kind
+//    pools alongside players (world.zig's "Hitscan resolution" section
+//    header documents the complete per-sub-item STATUS list). No JS/TS
+//    cross-engine lockstep coverage exists for the decoy half specifically
+//    — `worldStateBridge.ts`'s `packWorldState`/`unpackWorldState` don't
+//    pack/unpack Paper Doubles at all yet (a separate, pre-existing,
+//    already-documented bridge gap — see that file's own
+//    `PAPER_DOUBLE_ENTITY_SIZE` doc comment: "Not yet spawned/packed by
+//    the TS bridge"), so a decoy seeded JS-side would never actually reach
+//    wasm memory for a `hitscanZ5ScopeCutsParity.test.ts`-style lockstep
+//    run. These tests drive `stepWorld` natively instead, hand-seeding
+//    `state.paper_doubles`/`state.destructibles` directly — the same
+//    "bypass the unrelated bridge gap, prove the Zig-internal behavior"
+//    precedent the Paper Double section above already established for
+//    the real-projectile x decoy loop.
+//
+//    Geometry note: every test below fires along a near-perfectly
+//    horizontal ray by aiming `aim_y = shooter.y - 66` (canceling
+//    weapon.zig's own MUZZLE_ANCHOR_UP (60) + the first shot's fixed
+//    MUZZLE_HAND_SPREAD (6) — `throw_hand_parity` starts at 0, so the
+//    FIRST shot always takes `hand = (0 ^ 1) & 1 == 1`, i.e. `side =
+//    -1.0`, a fixed, deterministic combination for a single-shot test)
+//    with a distant `aim_x`, so every target placed at that same
+//    `y = shooter.y - 66` sits (near-)exactly on the ray regardless of x
+//    — avoids hand-deriving the muzzle's exact sub-pixel position per
+//    test. `playerMuzzlePosition` itself uses exact sqrt/division (no
+//    LUT); only the final fire-angle recompute feeds `trig.lutCos`/
+//    `lutSin` (1024-entry LUT, "effective precision well below 0.001°"
+//    per its own doc comment) — negligible sub-pixel drift over the
+//    travel distances these tests use, well inside every target's own
+//    hitbox margin. ─────────────────────────────────────────────────────
+
+fn hitscanFireConfig(range_px: f64, pierce_count: u32) root.world_state.ResolvedFireConfig {
+    return .{
+        .damage = 20,
+        .fire_rate = 4,
+        .projectile_speed = 1,
+        .projectile_lifetime_seconds = 1,
+        .spread_radians = 0,
+        .range_px = range_px,
+        .homing_strength = 0,
+        .acceleration_multiplier = 0,
+        .gravity_scale = 0,
+        .slow_multiplier = 1,
+        .impact_radius_px = 0,
+        .size_multiplier = 1,
+        .speed_multiplier = 1,
+        .lifetime_multiplier = 1,
+        .projectile_count = 1,
+        .bounces = 0,
+        .pierce_count = pierce_count,
+        .split_count = 0,
+        .shape = .circle,
+        .element = .neutral,
+        .pathing = .straight,
+        .impact = .none,
+        .valid = 1,
+        .delivery = 1, // raycast/hitscan — world_state.zig ResolvedFireConfig.delivery doc comment
+    };
+}
+
+const RAY_Y: f64 = -66.0; // shooter.y (0) - MUZZLE_ANCHOR_UP (60) - MUZZLE_HAND_SPREAD (6)
+
+fn setupHitscanShooter(state: *root.world_state.WorldState, idx: usize, id: []const u8, range_px: f64, pierce_count: u32) void {
+    state.players[idx].flags.alive = true;
+    state.players[idx].health = 100;
+    state.players[idx].x = 0;
+    state.players[idx].y = 0;
+    state.players[idx].aim_x = 100_000; // far off-axis point, only its DIRECTION matters
+    state.players[idx].aim_y = RAY_Y;
+    state.players[idx].current_keys = FIRE_BIT;
+    setPlayerId(&state.players[idx], id);
+    state.player_fire_config[idx] = hitscanFireConfig(range_px, pierce_count);
+}
+
+test "hitscan decoy candidates: a raycast shot damages a non-owner live decoy directly, raw damage only (no headshot/chaos/amp mitigation)" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    setupHitscanShooter(&state, 0, "shooter", 500, 0);
+
+    state.paper_double_count = 1;
+    state.paper_doubles[0] = .{
+        .x = 200,
+        .y = RAY_Y,
+        .vx = 0,
+        .vy = 0,
+        .health = 50,
+        .remaining_ms = 2500,
+        .id = 1,
+        .owner_id_len = 0, // unowned — a valid candidate for anyone's shot
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // 50 - 20 (raw base_damage — no headshot/chaos/shooter-amp; those only
+    // apply to the player mitigation chain, `applyHitscanHitOnPlayer`,
+    // matching World.ts's `pendingPaperDoubleDamage` push using raw
+    // `pellet.damage`) == 30.
+    try std.testing.expectApproxEqAbs(@as(f64, 30.0), state.paper_doubles[0].health, 1e-9);
+    try std.testing.expectEqual(@as(u32, 1), state.paper_double_count); // still alive, not compacted
+}
+
+test "hitscan decoy candidates: owner-exclusion — the shooter's own decoy is never a candidate for their own shot" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    setupHitscanShooter(&state, 0, "shooter", 500, 0);
+
+    state.paper_double_count = 1;
+    state.paper_doubles[0] = .{
+        .x = 200,
+        .y = RAY_Y,
+        .vx = 0,
+        .vy = 0,
+        .health = 50,
+        .remaining_ms = 2500,
+        .id = 1,
+        .owner_id_len = state.players[0].id_len,
+        .owner_id_bytes = state.players[0].id_bytes,
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // Untouched — same "a caster's own shot never pops their own decoy"
+    // precedent section 4's real-projectile x decoy loop already
+    // established (the owner-exclusion projectile test above).
+    try std.testing.expectApproxEqAbs(@as(f64, 50.0), state.paper_doubles[0].health, 1e-9);
+}
+
+test "hitscan decoy candidates: killing a decoy via hitscan triggers the SAME death-burst the pre-existing generic Paper Double death/expiry burst scan already fires for a projectile kill or lifetime expiry — no extra plumbing needed at the hitscan hit site" {
+    var state = freshFightingState();
+    state.player_count = 3; // 0 = shooter, 1 = decoy's owner (the caster), 2 = bystander in burst range
+    setupHitscanShooter(&state, 0, "shooter", 500, 0);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 1000; // far away — irrelevant to the geometry, just needs a roster slot
+    state.players[1].y = 1000;
+    setPlayerId(&state.players[1], "caster");
+
+    state.players[2].flags.alive = true;
+    state.players[2].health = 100;
+    state.players[2].x = 200; // same x as the decoy
+    state.players[2].y = 0; // 66px off the ray's own y — well clear of a direct hit
+    setPlayerId(&state.players[2], "bystander");
+
+    state.paper_double_count = 1;
+    state.paper_doubles[0] = .{
+        .x = 200,
+        .y = RAY_Y,
+        .vx = 0,
+        .vy = 0,
+        .health = 15, // dies from the 20-damage hit
+        .remaining_ms = 2500,
+        .id = 7,
+        .owner_id_len = state.players[1].id_len,
+        .owner_id_bytes = state.players[1].id_bytes,
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(u32, 0), state.paper_double_count); // died + compacted this tick
+    // Burst: NINJA_PAPER_DOUBLE_BURST_RADIUS_PX=90 (bystander is
+    // sqrt(0^2+66^2)=66px away, inside), NINJA_PAPER_DOUBLE_BURST_DAMAGE=10.
+    try std.testing.expectApproxEqAbs(@as(f64, 90.0), state.players[2].health, 1e-9);
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health); // caster excluded from own burst
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[0].health); // shooter untouched
+}
+
+test "hitscan pierce: a pierce budget lets the ray continue past a popped decoy to also hit a player standing behind it" {
+    var state = freshFightingState();
+    state.player_count = 2; // 0 = shooter, 1 = victim behind the decoy
+    setupHitscanShooter(&state, 0, "shooter", 500, 1); // pierce_count=1
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 350;
+    state.players[1].y = RAY_Y; // dead body-centre — no headshot
+    setPlayerId(&state.players[1], "victim");
+
+    state.paper_double_count = 1;
+    state.paper_doubles[0] = .{
+        .x = 200,
+        .y = RAY_Y,
+        .vx = 0,
+        .vy = 0,
+        .health = 10, // dies from the 20-damage hit (clamped to 0)
+        .remaining_ms = 2500,
+        .id = 1,
+        .owner_id_len = 0,
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), state.paper_doubles[0].health, 1e-9);
+    // Plain unbuffed hit: 100 - 20 == 80 — proves the pierced ray reached
+    // past the popped decoy and still landed on the player behind it.
+    try std.testing.expectApproxEqAbs(@as(f64, 80.0), state.players[1].health, 1e-9);
+}
+
+test "hitscan destructible candidates: a raycast shot damages a live destructible directly, raw damage only" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    setupHitscanShooter(&state, 0, "shooter", 500, 0);
+
+    state.destructible_count = 1;
+    state.destructibles[0] = .{
+        .x = 200,
+        .y = RAY_Y,
+        .width = 32,
+        .height = 64,
+        .health = 50,
+        .id = 101,
+        .flags = 0, // non-explosive, non-flammable — isolates this from any chain question
+        .kind = .box,
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 30.0), state.destructibles[0].health, 1e-9); // 50 - 20
+    try std.testing.expectEqual(@as(u32, 1), state.destructible_count); // still alive
+    var saw_broken = false;
+    var ei: u32 = 0;
+    while (ei < state.event_count) : (ei += 1) {
+        if (state.events[ei].kind == @intFromEnum(root.world_state.SimEventKind.destructible_broken)) saw_broken = true;
+    }
+    try std.testing.expect(!saw_broken);
+}
+
+test "hitscan destructible candidates: breaking a destructible via hitscan emits destructible_broken, with NO exploding-barrel chain-AOE (that chain is a real-projectile-only path in TS too, never wired to the direct-damage funnel non-projectile sources use)" {
+    var state = freshFightingState();
+    state.player_count = 2; // 0 = shooter, 1 = bystander well within EXPLOSION_RADIUS
+    setupHitscanShooter(&state, 0, "shooter", 500, 0);
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 210; // 10px from the destructible centre — inside EXPLOSION_RADIUS (80)
+    state.players[1].y = RAY_Y;
+    setPlayerId(&state.players[1], "bystander");
+
+    state.destructible_count = 1;
+    state.destructibles[0] = .{
+        .x = 200,
+        .y = RAY_Y,
+        .width = 32,
+        .height = 64,
+        .health = 15, // dies from the 20-damage hit
+        .id = 101,
+        .flags = 1, // explosive barrel — proves the chain STILL doesn't fire via this path
+        .kind = .barrel,
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), state.destructibles[0].health, 1e-9);
+    var saw_broken = false;
+    var ei: u32 = 0;
+    while (ei < state.event_count) : (ei += 1) {
+        if (state.events[ei].kind == @intFromEnum(root.world_state.SimEventKind.destructible_broken) and
+            state.events[ei].entity_id == 101)
+        {
+            saw_broken = true;
+        }
+    }
+    try std.testing.expect(saw_broken);
+    // No chain-AOE leaked in from the hitscan direct-damage path — matches
+    // World.ts's own `pendingHangoutDestructibleDamage` apply site
+    // (World.ts:6926-6952), which every non-projectile damage source
+    // (melee included) funnels through and which never triggers the
+    // exploding-barrel reaction; only `stepDestructibles`' own projectile-
+    // collision loop does (mirrored at world.zig section 4's `dest_ptr.
+    // flags & 1` branch) — a real-projectile-only path, untouched by this
+    // pass.
+    try std.testing.expectEqual(@as(f64, 100.0), state.players[1].health);
+}
+
+test "hitscan pierce: a pierce budget lets the ray continue past a broken destructible to also hit a player standing behind it" {
+    var state = freshFightingState();
+    state.player_count = 2; // 0 = shooter, 1 = victim behind the destructible
+    setupHitscanShooter(&state, 0, "shooter", 500, 1); // pierce_count=1
+
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 350;
+    state.players[1].y = RAY_Y; // dead body-centre — no headshot
+    setPlayerId(&state.players[1], "victim");
+
+    state.destructible_count = 1;
+    state.destructibles[0] = .{
+        .x = 200,
+        .y = RAY_Y,
+        .width = 32,
+        .height = 64,
+        .health = 10, // dies from the 20-damage hit (clamped to 0)
+        .id = 101,
+        .flags = 0,
+        .kind = .box,
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), state.destructibles[0].health, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 80.0), state.players[1].health, 1e-9); // 100 - 20
+}
+
+test "hitscan candidate priority: the nearer candidate wins regardless of kind — a destructible closer than a decoy is hit first, the farther decoy stays untouched" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    setupHitscanShooter(&state, 0, "shooter", 500, 0); // pierce_count=0 — single hit only
+
+    state.destructible_count = 1;
+    state.destructibles[0] = .{
+        .x = 150, // nearer to the shooter than the decoy below
+        .y = RAY_Y,
+        .width = 32,
+        .height = 64,
+        .health = 50,
+        .id = 101,
+        .flags = 0,
+        .kind = .box,
+    };
+
+    state.paper_double_count = 1;
+    state.paper_doubles[0] = .{
+        .x = 250, // farther — should never be reached with pierce_count=0
+        .y = RAY_Y,
+        .vx = 0,
+        .vy = 0,
+        .health = 50,
+        .remaining_ms = 2500,
+        .id = 1,
+        .owner_id_len = 0,
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 30.0), state.destructibles[0].health, 1e-9); // hit
+    try std.testing.expectApproxEqAbs(@as(f64, 50.0), state.paper_doubles[0].health, 1e-9); // untouched
+}
+
+test "hitscan impact-AOE routing + decoy candidates: an explosive-impact shot still applies its own direct point damage to a decoy at the blast centre, additive to the splash (World.ts:3172-3204's 'an explosive shot must still be able to pop a dummy/decoy directly')" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    setupHitscanShooter(&state, 0, "shooter", 500, 0);
+    state.player_fire_config[0].impact = .explosive;
+    state.player_fire_config[0].impact_radius_px = 64;
+
+    state.paper_double_count = 1;
+    state.paper_doubles[0] = .{
+        .x = 200,
+        .y = RAY_Y,
+        .vx = 0,
+        .vy = 0,
+        .health = 50,
+        .remaining_ms = 2500,
+        .id = 1,
+        .owner_id_len = 0,
+    };
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // Same raw-base_damage rule as the plain pierce-loop path above — the
+    // explosive-impact branch's own direct-hit write uses the identical
+    // `base_damage`, not a splash-scaled amount.
+    try std.testing.expectApproxEqAbs(@as(f64, 30.0), state.paper_doubles[0].health, 1e-9);
+    try std.testing.expectEqual(@as(u32, 0), state.pending_instant_aoe_count); // drained same tick (6b)
+}
+
 // ── Deferred-write instant-AOE primitive (2026-07-20 gap-closure pass,
 //    port of the PATTERN behind World.ts's pendingInstantAoe queue /
 //    resolveInstantAoeCasts — see world_state.zig's PendingInstantAoe doc
