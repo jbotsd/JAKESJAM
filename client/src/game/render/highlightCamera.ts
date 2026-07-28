@@ -6,7 +6,8 @@
 //
 //   FRAME THE RELATIONSHIP  anchor = star weighted toward the engaged
 //     victim, CLAMPED so both stay on screen whenever their separation
-//     fits the view at base zoom; when it can't fit, bias the star.
+//     fits the view at base zoom; when it genuinely can't fit even at the
+//     zoom floor, split the anchor to the midpoint rather than favor either.
 //   PUNCH THE BEATS  each kill eases the zoom in ~15% for a beat; the
 //     cluster's FINAL kill punches ~25% and rides a slow-mo stretch
 //     (schedule computed here, applied by the renderer as 1-tick frames).
@@ -30,8 +31,24 @@ export type HighlightCamInput = {
 
 export const HIGHLIGHT_BASE_ZOOM = 2.2;
 /** Widest the camera goes when the duel separates — still closer than the
- *  studied baseline's static wide. */
-export const HIGHLIGHT_MIN_ZOOM = 1.25;
+ *  studied baseline's static wide.
+ *
+ *  D9 fix (clip-goal STUDY 4): the old 1.25 floor was tuned for "a
+ *  separated duel" in the loose sense, not this game's actual long-range
+ *  engagements — real hitscan kills on the production arenas (generated
+ *  arenas run up to 3000×2200; vessel-nexus/skyseam are 3000×1100) routinely
+ *  separate star and victim well past what 1.25× can frame, reproducing the
+ *  "credited kill, zero visual proof" symptom via a camera-framing cause
+ *  distinct from D1's (already-fixed) wrong-victim-identity bug — live
+ *  footage showed the victim reduced to an edge sliver or fully off-frame
+ *  even with the camera already at its old widest. 0.35 keeps both actors
+ *  inside the frame (given EDGE_MARGIN's slack) for any separation up to the
+ *  largest registered arena's full diagonal, even through a full final-kill
+ *  punch beat — see the punch-safe fit math in `stepHighlightCamera` below,
+ *  which is the other half of this fix (the floor alone isn't sufficient;
+ *  the punch-in was independently able to re-violate containment right at
+ *  the kill-credit frame). */
+export const HIGHLIGHT_MIN_ZOOM = 0.35;
 const PUNCH_ZOOM = 0.15; // +15% on a kill beat
 const FINAL_PUNCH_ZOOM = 0.25; // +25% on the cluster's final kill
 /** Victim weight in the anchor (star keeps the lead role). */
@@ -54,6 +71,17 @@ export function stepHighlightCamera(
   viewW: number,
   viewH: number,
 ): HighlightCamState {
+  // D9 (clip-goal STUDY 4): the punch-in beat multiplies zoom UP for the
+  // cinematic flourish — that multiply happens on top of fitZoom, so it has
+  // to be accounted for BEFORE the fit is computed, not after. Live footage
+  // showed the camera zoomed to its (old) widest right before a credited
+  // kill, then punching in tighter exactly on the kill-credit frame — the
+  // one moment the victim's death has to read — clipping or fully losing
+  // them. Discounting the fit box by the multiplier up front guarantees
+  // targetZoom (fitZoom * punchMultiplier, below) never zooms in past what
+  // containment actually allows, through the whole punch envelope.
+  const punchMultiplier = 1 + (input.finalPunch ? FINAL_PUNCH_ZOOM : PUNCH_ZOOM) * input.punch;
+
   // Zoom-to-fit: a separated duel WIDENS the camera (down to a floor) so
   // both actors project on screen — the studied baseline's off-frame
   // victim (B6) is exactly what a fixed zoom produces. Close-quarters
@@ -62,12 +90,11 @@ export function stepHighlightCamera(
   if (input.victim) {
     const sepX = Math.abs(input.victim.x - input.star.x);
     const sepY = Math.abs(input.victim.y - input.star.y);
-    const needX = viewW / Math.max(1, sepX + EDGE_MARGIN * 2);
-    const needY = viewH / Math.max(1, sepY + EDGE_MARGIN * 2);
+    const needX = viewW / (Math.max(1, sepX + EDGE_MARGIN * 2) * punchMultiplier);
+    const needY = viewH / (Math.max(1, sepY + EDGE_MARGIN * 2) * punchMultiplier);
     fitZoom = Math.max(HIGHLIGHT_MIN_ZOOM, Math.min(HIGHLIGHT_BASE_ZOOM, needX, needY));
   }
-  const targetZoom =
-    fitZoom * (1 + (input.finalPunch ? FINAL_PUNCH_ZOOM : PUNCH_ZOOM) * input.punch);
+  const targetZoom = fitZoom * punchMultiplier;
 
   // Anchor: star biased toward the victim…
   let ax = input.star.x;
@@ -90,14 +117,22 @@ export function stepHighlightCamera(
 }
 
 /** Clamp `anchor` so both a and b sit within ±half of it; when they can't
- *  both fit, keep `a` (the star) in frame. */
+ *  both fit, split the difference rather than favoring either actor. */
 function clampAnchor(anchor: number, a: number, b: number, half: number): number {
-  if (half <= 0) return a;
+  const mid = (a + b) / 2;
+  if (half <= 0) return mid;
   const lo = Math.max(a, b) - half; // anchor must be ≥ this to include max
   const hi = Math.min(a, b) + half; // anchor must be ≤ this to include min
   if (lo > hi) {
-    // Separation exceeds the view — star wins, victim rides the edge.
-    return Math.abs(anchor - a) > half ? a : anchor;
+    // D9 (clip-goal STUDY 4): with the punch-safe fit math and the much
+    // lower HIGHLIGHT_MIN_ZOOM above, this only fires for separations past
+    // the largest registered arena's diagonal — a purely defensive case
+    // with no real footage behind it. The old behavior snapped fully to the
+    // star whenever the raw weighted anchor drifted far enough, which is
+    // exactly the reproduced "victim never appears" symptom; the midpoint
+    // gives both actors equal (partial) screen presence instead of
+    // deleting the victim outright.
+    return mid;
   }
   return Math.min(hi, Math.max(lo, anchor));
 }
