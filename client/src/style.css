@@ -567,10 +567,18 @@ h2 {
 }
 
 .chaos-box label {
+  /* C6 mobile-QA fix (wave 2, 2026-07-29): was min-height:26px — same
+     under-~44px touch-target problem as C5's splash ghost row, on the
+     Private-Room CHAOS modifier list (Low Grav/Slo Mo/Golden Gun/Slappers
+     Only/Fire Hazard/Random Shapes/Max Recoil). The whole <label> wraps
+     its checkbox + text (native label-click-toggles-input), so growing
+     min-height grows the real tap target — align-items:center (already
+     present) re-centers the 16px checkbox + text inside the taller row,
+     no layout/grid-column change needed. */
   grid-template-columns: 16px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  min-height: 26px;
+  min-height: 44px;
   font-size: 0.76rem;
 }
 
@@ -1078,8 +1086,22 @@ button.btn-danger:hover:not(:disabled) {
    different there (Secondary + faint border, not no-border/no-fill). Reusing
    it would have silently merged two different button kinds' rules. */
 .shell-btn-quiet {
-  min-height: 32px;
-  padding: 4px 2px;
+  /* C5 mobile-QA fix (wave 2, 2026-07-29): was min-height:32px/padding
+     4px 2px — under the ~44px touch-target accessibility minimum, on a
+     row of 6 (Settings/Clips/Forge/Showcase/Intro/Credits) that's all any
+     touch player has to re-enter Settings or Clips. Grown to a 44px tap
+     target via display+alignment (not a bigger font/weight) so the row's
+     quiet visual weight — the whole point of this tier, see the comment
+     above — is unchanged; only the invisible hit area got bigger.
+     display:flex is BLOCK-level, same as the plain <button> default this
+     replaces, so .splash-actions--ghost's flex-wrap row layout at 393px
+     is unaffected — each item still wraps/sizes exactly as before, just
+     taller. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 4px 10px;
   border: 0 !important;
   clip-path: none !important;
   background: none !important;
