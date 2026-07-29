@@ -330,7 +330,20 @@ export class HangoutScene extends Phaser.Scene {
       // renders, so cooldowns/glyphs for whatever's equipped are visible
       // while standing at a dummy — venue-only, mirroring entityRender's
       // gate immediately above (private hangouts have no loadout station).
-      this.actionBar = new ActionBarSystem(this);
+      // C4 mobile-QA fix (wave 2, 2026-07-29): touch is walk-only in this
+      // scene (`combatButtons: false` a few lines up, and update()'s input
+      // assembly never sets Fire/Shield/slot bits for a touch player here —
+      // see C3's doc note) — nothing a touch visitor does can ever move
+      // these vitals or trigger a cooldown, so the bar is dead weight
+      // (construction + a per-frame draw + vitals/chip derivation with zero
+      // payoff) specifically on touch. Desktop/keyboard venue visitors DO
+      // get real Fire/Shield/slot input here (same input assembly, a few
+      // lines down) and keep the bar exactly as before — this gate is
+      // touch-only and local to this scene; OnlineMatchScene/MatchScene
+      // (real combat, all inputs) are untouched.
+      if (!isTouchPrimary()) {
+        this.actionBar = new ActionBarSystem(this);
+      }
 
       // Lobby VFX parity (docs/lobby-vfx-parity-goal.md Pillar 1): the exact
       // trio OnlineMatchScene constructs (`OnlineMatchScene.ts:673,676`) —
@@ -1127,6 +1140,17 @@ export class HangoutScene extends Phaser.Scene {
       `THE ARENA — ${phaseLabel} · ROUND ${s.roundIndex + 1} · ${fighters}${bots}\nNEXT BELL ${mm}:${ss}`,
     );
 
+    // Wave-2 QA fix (2026-07-29): C1's fix moved feedText down to y=46 in
+    // compact mode to clear the top-right MENU/CLIPS pill, but duoHintText
+    // stayed pinned to a hard-coded y=44 regardless of width — at 393px the
+    // two now sit almost exactly on top of each other (both fully opaque),
+    // an illegible double-exposed collision C1's own reposition introduced.
+    // Anchor off feedText's OWN measured displayHeight (which already
+    // accounts for the real font size AND line count post-setText, above)
+    // instead of a second fixed constant, so a future feedText height change
+    // (a 3rd line, a bigger compact font, etc.) can't reopen this collision.
+    const duoHintY = this.feedText.y + this.feedText.displayHeight + (compact ? 6 : 8);
+
     if (this.bellLabel) {
       const queuedCount = s.queued.length;
       const localQueued = s.queued.includes(this.localPlayerId as string);
@@ -1147,7 +1171,7 @@ export class HangoutScene extends Phaser.Scene {
     // ever walking to the bell, not negotiated in a dialog each visit.
     if (!this.duoHintText) {
       this.duoHintText = this.add
-        .text(20, 44, "", {
+        .text(20, duoHintY, "", {
           color: "#9aa5b1",
           fontFamily: "'Space Mono', 'Courier New', monospace",
           fontSize: "13px",
@@ -1155,6 +1179,7 @@ export class HangoutScene extends Phaser.Scene {
         .setScrollFactor(0)
         .setDepth(1000);
     }
+    this.duoHintText.setPosition(20, duoHintY);
     this.duoHintText.setText(`[T] DUO QUEUE: ${this.duoIntentLocal ? "ON" : "OFF"}`);
   }
 

@@ -491,6 +491,159 @@ clusterA-05/06 (name overflow / nameplate clip — a DIFFERENT surface, the
 player nameplate column, not these ability buttons), B1, B3-B5, C3-C7, D5,
 the venue-feed/duo-hint collision, and the splash-CTA-below-the-fold
 question all remain exactly as wave 1 left them — untouched by this pass.
+### Venue/HangoutScene cluster — feed collision, C3-C6
+Wave 2 closes the HangoutScene/venue-family items wave 1 filed or deferred:
+the new venue-feed/duo-hint collision, the splash-CTA-below-the-fold
+question, and C3/C4/C5/C6 from wave 1's own "Left for wave 2" list. Fresh
+393×852 portrait-touch screenshots (same emulation method as every prior
+sweep) live in this wave's own scratch capture directory (not committed —
+same convention the whole doc has used since 2026-07-04/07-09/07-28).
+
+### Confirmed fixed
+
+- **HangoutScene venue-feed/duo-hint collision** (new finding, top
+  priority) — `duoHintText` (`HangoutScene.ts` `updateVenueFeed()`) no
+  longer hard-codes `y=44`. It's now anchored dynamically off
+  `feedText.y + feedText.displayHeight` (plus a small gap), recomputed
+  every frame straight from `feedText`'s own live position/font-size/line
+  count — the same values `updateVenueFeed()` already derives for `feedText`
+  itself a few lines above, not a second guessed constant. A fresh 393px
+  touch capture shows the two-line "THE ARENA — FIGHTING · ROUND 1 ·
+  0 FIGHTERS · 4 BOTS / NEXT BELL 0:35" feed and the
+  "[T] DUO QUEUE: OFF" hint stacked cleanly with a visible gap, neither
+  double-exposed nor clipped (`w2-venue-touch-full.png`,
+  `w2-venue-touch-topleft-crop.png`). Because the anchor is computed from
+  `feedText`'s real geometry every frame rather than a fixed number, this
+  also self-corrects across the compact/non-compact (520px) boundary and
+  survives any future change to the feed string's line count or font size —
+  the exact failure mode that reopened this the first time (C1's compact-mode
+  reposition moved `feedText` but nothing referenced its new position).
+- **C4 — ActionBarSystem gated off on touch in HangoutScene.** The venue is
+  walk-only on touch (`combatButtons: false` in `create()`, and the input
+  assembly in `update()` never sets Fire/Shield/slot bits for a touch
+  player — `keys = t.keys & (movement-only mask)` unconditionally replaces
+  whatever the keyboard path set). With nothing a touch visitor can do to
+  ever move the bar's vitals or trigger a cooldown, constructing
+  `ActionBarSystem` for them was pure dead weight (construction + a
+  per-frame vitals/chip derivation + a canvas draw with zero payoff).
+  `this.actionBar = new ActionBarSystem(this)` in `create()` is now gated
+  behind `!isTouchPrimary()`, touch-only and local to this one scene —
+  `updateActionBar()`'s existing `!this.actionBar` guard already no-ops the
+  rest for free. Verified with two same-state venue captures differing only
+  in `?touch=1` vs `?touch=0`: touch shows an empty HUD strip at the bottom
+  (`w2-venue-touch-bottom-crop.png`), the forced-desktop capture in the
+  *same* venue session still shows the full HP/ability-diamond/shield bar
+  exactly as Fix 1 shipped it (`w2-venue-desktop-full.png`,
+  `w2-venue-desktop-bottom-crop.png`) — confirming desktop/keyboard venue
+  visitors (the ones Fix 1 was actually for — testing abilities on the
+  dummies) keep the bar unchanged, and OnlineMatchScene/MatchScene (real
+  combat, both input types) were never touched.
+- **C5 — splash ghost-row touch targets** (`style.css` `.shell-btn-quiet`).
+  Was `min-height: 32px` / `padding: 4px 2px` — under the ~44px
+  accessibility minimum on Settings/Clips/Forge/Showcase/Intro/Credits, the
+  only way back into Settings or Clips for a touch player. Grown to a 44px
+  tap target via `display:flex; align-items:center; justify-content:center`
+  + `min-height:44px` (kept the same quiet visual weight — no border/fill/
+  bigger font, only the invisible hit area changed). Measured live at
+  393px: all six buttons now report a real DOM `boundingBox` height of
+  exactly 44px, the 2-row/3-col layout unchanged
+  (`w2-c5-splash-ghost-row.png`).
+- **C6 — Private-Room CHAOS modifier list touch targets** (`style.css`
+  `.chaos-box label`). Was `min-height: 26px` — same problem, on Low
+  Grav/Slo Mo/Golden Gun/Slappers Only/Fire Hazard/Random Shapes/Max
+  Recoil. Since each row is a native `<label>` wrapping its checkbox + text
+  (label-click toggles the input), growing `min-height` to 44px grows the
+  real tap target directly — `align-items:center` (already present)
+  re-centers the 16px checkbox + text inside the taller row, no
+  grid-column/layout change needed. Measured live at 393px: all seven rows
+  report exactly 44px tall, still legible, no overflow
+  (`w2-c6-chaos-modifiers.png`, `w2-c6-private-room-full.png`).
+
+### Investigated, confirmed working-as-intended (no change forced)
+
+- **`[data-splash-cta]` below-the-fold.** Measured live at a stock
+  393×852 portrait viewport (`?ui=instant&gate=off`, the documented
+  dev/screenshot hook — verified it only strips animation/opacity, not
+  layout): `[data-splash-cta]` ("▶ ENTER THE ARENA · FIGHT NIGHT EVERY
+  FRIDAY ◀") sits at y≈922–999, below the 852px fold — confirms wave 1's
+  reading. But `data-splash-cta`'s own click handler
+  (`main.ts:1229-1232`) does nothing but proxy a click onto
+  `[data-menu-world]` ("Lobby") — it is a decorative "press start" flourish
+  on the same action, not a second door. `[data-menu-world]` itself
+  measures y≈456–498, comfortably **above** the fold. More importantly,
+  the actual first thing a genuinely fresh visitor meets (before the
+  splash is even reachable — z-index 60 over the splash's 50) is the
+  email-capture gate (`shell/emailGate.ts`, skippable only via
+  `?gate=off`/`?kiosk=1`/an email already on file); its own "Play now"
+  submit button measures y≈493–535 — also comfortably above the fold
+  (`w2-splash-fold-with-emailgate.png`, `w2-splash-fold-gateoff.png`).
+  So every actual path to starting a match is reachable without a scroll;
+  the one thing below the fold is a redundant decorative echo of a button
+  that's already reachable. This matches the documented 2026-07-04 design
+  principle (`.splash-screen { display:flex; overflow-y:auto }` +
+  `.splash-stage { margin:auto }` — "centers when short and scrolls when
+  tall," stated generally, not just for the short-landscape media query)
+  — scrolling to see it is expected, not a usability blocker. No change
+  forced.
+
+### C3 — loadout-station touch test-fire: deferred again, concretely
+
+Still not attempted, for the same reason wave 1 gave (no live human tester
+this pass either) — but here is the specific scoped approach that WOULD be
+safe to ship, for whoever picks this up with a live tester available:
+
+1. A small HangoutScene-owned DOM button (same "DOM root appended to
+   `document.body`" pattern as `CardDraftOverlay`/`VesselCreatorOverlay`),
+   visible only while `this.mode === "venue" && isTouchPrimary() &&
+   this.loadoutInZone` — all three conditions already tracked by existing
+   fields, no new state needed.
+2. Wire its pointer events to new HangoutScene-local booleans, ORed into
+   `keys` in `update()`'s input assembly *after* the
+   `keys = t.keys & (movement mask)` line — reusing the exact same
+   `InputBit.Fire`/`1 << 10..12` bits the keyboard path above it already
+   sends for venue-mode touch-irrelevant players. This touches zero shared
+   files: not `TouchControls.ts` (no new combat buttons in the shared
+   overlay), not `InputBit`'s definitions, not `OnlineMatchScene.ts`.
+3. The part that makes this genuinely non-trivial, and why it's not safe
+   to just do blind: touch's current aim fallback when no drag is active
+   is `aimX = me.x; aimY = me.y` — aiming at your own feet. A "test fire"
+   tap under that fallback would misfire into the ground, not read as
+   "try it on the dummies," and would need its own default-aim heuristic
+   (e.g. aim at the nearest practice dummy — the position data already
+   exists via the entities `entityRender` reads) scoped strictly to the
+   loadout station. A half-tuned default aim is a new, genuinely-broken-
+   feeling control shipped to real players — worse than today's honest
+   gap, where nothing visible promises an effect that then fizzles. That
+   judgment call needs a live playtester's eyes, which this pass doesn't
+   have, same constraint wave 1 hit. Deferring again, explicitly, with
+   this writeup so wave 3 doesn't have to re-derive it from scratch.
+
+### Left for wave 3
+
+clusterA-03 (dual touch-UI naming), clusterA-05/06 (name overflow /
+nameplate clip), B1 (camera-kick clamp ordering), B3-B5, C3 (loadout
+station touch abilities — see above), C7 (gate ordering — not itemized in
+either wave's scope), D5 (generic ability glyphs).
+
+### Verification method
+
+Same two capture paths as wave 1, against a **freshly built, separately
+hosted** instance — this wave's worktree has its own `client/dist` and its
+own game-server process on a non-default port (`SERVE_CLIENT_DIR` pointed
+at this worktree's `client/dist`), deliberately NOT the shared `:8088`
+process other concurrent worktrees/agents may be relying on, and never
+restarted. Same touch-emulation gotchas confirmed again this wave
+(keyboard is a dead no-op for movement under `hasTouch:true, isMobile:true`;
+a fresh identity hits a DOM callsign prompt — "THE VENUE ASKS YOUR NAME",
+`HangoutScene.ts` `promptForCallsign()` — before joining the venue, fill
++ submit and proceed). Two additions worth keeping for future sweeps:
+`?touch=1`/`?touch=0` (`game/input/mobile.ts`'s own documented URL
+override) forces `isTouchPrimary()` deterministically, which made the C4
+touch-vs-desktop same-state comparison exact rather than hoping Playwright's
+CDP touch emulation and the app's own coarse-pointer read agreed; and
+`?ui=instant&gate=off` (a documented "dev/screenshot hook" in `main.ts`)
+skips the ~28s first-visit boot/ident ceremony and the email gate outright
+for layout-measurement passes where neither is the thing under test.
 
 ## Not yet / future
 
