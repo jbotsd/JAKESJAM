@@ -82,3 +82,60 @@ export function resolveNameplateLifts(actors: readonly NameplateActor[]): Map<st
   }
   return lifts;
 }
+
+// clip-goal wave-2 (mobile-experience.md clusterA-06): the in-world
+// nameplate is drawn at a FIXED offset above the player's head
+// (`drawNameplate`'s `y = head.y - 24*s - lift`) with zero awareness of the
+// camera. On portrait mobile, OnlineMatchScene/MatchScene/HangoutScene all
+// share the same `PORTRAIT_CAM_Y_BIAS = 150` trick — the camera's visible
+// window is shifted DOWN 150 world px so the player rides in the upper
+// third of the tall screen, clear of the bottom touch-control band. That
+// trade specifically eats into the headroom ABOVE the player, which is
+// exactly where the plate lives: a high platform (or simply a jump) can
+// push the plate's own top edge above the camera's visible top edge,
+// hard-clipping it mid-glyph instead of just sliding off-screen whole.
+
+/** drawNameplate's own anchor-to-plate-top offset at scale 1
+ *  (`ProceduralPlayerRig.drawNameplate`'s `const plateTop = y - 17 * s`).
+ *  Duplicated as a plain number rather than imported — this module is
+ *  deliberately Phaser-free (see the file header) so it stays trivially
+ *  unit-testable; ProceduralPlayerRig.ts already duplicates nameplateWidth's
+ *  formula the same way in reverse (see that file's own comment), so this
+ *  matches an established convention rather than inventing a new one. */
+const PLATE_TOP_OFFSET = 17;
+/** Extra safety gutter (world px at scale 1) on top of PLATE_TOP_OFFSET —
+ *  keeps the plate from ever touching the LITERAL frame edge even right at
+ *  the clamp, not just technically-still-one-pixel-visible. Sized to also
+ *  clear roughly one HudSystem roster row's screen height across the
+ *  camera zooms this game actually ships (0.8 portrait / 1.0 touch-
+ *  landscape / 1.4 desktop): 28 world px → ~22-39 screen px at those
+ *  zooms, matching a single roster row's rough height. This does NOT
+ *  guarantee clearance of a tall multi-row roster (8-player match) — that
+ *  would need the clamp to read the roster panel's actual live screen
+ *  height, a bigger cross-system change out of scope here — but it closes
+ *  the literal frame-edge clip outright and the common small-roster HUD
+ *  overlap too. */
+const FRAME_TOP_CLEARANCE = 28;
+
+/**
+ * Given the raw (unclamped) nameplate anchor y `drawNameplate` would
+ * otherwise use, and the camera's current visible-world top edge
+ * (`camera.worldView.y` — every caller already reads this for off-screen
+ * rig culling), returns the anchor y that keeps the plate's own top edge on
+ * or below that line. Below the clamp threshold this is a no-op (returns
+ * `rawAnchorY` unchanged); only once the plate would actually poke above
+ * the frame does it get floored.
+ *
+ * `cameraTopWorldY: undefined` (a caller with no camera reference) is also
+ * a no-op — additive/optional exactly like `ProceduralPlayerPose.nameplateLift`,
+ * so old call sites that never pass it see zero behavior change.
+ */
+export function clampNameplateAnchorY(
+  rawAnchorY: number,
+  scale: number,
+  cameraTopWorldY: number | undefined,
+): number {
+  if (cameraTopWorldY === undefined) return rawAnchorY;
+  const minAnchorY = cameraTopWorldY + (PLATE_TOP_OFFSET + FRAME_TOP_CLEARANCE) * scale;
+  return Math.max(rawAnchorY, minAnchorY);
+}

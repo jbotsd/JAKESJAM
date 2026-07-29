@@ -5,6 +5,7 @@ import { getRenderScale } from "../render/renderResolution.js";
 import { type SpringState, springKick, springState, springTo } from "./spring";
 import { getSonicField } from "../systems/SonicField.js";
 import { drawPortraitBadge, shadeColor } from "../render/portraitBadge.js";
+import { clampNameplateAnchorY } from "../render/nameplateLayout.js";
 import { headCrestGeometry, headHoodGeometry } from "./chassisSilhouette";
 import type { AbilityKind } from "../../sim/data/cardTypes.js";
 import { ABILITY_ANIMATIONS } from "../render/abilityAnimation.js";
@@ -201,6 +202,16 @@ export type ProceduralPlayerPose = {
    *  player per frame; callers with only one rig on screen (or old
    *  call sites) omit it and get the unmodified anchor. */
   nameplateLift?: number;
+  /** World-y of the camera's current visible top edge (`camera.worldView.y`
+   *  — callers already read this for off-screen rig culling). Used to keep
+   *  the nameplate from hard-clipping against the top of frame (clip-goal
+   *  wave-2, clusterA-06): portrait mobile's `PORTRAIT_CAM_Y_BIAS` rides the
+   *  player high in the frame specifically to clear the bottom touch-control
+   *  band, which eats into the headroom the plate lives in. See
+   *  `render/nameplateLayout.ts`'s `clampNameplateAnchorY`. Optional/additive
+   *  like `nameplateLift` — callers that omit it (or pass no camera) get the
+   *  unmodified anchor, same as before this fix. */
+  cameraTopWorldY?: number;
 };
 
 export type LimbSolve = {
@@ -2097,7 +2108,11 @@ export class ProceduralPlayerRig implements CombatRig {
     this.drawNameplate(
       g,
       head.x,
-      head.y - 24 * s - (pose.nameplateLift ?? 0),
+      clampNameplateAnchorY(
+        head.y - 24 * s - (pose.nameplateLift ?? 0),
+        s,
+        pose.cameraTopWorldY,
+      ),
       s,
       pose.health ?? 100,
       pose.maxHealth ?? 100,

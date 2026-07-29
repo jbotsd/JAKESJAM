@@ -2545,6 +2545,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     shieldArcScale: 1,
     platingGlow: 0,
     shieldHeld: false,
+    cameraTopWorldY: undefined as number | undefined,
   };
   /** Cull margin (world px) beyond the camera's view — generous enough that
    *  a rig's trail/shield arc never visibly pops at the screen edge. */
@@ -2647,6 +2648,10 @@ export class OnlineMatchScene extends Phaser.Scene {
     pose.dashing = player.dashing ?? false;
     // K11 ward brace: same snapshot boolean the ward slab VFX frame-diffs.
     pose.shieldHeld = player.shieldActive === true;
+    // clip-goal wave-2 clusterA-06: keep the nameplate from hard-clipping
+    // against the top of frame — `view` above is the same worldView this
+    // function already reads for off-screen culling.
+    pose.cameraTopWorldY = view.y;
     rig.update(deltaMs, pose);
   }
 
