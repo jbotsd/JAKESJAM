@@ -244,6 +244,132 @@ restart for these client-only fixes):
   the venue (real onboarding gate, unrelated to any of this wave's fixes) —
   accept the defaults and re-tap to proceed.
 
+## QA sweep (2026-07-29, wave 2)
+
+Investigated deferred finding **B1 (camera-kick clamp ordering)** from wave 1.
+Pure code-reading + reasoning pass on `ActionCamera.ts`'s composite math — no
+live combat available this pass either, same constraint wave 1 hit. Verdict:
+**deferred again**, but with the exact mechanism traced and quantified below,
+so a future live-testing wave can check one specific, falsifiable thing
+instead of re-deriving the architecture from scratch.
+
+### What was traced
+
+`ActionCamera.update()`'s full per-frame pipeline (`client/src/game/systems/ActionCamera.ts`):
+
+- Step 7.5 (lines 676-697) is the "HARD GUARANTEE" — it clamps `this.position.x/y`
+  only, into `[self.x ± hw·margin, self.y ± hh·margin]`, with the portrait
+  bottom margin (`SAFE_BOTTOM_PORTRAIT_FRAC = 0.7`) reserving the lower ~35%
+  of the screen for the touch band.
+- Everything computed **after** that clamp — trauma shake (`ox,oy`, step 8,
+  lines 699-707), the hype orbit (`orbitXEff/YEff`, step 9), the beat-cut
+  cinematic offset (`beatCutOffsetX/Y`, step 9.5), the AI-lock offset
+  (`aiLockOffset.x/y`, step 10), and the side-swipe/kick offset
+  (`swipeOffset.x/y`) — is summed directly into the **final** `cam.centerOn()`
+  call (lines 837-840) with **no re-clamp**. So the "hard guarantee" only
+  ever bounds the pre-effects base position, not the actual camera center
+  Phaser receives.
+- Traced the "kick" system by name: `victimChannel.ts`'s `cameraKickParams`/
+  `whiffKickParams` are consumed in `SimEventRouter.ts` (7 call sites) purely
+  as `(kickPx, durMs, noisePx)` numbers, routed to `CameraJuice.directionalKick()`
+  (`client/src/game/systems/CameraJuice.ts:46`), which is a thin adapter that
+  calls **`ActionCamera.sideSwipe()`** (feeds `swipeOffset`, one of the
+  post-clamp layers above) **+ `ActionCamera.addTrauma()`** (feeds the shake
+  `ox,oy`, another post-clamp layer). So "kick" isn't a separate mechanism
+  from shake/orbit/beat-cut/AI-lock — it's two of the same five post-clamp
+  additive layers, confirmed by direct call trace, not inference.
+
+### Why this isn't a simple "move the clamp to the end" fix
+
+Three of the five post-clamp layers have their **own explicit code comments**
+stating the post-clamp position is deliberate, not oversight, each backed by
+a specific Jake quote from live playtesting that already shaped the current
+behavior:
+
+- `sideSwipe`'s comment (lines 831-836): applied post-clamp *on purpose* —
+  "a whip pan sweeping past/away from the subject for a beat is the actual
+  point of the effect (real camera whip-pans do the same)."
+- Beat-cut (lines 106-114, 725-736): a real edit cut must "hold a composition
+  perfectly still, then jump" — re-clamping it would blunt the jump.
+- AI-lock (lines 122-139, 780-796): the sustained peak tracking shot's whole
+  job is to reframe onto the opponent, overriding ordinary safe framing —
+  and its current shape (lock onto the character, not the aim point) is
+  *already* the result of a prior live-playtest fix ("unshippably nauseating"
+  → fixed, quoted in the code). Its offset also **scales with distance to the
+  opponent** (`lockTargetX/Y - this.position.x/y`), i.e. it is not a bounded
+  "kick" at all — it can be arbitrarily large. This means the on-screen
+  guarantee is not just imperfectly enforced, it is **provably not a hard
+  guarantee** under the current design: no re-clamp of the final composite
+  could both (a) truly guarantee the bound and (b) preserve AI-lock's stated
+  purpose, since a distant opponent could always push the reframe past any
+  finite margin.
+
+Only **trauma shake** (the smallest-magnitude of the five: `MAX_SHAKE_PX = 18`
+world px max) lacks such a justifying comment and actually contradicts its
+own docstring — step 7.5's comment claims "trauma shake are all suggestions
+... this clamp is the authority," but shake is computed after the clamp and
+applied unclamped. Fixing shake alone, though internally consistent with the
+docstring, would not address the scenario wave 1 named (kick/orbit/beat-cut
+are the bigger contributors and are the ones deliberately exempted), so it
+would be a low-value, misleading partial fix.
+
+### Quantified margin check (new this wave, not in wave 1's writeup)
+
+The clamp's own baseline margin over the *actual* touch band is razor-thin,
+independent of any post-clamp effect:
+
+- `SAFE_BOTTOM_PORTRAIT_FRAC = 0.7` → at the clamp's own extreme, the
+  protected fraction of screen height is `1 - (2-0.7)/2 = 0.35` (35%),
+  independent of zoom (the zoom terms cancel in the world→screen conversion).
+- The actual CSS touch band (`client/src/style.css`, `@media (orientation:
+  portrait)`, `.tc-root::before` / `.tc-zone`) is `--tc-band, 34vh` — 34% of
+  viewport height.
+- So the clamp's own designed margin over the band, **before any shake,
+  kick, orbit, beat-cut, or AI-lock offset is added**, is ~1 percentage point
+  of screen height (~8-9px on an 852px-tall phone) — when the clamp is at its
+  own extreme (reachable during envelope pull toward a distant/below duel
+  partner, i.e. exactly a fight, i.e. exactly when kicks/shake also fire).
+  Any one of the five post-clamp layers (18-46 world px before zoom) is
+  larger than this margin on its own, before even considering that peak's
+  own AI-super-zoom can multiply the *effective* zoom applied to those
+  world-space offsets by up to ~1.95x (`AI_SUPER_ZOOM_BOOST = 0.95`),
+  amplifying whatever world-space kick/shake/orbit/beat-cut offset is live
+  at that instant into a proportionally larger screen-space one.
+
+This says the geometry is *plausible* — the margin is thin enough that
+ordinary-magnitude kick/shake could cross into the band's footprint during a
+fight — but it does not say whether that's a *real, visible, bad* moment
+(peak is already a deliberately chaotic beat-cut/shake/zoom sequence by
+design; a brief partial dip during that chaos may read as fine, or even go
+unnoticed, versus a sustained framing problem) or how often the specific
+stacking actually lines up in the worst-case direction in practice. That's
+the part that needs eyes on real footage, not more code reading — same wall
+wave 1 hit.
+
+### Left for wave 3 (or first wave with live-testing access)
+
+- Repro recipe: get `CameraHype` into a sustained "peak" state (~20s of
+  consistent action per the accumulator), then land a **kill** in portrait
+  touch emulation (`cameraKickParams(chassis, true)` gives the largest kick,
+  `kickPx = 12`) during an active beat-cut "on" window, and check whether the
+  player sprite's screen-space bounding box ever visibly overlaps the actual
+  `.tc-root::before` band element's rect in that ~100-300ms window.
+- If (and only if) that's confirmed as a real, bad-looking violation: the
+  narrowest candidate mitigation is widening `SAFE_BOTTOM_PORTRAIT_FRAC`
+  itself (e.g. 0.7 → ~0.78-0.8) to buy back margin for the ordinary
+  shake/kick case, rather than restructuring the composite chain — this
+  constant has no stated live-tuning history the way the K1-K12/I1-I13 feel
+  params do, so it's the lowest-risk lever. It would NOT fully close the gap
+  against AI-lock (unbounded by design) and isn't provable by a unit test for
+  that reason — it would need the same live check to confirm it looks right,
+  not just a bigger number.
+- Not attempted this wave: no test was written, since there is nothing
+  correct to assert yet — a test that clamps the whole composite chain would
+  either be false (AI-lock can exceed any bound) or would require deciding,
+  without live evidence, exactly which of the three deliberately-unclamped
+  layers to leave alone, which is the same judgment call this section just
+  laid out as unresolved.
+
 ## Not yet / future
 
 - Haptics (`navigator.vibrate`) on hit/kill for Android (iOS ignores it).
