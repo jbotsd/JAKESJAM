@@ -637,6 +637,10 @@ export class MatchScene extends Phaser.Scene {
       // never reachable under the legacy MovementSystem.
       touchingWallDir: this.localPlayer.touchingWallDir,
       dashing: this.localPlayer.dashing,
+      // clip-goal wave-2 clusterA-06: keep the nameplate from hard-clipping
+      // against the top of frame (see nameplateLayout.ts's
+      // clampNameplateAnchorY doc for the portrait-camera root cause).
+      cameraTopWorldY: this.cameras.main.worldView.y,
     });
   }
 

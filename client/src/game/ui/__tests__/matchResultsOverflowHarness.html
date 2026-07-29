@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>MatchResultsOverlay overflow harness</title>
+    <style>
+      /* Match index.html's dark backdrop so the overlay's own contrast
+         choices read the same as they do in the real game shell. */
+      html, body { margin: 0; padding: 0; background: #05080f; }
+    </style>
+  </head>
+  <body>
+    <!--
+      clusterA-05 measurement harness (mobile-experience.md wave 2).
+
+      NOT part of the production bundle — this file is only ever opened
+      directly by tests/e2e/matchResultsOverflow.spec.ts against a throwaway
+      vite dev server, the same "direct-import overlay check" convention the
+      2026-07-28 wave-1 fix pass used for CardDraftOverlay (checkTimerBar.ts/
+      checkHorizScroll.ts, per docs/mobile-experience.md's own "Verification
+      method" section) — except this one is committed, since the task asked
+      for a persisted measurement test rather than a throwaway one.
+
+      Mounts the REAL MatchResultsOverlay class (no stub/reimplementation)
+      with a deliberately long callsign + a characterId (so the class-tag
+      chip renders, matching bd6b51f's exact scenario) and exposes readiness
+      via window.__harnessReady for the spec to wait on.
+    -->
+    <script type="module">
+      import { MatchResultsOverlay } from "../MatchResultsOverlay.ts";
+
+      const overlay = new MatchResultsOverlay();
+      // Deliberately long, single-token (no spaces) callsign — the failure
+      // mode the finding names: a real name/wrap can't save it, only
+      // shrink+ellipsis can.
+      const LONG_NAME = "xXx_ShadowInfernoReaperOfEternalDoom_xXx";
+
+      overlay.show(
+        {
+          winnerPlayerId: "p1",
+          targetScore: 3,
+          rows: [
+            {
+              playerId: "p1",
+              name: LONG_NAME,
+              color: "#8ff8ff",
+              score: 3,
+              cardIds: [],
+              characterId: "balanced", // renders the GEO chip (bd6b51f)
+              isLocal: true,
+            },
+            {
+              playerId: "p2",
+              name: "Bot",
+              score: 1,
+              cardIds: [],
+              characterId: "heavy",
+            },
+          ],
+        },
+        { onRematch: () => {}, onReturnToLobby: () => {} },
+      );
+
+      window.__harnessLongName = LONG_NAME;
+      window.__harnessReady = true;
+    </script>
+  </body>
+</html>

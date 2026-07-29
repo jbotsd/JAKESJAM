@@ -1552,6 +1552,10 @@ export class HangoutScene extends Phaser.Scene {
       // that mode.
       shieldArcScale: resolvePlayerBuild(player).parryCoverMultiplier,
       platingGlow: Math.min(1, resolvePlayerBuild(player).maxHealthAdd / 40),
+      // clip-goal wave-2 clusterA-06: keep the nameplate from hard-clipping
+      // against the top of frame — `view` above is the same worldView this
+      // function already reads for off-screen culling.
+      cameraTopWorldY: view.y,
     });
   }
 

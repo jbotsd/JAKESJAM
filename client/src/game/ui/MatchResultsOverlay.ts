@@ -243,6 +243,7 @@ export class MatchResultsOverlay {
   private makeRowElement(row: MatchResultsRow, isWinner: boolean): HTMLDivElement {
     const el = document.createElement("div");
     Object.assign(el.style, ROW_STYLE);
+    el.dataset.matchResultsRow = row.playerId;
     if (isWinner) {
       el.style.borderColor = row.color ?? "#fff7d6";
       el.style.boxShadow = `0 0 18px ${withAlpha(row.color ?? "#fff7d6", 0.45)}`;
@@ -250,10 +251,12 @@ export class MatchResultsOverlay {
 
     const header = document.createElement("div");
     Object.assign(header.style, ROW_HEADER_STYLE);
+    header.dataset.matchResultsHeader = "";
 
     const nameEl = document.createElement("div");
     nameEl.textContent = `${row.name}${row.isLocal ? " (you)" : ""}${isWinner ? "  ★" : ""}`;
     Object.assign(nameEl.style, ROW_NAME_STYLE);
+    nameEl.dataset.matchResultsName = "";
     if (row.color) {
       nameEl.style.color = row.color;
     }
@@ -262,6 +265,7 @@ export class MatchResultsOverlay {
     // without disturbing the header's name/score space-between split.
     const nameRow = document.createElement("div");
     Object.assign(nameRow.style, ROW_NAME_ROW_STYLE);
+    nameRow.dataset.matchResultsNameRow = "";
     nameRow.appendChild(nameEl);
     const classTag = matchResultsClassTag(row.characterId);
     if (classTag) {
@@ -271,6 +275,7 @@ export class MatchResultsOverlay {
     const scoreEl = document.createElement("div");
     scoreEl.textContent = `${row.score}`;
     Object.assign(scoreEl.style, ROW_SCORE_STYLE);
+    scoreEl.dataset.matchResultsScore = "";
 
     header.append(nameRow, scoreEl);
 
@@ -447,6 +452,18 @@ const ROW_NAME_STYLE: Partial<CSSStyleDeclaration> = {
   letterSpacing: "0.04em",
   color: "#f7fbff",
   fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
+  // clusterA-05 (mobile-experience.md wave 2): the class-tag chip
+  // (bd6b51f) plus a long callsign genuinely overflows a 393px-wide row —
+  // the 2026-07-09 sweep only ever fixed the STAGE's own min-width, never
+  // gave the name column itself a shrink/truncate story. `minWidth: 0`
+  // overrides the flex-item default automatic minimum (content-based —
+  // i.e. "never shrink below the full name's width"), and
+  // overflow+whiteSpace+textOverflow turn that reclaimed shrink room into
+  // a real ellipsis instead of wrapping/overflowing the row.
+  minWidth: "0",
+  overflow: "hidden",
+  whiteSpace: "nowrap",
+  textOverflow: "ellipsis",
 };
 
 const ROW_NAME_ROW_STYLE: Partial<CSSStyleDeclaration> = {
@@ -454,6 +471,12 @@ const ROW_NAME_ROW_STYLE: Partial<CSSStyleDeclaration> = {
   alignItems: "center",
   gap: "8px",
   minWidth: "0",
+  // Take exactly the space header's space-between split leaves it (never
+  // grows to push the score off — score/chip stay fixed, name is the only
+  // thing that shrinks). Without an explicit basis, a flex item long
+  // enough to want more than its share can still refuse to shrink evenly
+  // against a sibling with no competing content (the score digits).
+  flex: "1 1 auto",
 };
 
 // Class tag chip — GEO/INT/KIN/SYZ, the exact abbreviations + monospace
@@ -479,6 +502,10 @@ const ROW_SCORE_STYLE: Partial<CSSStyleDeclaration> = {
   fontWeight: "900",
   fontFamily: "'Space Mono', 'Courier New', monospace",
   color: "#50e3c2",
+  // clusterA-05: the score is the one header element that must never give
+  // up its space to a long name — pairs with ROW_NAME_ROW_STYLE's flex-grow
+  // so all the squeezing lands on the name column's ellipsis, not here.
+  flexShrink: "0",
 };
 
 const CARD_LIST_STYLE: Partial<CSSStyleDeclaration> = {
