@@ -7,6 +7,8 @@
 
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { InputBit } from "../../../net/protocol";
+import type { ClassId } from "../../types/game";
+import { DASH_NAME_BY_CLASS, SHIELD_NAME_BY_CLASS } from "../../data/chassisVerbNames";
 
 // ── Minimal DOM shim (bun:test has no DOM) ───────────────────────────────
 type Listener = (e: unknown) => void;
@@ -178,5 +180,49 @@ describe("TouchControls mapping", () => {
     const s = tc.getState();
     expect(s.keys & InputBit.Fire).toBeFalsy();
     expect(s.aimDir).toBeNull();
+  });
+});
+
+// clusterA-03 (2026-07-28 mobile QA, closed 2026-07-29 wave 2): ActionBarSystem's
+// canvas HUD and TouchControls' physical Shield/Dash buttons used to be two
+// independently-hardcoded label sets for the SAME abilities — the HUD said
+// "Slipstream"/"Kindled Ward"/etc per class, the button underneath just said
+// generic "SHIELD"/"DASH" no matter who was playing. The fix hoists both name
+// maps into data/chassisVerbNames.ts and has both surfaces import that one
+// constant. This locks TouchControls' half of that contract: for every class,
+// its Shield/Dash button text is EXACTLY the shared map's value — not a
+// second copy that could quietly diverge again.
+describe("TouchControls Shield/Dash labels stay in sync with the shared chassis-verb names", () => {
+  const ALL_CLASS_IDS: ClassId[] = ["wizard", "ninja", "paladin", "priest"];
+
+  test("default (no classId resolved yet): generic SHIELD/DASH text, same as before this fix", async () => {
+    const { shieldBtn, dashBtn } = await makeControls();
+    expect(shieldBtn.textContent).toBe("SHIELD");
+    expect(dashBtn.textContent).toBe("DASH");
+  });
+
+  for (const classId of ALL_CLASS_IDS) {
+    test(`setClassId("${classId}") renders the SAME name ActionBarSystem's canvas HUD would show`, async () => {
+      const { tc, shieldBtn, dashBtn } = await makeControls();
+      tc.setClassId(classId);
+      expect(shieldBtn.textContent).toBe(SHIELD_NAME_BY_CLASS[classId]);
+      expect(dashBtn.textContent).toBe(DASH_NAME_BY_CLASS[classId]);
+    });
+  }
+
+  test("setClassId(undefined) reverts to the generic default (class not yet known)", async () => {
+    const { tc, shieldBtn, dashBtn } = await makeControls();
+    tc.setClassId("ninja");
+    expect(shieldBtn.textContent).toBe(SHIELD_NAME_BY_CLASS.ninja);
+    tc.setClassId(undefined);
+    expect(shieldBtn.textContent).toBe("SHIELD");
+    expect(dashBtn.textContent).toBe("DASH");
+  });
+
+  test("every chassis-verb name is within the measured fit envelope (<=16 chars, 'Nothing to Guard' is the current worst case)", () => {
+    for (const classId of ALL_CLASS_IDS) {
+      expect(SHIELD_NAME_BY_CLASS[classId].length).toBeLessThanOrEqual(16);
+      expect(DASH_NAME_BY_CLASS[classId].length).toBeLessThanOrEqual(16);
+    }
   });
 });

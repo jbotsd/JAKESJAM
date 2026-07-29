@@ -17,8 +17,26 @@
 // pointerId so both sticks + a button work simultaneously. The overlay is
 // DOM (crisp, notch-safe via safe-area insets) layered over the pixel-art
 // canvas; it only captures touches on its own control elements.
+//
+// Shield/Dash button labels (2026-07-29 wave 2 QA, clusterA-03): these two
+// buttons used to always say the generic "SHIELD"/"DASH" no matter which
+// class was playing, while ActionBarSystem's canvas HUD right next to them
+// named the SAME abilities per-class ("Slipstream", "Kindled Ward", …) —
+// two independently-hardcoded label sets for one ability, never
+// cross-checked. `setClassId` swaps both buttons' text to
+// data/chassisVerbNames.ts's shared maps (the same constant ActionBarSystem
+// now imports too) once the local player's class is known; callers that
+// never call it (Tutorial, and Practice/Hangout where combatButtons is
+// false anyway) keep the original generic text — same "absent means
+// default, no forced touch" convention ActionBarSystem's own `classId?`
+// field already uses.
 
 import { InputBit } from "../../net/protocol";
+import type { ClassId } from "../types/game.js";
+import { DASH_NAME_BY_CLASS, SHIELD_NAME_BY_CLASS } from "../data/chassisVerbNames.js";
+
+const SHIELD_LABEL_DEFAULT = "SHIELD";
+const DASH_LABEL_DEFAULT = "DASH";
 
 export type TouchInputState = {
   /** InputBit bitfield to merge into the sim input. */
@@ -120,6 +138,11 @@ export class TouchControls {
   private readonly slotBtns: HTMLDivElement[] = [];
   private readonly slotPulseUntilMs: number[] = [0, 0, 0, 0];
   private slotStates: { ready: boolean }[] = [];
+  /** Shield/Dash button text currently applied (clusterA-03 naming unify) —
+   *  tracked so repeated per-frame calls with the same classId are a no-op,
+   *  same convention as setEmissionReady's `ready === this.emissionReady`
+   *  early-out. */
+  private classId: ClassId | undefined = undefined;
 
   private attached = false;
   private readonly mount: HTMLElement;
@@ -135,9 +158,9 @@ export class TouchControls {
     this.leftZone = el("div", "tc-zone tc-zone--left");
     this.rightZone = el("div", "tc-zone tc-zone--right");
     this.shieldBtn = el("div", "tc-btn tc-btn--shield");
-    this.shieldBtn.textContent = "SHIELD";
+    this.shieldBtn.textContent = SHIELD_LABEL_DEFAULT;
     this.dashBtn = el("div", "tc-btn tc-btn--dash");
-    this.dashBtn.textContent = "DASH";
+    this.dashBtn.textContent = DASH_LABEL_DEFAULT;
     this.emissionBtn = el("div", "tc-btn tc-btn--emission");
     this.emissionBtn.textContent = "EMIT";
     for (let i = 0; i < 4; i++) {
@@ -259,6 +282,20 @@ export class TouchControls {
     if (ready === this.emissionReady) return;
     this.emissionReady = ready;
     this.emissionBtn.classList.toggle("tc-btn--emission-ready", ready);
+  }
+
+  /** Swap the Shield/Dash buttons' text to the local player's chassis-verb
+   *  names (data/chassisVerbNames.ts — the same maps ActionBarSystem's
+   *  canvas HUD reads), so the physical button says the same thing the HUD
+   *  readout does (clusterA-03, 2026-07-29). Undefined reverts to the
+   *  original generic SHIELD/DASH text — callers that never resolve a
+   *  classId (TutorialScene) or never show these buttons at all
+   *  (Practice/Hangout's `combatButtons: false`) are unaffected. */
+  setClassId(classId: ClassId | undefined): void {
+    if (classId === this.classId) return;
+    this.classId = classId;
+    this.shieldBtn.textContent = classId ? SHIELD_NAME_BY_CLASS[classId] : SHIELD_LABEL_DEFAULT;
+    this.dashBtn.textContent = classId ? DASH_NAME_BY_CLASS[classId] : DASH_LABEL_DEFAULT;
   }
 
   destroy(): void {

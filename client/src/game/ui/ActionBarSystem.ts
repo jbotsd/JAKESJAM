@@ -34,34 +34,14 @@ import type { AcquiredAbility, AcquiredAbilityKind } from "./acquiredAbilities.j
 import { drawActiveGlyph } from "./actionBarGlyphs.js";
 import type { ClassId } from "../types/game.js";
 import { isPortraitMobile, safeAreaInsetBottomPx } from "../input/mobile.js";
+import { DASH_NAME_BY_CLASS, SHIELD_NAME_BY_CLASS } from "../data/chassisVerbNames.js";
 
-// ── Chassis-verb naming (2026-07-18 legibility pass, Jake: "we still have
-// shift shield and mouse right click in the game what do we do about those
-// those should be abilities") — Shield (held Shift) and Dash (right-click/C,
-// the "dash-bash shield power-slide") are ALREADY class-specific mechanics
-// under the hood (combat.ts's Kindled Ward branch, World.ts's ninja dash-
-// through/evasion, weapon.ts's Priest innate directionalShield) but were
-// rendering as an unlabeled resource orb and a bare "M2" slot with no name
-// anywhere in the UI. This is a NAMING/LABELING pass only — no mechanic,
-// number, or gating changes.
-//
-// "Kindled Ward" (paladin) is the session's own established name
-// (combat.ts's WARD_* doc comments, class-overhaul-workboard.md chunks
-// 2.2/2.3). "Slipstream" (ninja Dash) is pulled verbatim from
-// docs/character-sheets-v1.md ("Slipstream / Read: Dash through them...")
-// and is ALSO a currently-dead-code draft card of the same name
-// (docs/card-pool-v2.md — CardSystem.ts/DraftScene.ts are dead per the
-// class-overhaul session) with an IDENTICAL effect (dash-through grants
-// energy + tags Read) — flagged as a future collision risk if the draft-
-// card layer is ever revived. The remaining six (wizard's two, ninja's
-// Shield, priest's two, paladin's Dash) have no established name in
-// classes-goal.md / character-sheets-v1.md / class-ability-catalogs-v1.md,
-// so these are freshly authored to each class's C4 tone register
-// (classes-goal.md: wizard technical-awesome, ninja insidious-precise,
-// paladin epic-settled/self-lit-not-liturgical, priest unsettling-
-// benevolent) and checked against that class's own catalog vocabulary for
-// collisions (Geometrician/Interstice/Kindled/Syzygist catalogs,
-// docs/class-ability-catalogs-v1.md).
+// ── Chassis-verb naming (2026-07-18 legibility pass; names hoisted to
+// data/chassisVerbNames.ts on 2026-07-29 wave 2 QA so TouchControls.ts's
+// physical buttons show the SAME names instead of the generic "SHIELD"/
+// "DASH" text they carried before — clusterA-03. See that file's header
+// for the full naming rationale/history; only what's specific to THIS
+// canvas HUD stays here. ──
 //
 // Known gap this naming surfaces rather than hides: wizard's held-Shield is
 // still the plain pre-class-split omnidirectional block today (see
@@ -83,25 +63,13 @@ import { isPortraitMobile, safeAreaInsetBottomPx } from "../input/mobile.js";
 // misled players into believing Interstice has a real guard/block
 // mechanic. Per docs/design-axioms.md A2 ("ship the missing feature, never
 // the broken one"): rather than name a fake ability, the shield orb AND
-// its name label are hidden entirely for ninja (see `shieldDisplayMax`
-// below) — reusing the existing "no shield resource on this character"
-// dim-empty-frame treatment this bar already has for that exact situation.
-// SHIELD_NAME_BY_CLASS keeps a ninja entry anyway as a defense-in-depth
-// fallback string (in case some future caller ever renders the name
-// without going through `shieldDisplayMax`'s gate) — it must read as an
-// honest absence, not an ability, in Interstice's insidious-precise voice.
-const DASH_NAME_BY_CLASS: Record<ClassId, string> = {
-  paladin: "Kindled Charge",
-  wizard: "Vector Charge",
-  ninja: "Slipstream",
-  priest: "Tethered Charge",
-};
-const SHIELD_NAME_BY_CLASS: Record<ClassId, string> = {
-  paladin: "Kindled Ward",
-  wizard: "Prism Wall",
-  ninja: "Nothing to Guard",
-  priest: "Open Hand",
-};
+// its name label are hidden entirely for ninja on THIS canvas HUD (see
+// `shieldDisplayMax` below) — reusing the existing "no shield resource on
+// this character" dim-empty-frame treatment this bar already has for that
+// exact situation. TouchControls' physical Shield button is NOT hidden the
+// same way (see that file) — it shows SHIELD_NAME_BY_CLASS's ninja entry
+// ("Nothing to Guard") instead, since a still-pressable button needs an
+// honest label more than a canvas readout that can just omit itself.
 
 /** One drafted-active slot (six-axes-goal.md Layer 2): keys 1..3 in pick
  *  order (rack locked at exactly 3, docs/classes-goal.md "Rotation
