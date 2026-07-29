@@ -1230,6 +1230,13 @@ export class OnlineMatchScene extends Phaser.Scene {
       this.touchControls?.setActiveSlots(
         localActives.map((a) => ({ ready: a.readyFrac >= 1 && !vitals.isDead })),
       );
+      // Chassis-verb name labels (2026-07-18 legibility pass; shared with
+      // TouchControls 2026-07-29 wave 2 QA, clusterA-03) — one resolve, fed
+      // to both the canvas HUD (actionBarVitals.classId below) and the DOM
+      // Shield/Dash buttons, so they can never name the same ability two
+      // different ways again.
+      const localClassId = local ? classIdForArchetype(local.characterId) : undefined;
+      this.touchControls?.setClassId(localClassId);
       const actionBarVitals: ActionBarVitals = {
         health: local?.health ?? 0,
         maxHealth,
@@ -1249,9 +1256,9 @@ export class OnlineMatchScene extends Phaser.Scene {
         acquired: local ? acquiredAbilities(resolvePlayerBuild(local)) : [],
         stolenFangsCharges: local?.pendingLockCharges ?? 0,
         isDead: vitals.isDead,
-        // Chassis-verb name labels (2026-07-18 legibility pass) — drives
-        // the M2/Dash and shield-orb name text in ActionBarSystem.
-        classId: local ? classIdForArchetype(local.characterId) : undefined,
+        // Drives the M2/Dash and shield-orb name text in ActionBarSystem
+        // (see localClassId above — same resolve TouchControls gets).
+        classId: localClassId,
       };
       this.actionBar.update(actionBarVitals, chips);
     }

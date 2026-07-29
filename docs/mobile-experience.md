@@ -244,6 +244,129 @@ restart for these client-only fixes):
   the venue (real onboarding gate, unrelated to any of this wave's fixes) —
   accept the defaults and re-tap to proceed.
 
+## QA sweep (2026-07-29, wave 2)
+
+Closes clusterA-03 (dual touch-UI naming/identity mismatch), the finding
+wave 1 deliberately deferred: two independently-built ability UIs occupy the
+same bottom-center region on a touch device — `ActionBarSystem.ts`'s
+canvas-rendered Diablo-style action bar (Dash/Shield diamonds + orb, added
+2026-07-15) and `TouchControls.ts`'s DOM ability buttons (added
+2026-07-17) — and they were never cross-checked against each other's text.
+Concretely: ActionBarSystem already carried per-class chassis-verb names for
+Dash/Shield (2026-07-18 legibility pass — "Slipstream" for ninja's Dash,
+"Kindled Ward" for paladin's Shield, etc.), but TouchControls' physical
+Shield/Dash buttons — the ones a touch player actually presses — always
+said the generic "SHIELD"/"DASH" no matter which class was playing. A touch
+player read one name off the HUD readout and pressed a button labeled
+something else for the identical ability.
+
+### Naming convention chosen
+
+Unify on ActionBarSystem's existing per-class chassis-verb names (not the
+other direction — rolling ActionBarSystem back to generic text) because:
+those names were already shipped, already reviewed against each class's C4
+tone register and catalog vocabulary for collisions (see
+`ActionBarSystem.ts`'s own header), and already the more informative of the
+two ("Slipstream"/"Kindled Ward" tells you what the ability *is*; "DASH"
+only tells you what button you're touching). Wave 1's fix pass flagged
+exactly this as "the safe fix" but deferred it, worried it "risks new
+text-overflow bugs on 76-84px circular buttons without live-device font
+tuning" — this wave supplies that live measurement instead of guessing.
+
+### Structural fix
+
+Both name maps (`DASH_NAME_BY_CLASS`, `SHIELD_NAME_BY_CLASS`) were hoisted
+out of `ActionBarSystem.ts` into a new shared module,
+`client/src/game/data/chassisVerbNames.ts`. `ActionBarSystem.ts` and
+`TouchControls.ts` (new `setClassId(classId)` method) both import from it —
+there is now exactly one copy of these names, so the two surfaces cannot
+independently drift again. `OnlineMatchScene.ts` resolves the local
+player's `classId` once per frame and feeds the SAME value to both
+`actionBarVitals.classId` (canvas HUD) and `touchControls.setClassId(...)`
+(DOM buttons). Callers that never resolve a classId (`TutorialScene`, and
+`MatchScene`/`HangoutScene` where `combatButtons: false` hides these
+buttons entirely anyway) are unaffected — `setClassId` undefined reverts to
+the original generic "SHIELD"/"DASH" text, same "absent means default, no
+forced touch" convention `ActionBarSystem`'s own `classId?` field already
+used.
+
+One deliberate asymmetry, kept and documented in both files: ninja's Shield
+is a real "zero mitigation, always" override (combat.ts's
+`tryDeflectDamage`, "ninja" branch — this class's whole defense is the dash
+i-frame, never a block). Per docs/design-axioms.md A2 ("ship the missing
+feature, never the broken one"), ActionBarSystem hides the shield orb AND
+name label entirely for ninja rather than name a fake ability — it's a
+canvas readout, it can just omit itself. TouchControls' Shield button is
+NOT hidden the same way (it's a still-physically-present, still-pressable
+control — hiding it changes touch input capability, out of scope for a
+naming fix) — it shows `SHIELD_NAME_BY_CLASS.ninja`, `"Nothing to Guard"`,
+instead: an honest-absence label in Interstice's insidious-precise voice,
+so a touch player who presses it learns the truth rather than pressing a
+button that silently does nothing.
+
+### Real measurement (393x852 portrait-touch + 852x393 landscape)
+
+`"Nothing to Guard"` (16 chars, 3 words) is the longest string in either
+map — confirmed by checking every current chassis-verb name plus scanning
+`docs/class-ability-catalogs-v1.md`'s four 10-ability catalogs (nothing
+there feeds this button; those names stay in ActionBarSystem's numbered
+active-slot diamonds, unaffected by this change) — so it's the deliberate
+worst-case fit target, not a guess. Measured via a real headless Chromium
+(Playwright) session driving the ACTUAL `TouchControls` class + the real
+`style.css` (a temporary, uncommitted harness — same "not committed" scratch
+convention as every capture tool in this doc) at true CSS pixel sizes:
+
+- **All 8 names fit inside their 76px (portrait) / 84px (landscape) circular
+  buttons with comfortable margin, using the EXISTING `.tc-btn` CSS
+  unmodified** — no font-size, line-height, or word-break change was
+  needed. `.tc-btn` already has no `white-space: nowrap`, so two-word/
+  three-word names wrap naturally inside the fixed-size flex box; every
+  name's rendered text bounding box (measured via a DOM `Range`, not just
+  eyeballed) sat within the button's own box on all four edges, and visual
+  crops confirm the wrapped glyphs sit inside the circle's curve, not just
+  its bounding square (`portrait-ninja-band.png` — "Nothing to Guard" wraps
+  "Nothing" / "to Guard"; `portrait-paladin-band.png` — "Kindled Ward" /
+  "Kindled Charge" both wrap cleanly; `portrait-priest-band.png`,
+  `portrait-wizard-band.png` — same). Single-word names ("Slipstream")
+  render on one line and use nearly the full 76px width at the circle's
+  equator (its widest chord), confirmed non-clipping via a tight crop
+  (`slipstream-crop.png`).
+- **Landscape (84px, more room than portrait's 76px)** re-confirmed with the
+  worst case: `landscape-ninja-full.png` shows "Nothing to Guard" wrapping
+  to "Nothing to" / "Guard" comfortably inside the larger button.
+- **Before/after**: `portrait-none-band.png` (classId unresolved) shows the
+  literal old universal behavior — generic "SHIELD"/"DASH"/"EMIT" — since
+  the pre-fix code never varied by class, this one screenshot honestly
+  represents what EVERY class's button used to look like. Compare against
+  the four per-class screenshots above for the fix.
+
+This wave's conclusion updates wave 1's risk framing: the overflow risk was
+real to *check*, not real in *practice* — the existing button CSS already
+handles two- and three-word names correctly without any tuning. Screenshots
+live in this session's scratch capture dir (not committed, same convention
+as every prior sweep): `touch-labels/portrait-{wizard,ninja,paladin,priest,none}-{full,band}.png`,
+`touch-labels/landscape-ninja-full.png`, `touch-labels/slipstream-crop.png`,
+`touch-labels/nothing-to-guard-crop.png`.
+
+### Test
+
+`client/src/game/input/__tests__/touchControls.test.ts`, describe block
+"TouchControls Shield/Dash labels stay in sync with the shared chassis-verb
+names" — asserts, for all four `ClassId`s, that `TouchControls.setClassId`
+renders EXACTLY `SHIELD_NAME_BY_CLASS`/`DASH_NAME_BY_CLASS`'s value (the
+same constant `ActionBarSystem` imports), plus the default-generic-text and
+undefined-reverts-to-default cases, plus a length guard
+(`<=16` chars) against the measured fit envelope so a future name addition
+that blows past "Nothing to Guard"'s length gets caught by `bun test`
+before it ever needs a live screenshot to find out it doesn't fit.
+
+### Still open
+
+clusterA-05/06 (name overflow / nameplate clip — a DIFFERENT surface, the
+player nameplate column, not these ability buttons), B1, B3-B5, C3-C7, D5,
+the venue-feed/duo-hint collision, and the splash-CTA-below-the-fold
+question all remain exactly as wave 1 left them — untouched by this pass.
+
 ## Not yet / future
 
 - Haptics (`navigator.vibrate`) on hit/kill for Android (iOS ignores it).
