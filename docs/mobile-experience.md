@@ -56,10 +56,13 @@ a phone.
 
 - Splash/lobby get a short-landscape media query (`max-height: 560px`): 3-col
   button grid, tighter rhythm, scrollable lobby, copy hidden.
-- A touch device held sideways shows the rotate-to-portrait nudge overlay
-  (`.orientation-hint`, toggled in `main.ts` on resize/orientationchange).
-  It is tap-to-dismiss for the session ("tap to play sideways anyway") —
-  the overlay is opaque, so without the dismiss it hard-blocked landscape.
+- **REMOVED (2026-07-11): the rotate-to-portrait nudge overlay.**
+  `.orientation-hint` no longer exists anywhere in the client (grep
+  2026-08-05: zero hits across `client/src`, `index.html`, `style.css`).
+  Landscape and portrait are both first-class on touch — the layout
+  follows the hold, live (see the `main.ts` note above `isTouchDevice()`
+  and the no-orientation-lock note in `mobile.ts`
+  `enterFullscreenPortrait`).
 - The in-match FTUE legend swaps to touch wording ("LEFT STICK move / PUSH UP
   jump / RIGHT STICK aim & fire / SHIELD·DASH buttons") when touch is active,
   and starts lower (y=112) so it clears the compact phone HUD.
@@ -71,11 +74,15 @@ Landscape on a phone was cramped and the controls overlaid the action
 
 - **Orientation**: portrait is the target; a nudge asks players holding
   the phone sideways to rotate upright (`main.ts` + `.orientation-hint`).
+  *(Superseded 2026-07-11: the nudge and `.orientation-hint` were removed
+  — both orientations are first-class now, layout follows the hold.)*
 - **Fullscreen**: first tap on a touch device calls the Fullscreen API +
   portrait orientation lock (`enterFullscreenPortrait`), hiding the mobile
   browser URL bar ("massive banner"). iOS Safari has no Fullscreen API —
   there the apple-mobile-web-app meta tags give a chrome-less PWA via
-  Add to Home Screen.
+  Add to Home Screen. *(Update 2026-07-11: the orientation-lock half was
+  removed — `enterFullscreenPortrait` still goes fullscreen but no longer
+  locks, so rotating mid-match swaps layouts live.)*
 - **Camera**: the arena is 2:1 wide but a phone is ~1:2 tall. Rather than
   zoom (Phaser scales scroll-fixed HUD objects with camera zoom, breaking
   the HUD, and a UI camera is too invasive for this scene), the camera
@@ -114,7 +121,8 @@ A 393x852 (Pixel-class) sweep drove a batch of fixes, all client-side:
 - Live emulation (iPhone landscape, hasTouch): overlay + 2 zones + buttons
   present; dragging the move stick moved the player 540→1056px; portrait shows
   the orientation hint, landscape hides it; the landscape menu lays out
-  cleanly.
+  cleanly. *(Historical record — the orientation hint it verified was
+  removed 2026-07-11.)*
 - Desktop unaffected: touch overlay gated off; full client suite (563) green.
 
 ## QA sweep (2026-07-28, wave 1)
