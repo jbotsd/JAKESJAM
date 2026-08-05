@@ -21,6 +21,7 @@ import { MatchRegistry } from "./matchRegistry.ts";
 import { WorldHost } from "./worldHost.ts";
 import { VenueHost, VENUE_LOBBY_MATCH_ID } from "./venueHost.ts";
 import type { MatchSocketData } from "./matchHost.ts";
+import { serverWasmHost } from "./serverWasmHost.ts";
 import { PlayerId, type VesselCosmetics } from "@sim/types.ts";
 import {
   attachHangoutClient,
@@ -116,6 +117,22 @@ if (config.wasmCollision) {
 }
 if (config.wasmPlayer) {
   await applyServerWasmPlayer();
+}
+// Track E1d (hangout-pin lift): with the wasm step-world enabled, settle
+// serverWasmHost's (fire-and-forget, kicked at matchHost import) preload
+// BEFORE the always-on hosts below construct. The venue lobby
+// (mode:"hangout") never recycles, so its backend pick happens exactly
+// once per boot — racing the preload here nondeterministically pinned the
+// permanent lobby to TS even with a hangout-capable sim.wasm loaded. A
+// failed preload still falls back to TS (isReady() stays false), same as
+// before; this only removes the timing coin-flip.
+if (
+  process.env.USE_WASM_STEP_WORLD === "1" ||
+  process.env.USE_WASM_STEP_WORLD === "true"
+) {
+  await serverWasmHost.ready().catch(() => {
+    // matchHost's own preload catch already warned; hosts fall back to TS.
+  });
 }
 
 const registry = new MatchRegistry();

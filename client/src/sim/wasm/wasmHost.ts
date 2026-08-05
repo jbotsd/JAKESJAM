@@ -390,7 +390,11 @@ export class WasmHost {
    * `runWasmStepSync` helper directly (single source of truth — no
    * delegation chain through `applyWasmWorldStep*`).
    */
-  step(state: WorldState, dtMs: number): WasmStepResult {
+  step(
+    state: WorldState,
+    dtMs: number,
+    opts?: import("./worldWasmBackend.js").StepWorldOpts,
+  ): WasmStepResult {
     if (!this.resolvedReady) {
       throw new Error(
         "[wasm-host] step() called before ready. Await wasmHost.ready() first.",
@@ -402,7 +406,7 @@ export class WasmHost {
         "[wasm-host] step() called but legacy worldWasmBackend module not yet imported. preload() must complete first.",
       );
     }
-    return legacy.runWasmStepSync(state, dtMs);
+    return legacy.runWasmStepSync(state, dtMs, opts);
   }
 
   /**

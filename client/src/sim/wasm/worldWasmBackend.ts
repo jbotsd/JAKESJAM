@@ -70,8 +70,20 @@ type WorldExports = {
   /** Optional — older sim.wasm builds predate spawn points (Track Z0b
    *  Item A). Flat f64 array, 2 per point: [x, y], map.spawns order. */
   world_state_set_spawn_points?: (points_ptr: number, count: number) => number;
+  /** Optional — older sim.wasm builds predate the hangout flag (Track
+   *  E1d). Module-level STEP INPUT (arena-bounds pattern): written before
+   *  every step_world call from the caller's `opts.hangoutMode`; missing
+   *  export + a hangout step is a hard error (silently running combat
+   *  semantics in the lobby would let visitors kill each other). */
+  world_state_set_hangout_mode?: (enabled: number) => void;
   memory: WebAssembly.Memory;
 };
+
+/** Per-step flags for `step_world` (Track E1d). `hangoutMode` mirrors the
+ *  TS orchestrator's `runtime.mode === "hangout"` — the venue-lobby no-PvP
+ *  walking space (World.ts's hangoutMode branches; see world.zig's
+ *  g_hangout_mode doc for the full gate list). Omitted/false = combat. */
+export type StepWorldOpts = { hangoutMode?: boolean };
 
 let cachedSim: Sim | null = null;
 let cachedEx: WorldExports | null = null;
@@ -105,9 +117,10 @@ async function ensureSim(): Promise<{ sim: Sim; ex: WorldExports }> {
 export async function applyWasmWorldStep(
   state: WorldState,
   dt_ms: number,
+  opts?: StepWorldOpts,
 ): Promise<WorldState> {
   await ensureSim();
-  return runWasmStepSync(state, dt_ms).state;
+  return runWasmStepSync(state, dt_ms, opts).state;
 }
 
 /**
@@ -148,6 +161,7 @@ export async function applyWasmWorldStep(
 function runWasmStepSync(
   state: WorldState,
   dt_ms: number,
+  opts?: StepWorldOpts,
 ): { state: WorldState; events: WasmSimEvent[]; matchComplete: boolean } {
   if (!cachedSim || !cachedEx) {
     throw new Error(
@@ -174,6 +188,21 @@ function runWasmStepSync(
   writeScoresIntoMemory(state);
   writeLoadoutsIntoMemory(state);
   writePlayerInputsFromGlobal();
+  // Hangout flag (Track E1d) — a per-STEP input, written unconditionally
+  // every call so a shared wasm instance stepping a lobby world and a
+  // combat world interleaved can never leak one mode into the other.
+  // Requesting a hangout step on a pre-flag sim.wasm is a hard error:
+  // silently running combat semantics in the lobby would let visitors
+  // kill each other (the exact pin this flag lifts — see matchHost's
+  // simBackend comment).
+  const hangoutMode = opts?.hangoutMode === true;
+  if (typeof ex.world_state_set_hangout_mode === "function") {
+    ex.world_state_set_hangout_mode(hangoutMode ? 1 : 0);
+  } else if (hangoutMode) {
+    throw new Error(
+      "[wasm-world] hangout step requested but world_state_set_hangout_mode is missing from sim.wasm — rebuild required",
+    );
+  }
   const rc = ex.step_world(sim.statePtr, dt_ms);
   if (rc !== 0) {
     throw new Error(`[wasm-world] step_world returned ${rc}`);
@@ -329,9 +358,10 @@ function shallowEqual<T>(a: T, b: T): boolean {
 export async function applyWasmWorldStepFull(
   state: WorldState,
   dt_ms: number,
+  opts?: StepWorldOpts,
 ): Promise<{ state: WorldState; events: WasmSimEvent[]; matchComplete: boolean }> {
   await ensureSim();
-  return runWasmStepSync(state, dt_ms);
+  return runWasmStepSync(state, dt_ms, opts);
 }
 
 /**
@@ -362,8 +392,9 @@ export function isWasmWorldEnabled(): boolean {
 export function applyWasmWorldStepSync(
   state: WorldState,
   dt_ms: number,
+  opts?: StepWorldOpts,
 ): WorldState {
-  return runWasmStepSync(state, dt_ms).state;
+  return runWasmStepSync(state, dt_ms, opts).state;
 }
 
 function writePlayerInputsFromGlobal(): void {
@@ -494,8 +525,9 @@ export function writePlayerInputsIntoMemory(
 export function applyWasmWorldStepFullSync(
   state: WorldState,
   dt_ms: number,
+  opts?: StepWorldOpts,
 ): { state: WorldState; events: WasmSimEvent[]; matchComplete: boolean } {
-  return runWasmStepSync(state, dt_ms);
+  return runWasmStepSync(state, dt_ms, opts);
 }
 
 // Re-export the shared helper so WasmHost can call it directly
