@@ -19,16 +19,27 @@ const world_state = @import("world_state.zig");
 // updates on both sides.
 pub const STICKY_FUSE_MS: f64 = 720.0;
 const SPLIT_SPREAD: f64 = std.math.pi * 0.95;
-const SPLIT_DAMAGE_SCALE: f64 = 0.42;
-const SPLIT_LIFETIME_SCALE: f64 = 0.42;
-const SPLIT_RANGE_SCALE: f64 = 0.32;
-const SPLIT_MAX: u32 = 8;
-const SPLIT_MIN_LIFETIME_MS: f64 = 280.0;
-const SPLIT_RADIUS_SCALE: f64 = 0.78;
-const SPLIT_RADIUS_MIN: f64 = 2.0;
+// pub (Track E1, split-spawn orchestrator): world.zig's child
+// materialisation applies the same field scaling TS's `spawnSplit`
+// bakes into each SpawnedChild spec (projectile.ts:896-960) — the
+// velocity fan lives here (projectileSplitVelocities) but damage/
+// lifetime/radius/range/impact-radius inheritance is the
+// orchestrator's job, so those scales must be visible to it.
+pub const SPLIT_DAMAGE_SCALE: f64 = 0.42;
+pub const SPLIT_LIFETIME_SCALE: f64 = 0.42;
+pub const SPLIT_RANGE_SCALE: f64 = 0.32;
+pub const SPLIT_MAX: u32 = 8;
+pub const SPLIT_MIN_LIFETIME_MS: f64 = 280.0;
+pub const SPLIT_RADIUS_SCALE: f64 = 0.78;
+pub const SPLIT_RADIUS_MIN: f64 = 2.0;
 const SPLIT_SPEED_SCALE: f64 = 0.82;
 const SPLIT_SPEED_MIN: f64 = 180.0;
-const SPLIT_IMPACT_RADIUS_SCALE: f64 = 0.45;
+pub const SPLIT_IMPACT_RADIUS_SCALE: f64 = 0.45;
+/// TS projectile.ts:60 `BOOMERANG_RETURN_RADIUS` — the home-return
+/// catch radius for a returning boomerang. Consumed by world.zig's
+/// section-3 return-home expiry (Track E1 — stepV2 itself never
+/// implemented TS's steps 5/6, so the orchestrator owns them).
+pub const BOOMERANG_RETURN_RADIUS: f64 = 16.0;
 
 pub const Pathing = enum(u8) {
     straight = 0,
