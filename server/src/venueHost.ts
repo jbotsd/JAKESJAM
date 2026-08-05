@@ -297,6 +297,22 @@ export class VenueHost {
   private readonly admittedTeams = new Map<PlayerId, { teamId: string; expiresAt: number }>();
   /** Uniqueness counter for freshly-minted duo teamIds. */
   private duoTeamCounter = 0;
+  /**
+   * Admission tickets (open-doors 1.3, the admission race): EVERY player
+   * the bell admits — FFA and duo alike, picks or no picks — gets a TTL'd
+   * ticket here (value = expiry, same 30 s window as admittedCards). The
+   * arena consults it two ways (late-bound hooks wired in the
+   * constructor):
+   *   - a pre-opened arena socket parked while its player was QUEUED is
+   *     released from the hold and inserted at the bell drain;
+   *   - an arena socket that arrives AFTER the countdown already ended
+   *     (cold cache / slow phone — the fresh TCP+WS handshake lost the
+   *     ~3 s race) still inserts immediately instead of spectating the
+   *     full round it was admitted for.
+   * Never consumed on use (hasPlayer guards double-insertion); expiry is
+   * the only exit, swept at each bell edge so the map can't grow.
+   */
+  private readonly admittedEntrants = new Map<PlayerId, number>();
   /** The LOADOUT STATION (the bell's separated other half): a walk-up
    *  class + ability-catalog selector by the practice dummies. First touch
    *  derives `classId` from the visitor's current chassis pick and opens
@@ -351,11 +367,23 @@ export class VenueHost {
       // runs the SAME edge for the separate duo queue (classes-goal.md
       // "Venue integration") — two queues, one bell, one edge.
       if (next === "countdown") {
+        this.pruneAdmissions();
         this.admitQueue();
         this.admitDuoQueue();
       }
       this.broadcastStatus();
     };
+    // The admission race (open-doors 1.3) — the two venue-truth hooks the
+    // arena consults, wired with the same late-binding pattern as
+    // getEntrantCards below. holdEntrant: a lobby-connected player without
+    // a live admission has only PRE-OPENED their arena socket (a warm
+    // connection is not a queue commitment) — the arena keeps it parked
+    // through bell drains and recycles. admittedRecently: the bell
+    // admitted them within the ticket TTL — a socket arriving late (or a
+    // held one, at the drain) inserts.
+    this.arenaHost.holdEntrant = (playerId) =>
+      this.lobbySockets.has(playerId) && !this.hasAdmission(playerId);
+    this.arenaHost.admittedRecently = (playerId) => this.hasAdmission(playerId);
     // Starter cards ride admission (S2.E): the arena consults this at every
     // entrant insertion. Admitted picks win; a player with an un-banked
     // loadout pick who reaches the arena during a countdown some other way
@@ -452,6 +480,10 @@ export class VenueHost {
     const admittedCount = this.readyQueue.size;
     const expiresAt = Date.now() + 30_000;
     for (const playerId of this.readyQueue) {
+      // The admission ticket (open-doors 1.3) — minted for EVERY admitted
+      // player, not just those with picks, so the arena can tell "admitted,
+      // socket slow" from "never admitted" (see the field's doc).
+      this.admittedEntrants.set(playerId, expiresAt);
       const loadout = this.loadouts.get(playerId);
       if (loadout && loadout.picks.length > 0) {
         this.admittedCards.set(playerId, { cards: [...loadout.picks], expiresAt });
@@ -499,6 +531,8 @@ export class VenueHost {
       this.duoTeamCounter += 1;
       const pair = pending[i + 1] !== undefined ? [pending[i]!, pending[i + 1]!] : [pending[i]!];
       for (const playerId of pair) {
+        // Same admission ticket as the FFA bell (open-doors 1.3).
+        this.admittedEntrants.set(playerId, expiresAt);
         this.admittedTeams.set(playerId, { teamId, expiresAt });
         const loadout = this.loadouts.get(playerId);
         if (loadout && loadout.picks.length > 0) {
@@ -517,6 +551,28 @@ export class VenueHost {
     }
     this.duoQueue.clear();
     console.log(`[venue] the bell — admitted ${admittedCount} duo entrant(s) to the arena`);
+  }
+
+  /** A live (unexpired) admission ticket for this player (open-doors 1.3).
+   *  Lazily deletes an expired entry on read; pruneAdmissions sweeps the
+   *  rest at bell edges. */
+  private hasAdmission(playerId: PlayerId): boolean {
+    const expiresAt = this.admittedEntrants.get(playerId);
+    if (expiresAt === undefined) return false;
+    if (expiresAt <= Date.now()) {
+      this.admittedEntrants.delete(playerId);
+      return false;
+    }
+    return true;
+  }
+
+  /** Bell-edge sweep of expired admission tickets — keeps the map bounded
+   *  by live admissions, never by all-time admissions. */
+  private pruneAdmissions(): void {
+    const now = Date.now();
+    for (const [playerId, expiresAt] of this.admittedEntrants) {
+      if (expiresAt <= now) this.admittedEntrants.delete(playerId);
+    }
   }
 
   /** The LOADOUT STATION: walking into the station totem opens (or
@@ -892,6 +948,11 @@ export class VenueHost {
   /** Test surface: a player's loadout-station offer + recorded picks. */
   loadoutForTest(playerId: PlayerId): LoadoutEntry | undefined {
     return this.loadouts.get(playerId);
+  }
+
+  /** Test surface: whether a live admission ticket exists (open-doors 1.3). */
+  admissionForTest(playerId: PlayerId): boolean {
+    return this.hasAdmission(playerId);
   }
 
   dispose(): void {
