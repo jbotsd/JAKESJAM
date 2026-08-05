@@ -40,6 +40,7 @@ import {
   type ProjectilePathing,
   type ProjectileShape,
   type MeleeSwingMemory,
+  type PaperDoubleEntity,
   type PlayerDraftMemory,
   type PlayerMovementMemory,
   type RoundPhase,
@@ -177,10 +178,20 @@ const DESTRUCTIBLE_ENTITY_SIZE = 64;
 const FIRE_ENTITY_SIZE = 88;
 const PICKUP_ENTITY_SIZE = 64;
 // Paper Double decoys (2026-07-20 gap-closure pass item 3) — parallel to
-// world_state.zig's PaperDoubleEntity/MAX_PAPER_DOUBLES. Not yet
-// spawned/packed by the TS bridge; sized so downstream arrays stay aligned.
-const PAPER_DOUBLE_ENTITY_SIZE = 96;
-const MAX_PAPER_DOUBLES = 16;
+// world_state.zig's PaperDoubleEntity/MAX_PAPER_DOUBLES. BRIDGED as of
+// Track E1c (gospel-goal.md, the Paper Double bridge): packPaperDouble/
+// unpackPaperDouble below read and write the section, so this stride is
+// both the skip distance AND the per-entity layout size. Before that cut
+// this constant was sizing-only ("Not yet spawned/packed by the TS
+// bridge") — which combined with the full-sync hosts' every-tick repack
+// to WIPE every live decoy each tick, whether TS-spawned (World.ts's
+// "paper-double" case) or Zig-spawned (world.zig's `.paper_double` arm):
+// the same wipe-on-repack bug class as Z0e/Z1a/Z2, and the reason
+// wave-1's split-spawn lane had to drive stepWorld natively in tests.
+// Exported (like PLAYER_ENTITY_SIZE) so paperDoubleBridge.test.ts derives
+// offsets instead of re-hardcoding them.
+export const PAPER_DOUBLE_ENTITY_SIZE = 96;
+export const MAX_PAPER_DOUBLES = 16;
 // Must match sim/src/world_state.zig PlayerMovementMemory @sizeOf. Grew 24→40
 // with the deep-movement augment memory (dash timers + counters), then 40→48
 // with dash_recovery_ms (slide endlag). BRIDGED as of Track Z0e — the
@@ -314,6 +325,29 @@ export const WORLD_STATE_TOTAL_SIZE =
   // it, and this field's offset comes out 8-aligned on its own. + N×SimEvent.
   ARRAY_PREAMBLE +
   64 * 40;
+
+// Byte offset of the paper-double section's COUNT WORD within the packed
+// WorldState (Track E1c — the Paper Double bridge). The section keeps the
+// same "u32 count + 4-byte pad + array" preamble shape as every other
+// entity section (world_state.zig pins that shape with a comptime
+// assert), so `paper_doubles[0]` sits at PAPER_DOUBLE_OFFSET +
+// ARRAY_PREAMBLE — paperDoubleBridge.test.ts gate A asserts that
+// derivation equals wasm's own @offsetOf-derived `offset_paper_doubles()`
+// export, the movementMemoryBridge layout-pinning contract.
+export const PAPER_DOUBLE_OFFSET =
+  HEADER_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_PLAYERS * PLAYER_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_PROJECTILES * PROJECTILE_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_SATELLITES * SATELLITE_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_DESTRUCTIBLES * DESTRUCTIBLE_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_FIRE * FIRE_ENTITY_SIZE +
+  ARRAY_PREAMBLE +
+  MAX_PICKUPS * PICKUP_ENTITY_SIZE;
 
 // Byte offset of `player_movement[0]` within the packed WorldState
 // (Track Z0e). Bridged (packed AND unpacked) since Z0e: the full-sync
@@ -2017,7 +2051,119 @@ function unpackPickup(view: DataView, offset: number): PickupEntity {
 }
 
 // -----------------------------------------------------------------
+// PaperDoubleEntity codec (Track E1c — the Paper Double bridge).
+//
+// Byte layout — must match world_state.zig's PaperDoubleEntity extern
+// struct exactly (every offset below is pinned by a comptime @offsetOf
+// assert next to that struct's size assert):
+//   [  0,  8) x             f64
+//   [  8, 16) y             f64
+//   [ 16, 24) vx            f64
+//   [ 24, 32) vy            f64
+//   [ 32, 40) health        f64
+//   [ 40, 48) remaining_ms  f64
+//   [ 48, 52) id            u32
+//   [ 52, 53) owner_id_len  u8
+//   [ 53, 56) _pad0         [3]u8 (explicit — same "len byte + pad to
+//                           the next boundary" shape ProjectileEntity's
+//                           owner block uses)
+//   [ 56, 88) owner_id_bytes [32]u8
+//   [ 88, 96) _reserved     [8]u8 (growth room — left zero)
+// Unlike FireEntity there is no has_owner word: a decoy ALWAYS has a
+// living owner (types.ts: "never null"), so the owner id is written
+// unconditionally.
+
+function packPaperDouble(
+  view: DataView,
+  offset: number,
+  pd: PaperDoubleEntity,
+): void {
+  let off = offset;
+  view.setFloat64(off, pd.x, true);
+  off += 8;
+  view.setFloat64(off, pd.y, true);
+  off += 8;
+  view.setFloat64(off, pd.vx, true);
+  off += 8;
+  view.setFloat64(off, pd.vy, true);
+  off += 8;
+  view.setFloat64(off, pd.health, true);
+  off += 8;
+  view.setFloat64(off, pd.remainingMs, true);
+  off += 8;
+  view.setUint32(off, pd.id, true);
+  off += 4;
+  const ownerLen = Math.min(
+    textEncoder.encode(pd.ownerId).length,
+    PLAYER_ID_BYTES,
+  );
+  view.setUint8(off, ownerLen & 0xff);
+  off += 1;
+  for (let i = 0; i < 3; i++) view.setUint8(off + i, 0); // _pad0
+  off += 3;
+  writeString(view, off, PLAYER_ID_BYTES, pd.ownerId);
+  // _reserved [8]u8 — left zero (buf starts zero-filled).
+}
+
+function unpackPaperDouble(
+  view: DataView,
+  offset: number,
+): PaperDoubleEntity {
+  let off = offset;
+  const x = view.getFloat64(off, true);
+  off += 8;
+  const y = view.getFloat64(off, true);
+  off += 8;
+  const vx = view.getFloat64(off, true);
+  off += 8;
+  const vy = view.getFloat64(off, true);
+  off += 8;
+  const health = view.getFloat64(off, true);
+  off += 8;
+  const remainingMs = view.getFloat64(off, true);
+  off += 8;
+  const id = view.getUint32(off, true);
+  off += 4;
+  const ownerLen = view.getUint8(off);
+  off += 1;
+  off += 3; // _pad0
+  const ownerId = PlayerId(readString(view, off, ownerLen));
+  return {
+    id: EntityId(id),
+    ownerId,
+    x,
+    y,
+    vx,
+    vy,
+    health,
+    remainingMs,
+  };
+}
+
+// -----------------------------------------------------------------
 // World-level pack / unpack.
+
+/**
+ * The header's spawn-id cursor (Track E1c). Mirrors World.ts's
+ * `nextEntityIdSeed` (max live entity id across every id-bearing
+ * collection, +1) — duplicated here rather than imported because the
+ * bridge deliberately depends only on types.ts, not the TS orchestrator.
+ * `state.nextEntityId` (the wasm hosts' carrier of Zig's own post-step
+ * cursor, types.ts) wins when it's AHEAD of the derived seed: Zig's
+ * cursor is monotonic like the TS runtime allocator, so a carried value
+ * lower than the derived floor would mean stale/foreign state — the max
+ * keeps ids collision-free either way.
+ */
+function nextEntityIdForPack(state: WorldState): number {
+  let max = 0;
+  for (const id of Object.keys(state.projectiles)) max = Math.max(max, Number(id));
+  for (const id of Object.keys(state.destructibles)) max = Math.max(max, Number(id));
+  for (const id of Object.keys(state.pickups)) max = Math.max(max, Number(id));
+  for (const id of Object.keys(state.satellites ?? {})) max = Math.max(max, Number(id));
+  for (const id of Object.keys(state.firePatches ?? {})) max = Math.max(max, Number(id));
+  for (const id of Object.keys(state.paperDoubles ?? {})) max = Math.max(max, Number(id));
+  return Math.max(state.nextEntityId ?? 0, max + 1);
+}
 
 export function packWorldState(state: WorldState): Uint8Array {
   const buf = new Uint8Array(WORLD_STATE_TOTAL_SIZE);
@@ -2040,10 +2186,21 @@ export function packWorldState(state: WorldState): Uint8Array {
   view.setUint8(off, state.round.suddenDeathActive ? 1 : 0);
   off += 1;
   off += 2;
-  // next_entity_id + map_id stay placeholders until the
-  // data-table-driven orchestrator owns them.
-  view.setUint32(off, 0, true);
+  // next_entity_id — BRIDGED as of Track E1c (was a placeholder 0, which
+  // reset the spawn-id cursor world.zig's spawn sites read+increment on
+  // EVERY full-sync repack: wasm-assigned ids restarted from 0 each tick
+  // and could collide with live entity ids — the header edition of the
+  // scores/target_score/round_winner bug class). Packed as
+  // max(state.nextEntityId carrier, derived max-live-id+1) — see
+  // nextEntityIdForPack's doc comment; unpackWorldState reads Zig's
+  // post-step cursor back out and the hosts carry it on the state object
+  // (types.ts WorldState.nextEntityId), same round-trip shape as
+  // movementMemory.
+  view.setUint32(off, nextEntityIdForPack(state) >>> 0, true);
   off += 4;
+  // map_id stays a placeholder until the data-table-driven orchestrator
+  // owns it (map identity is host-delivered via the statics/spawn-point
+  // setters today — nothing Zig-side reads this field).
   view.setUint32(off, 0, true);
   off += 4;
   // chaos_mask — encode chaosModifierIds[] into the bitmask the
@@ -2186,6 +2343,26 @@ export function packWorldState(state: WorldState): Uint8Array {
     packPickup(view, pickupStart + i * PICKUP_ENTITY_SIZE, pickups[i]!);
   }
 
+  // Paper Doubles (Track E1c — the Paper Double bridge): same
+  // sorted-by-id convention as every entity section above, written at
+  // the section's absolute offset (the pickup loop above doesn't advance
+  // `off` past its own array; the parallel-array writes below are
+  // absolute-offset too). Before this, the section was left zero-filled
+  // (count 0) and the full-sync hosts' every-tick repack WIPED every
+  // live decoy — TS-spawned or Zig-spawned — one tick after it appeared.
+  // The MAX_PAPER_DOUBLES clamp mirrors world.zig's own defensive cap:
+  // one decoy per player max in real play (cast CD 9s > max life 2.5s),
+  // so the clamp is unreachable outside hand-built states.
+  const paperDoubles = Object.values(state.paperDoubles ?? {}).sort(
+    (a, b) => a.id - b.id,
+  );
+  const pdCount = Math.min(paperDoubles.length, MAX_PAPER_DOUBLES);
+  view.setUint32(PAPER_DOUBLE_OFFSET, pdCount, true);
+  const pdStart = PAPER_DOUBLE_OFFSET + ARRAY_PREAMBLE;
+  for (let i = 0; i < pdCount; i++) {
+    packPaperDouble(view, pdStart + i * PAPER_DOUBLE_ENTITY_SIZE, paperDoubles[i]!);
+  }
+
   // player_movement parallel array (Track Z0e) — packed by SORTED player
   // order (the same `players` array the entity loop above wrote, so slot
   // N's movement memory always sits under players[N] even when the
@@ -2300,6 +2477,18 @@ export type UnpackedWorldState = {
   destructibles: Record<EntityId, DestructibleEntity>;
   firePatches: Record<EntityId, FireEntity>;
   pickups: Record<EntityId, PickupEntity>;
+  /** Live Paper Double decoys post-step, keyed by id (Track E1c) — the
+   *  hosts' mergeUnpacked carries these onto the returned WorldState like
+   *  every other entity collection, so a decoy survives the every-tick
+   *  full-sync repack. */
+  paperDoubles: Record<EntityId, PaperDoubleEntity>;
+  /** Zig's post-step spawn-id cursor (`header.next_entity_id`, Track
+   *  E1c). The hosts' mergeUnpacked carries this onto the returned
+   *  WorldState (`WorldState.nextEntityId`) so the NEXT tick's
+   *  packWorldState can write it back — without the round-trip the
+   *  cursor reset to the derived floor every repack and wasm-assigned
+   *  ids could regress/collide after entity churn. */
+  nextEntityId: number;
   /** Zig's post-step `player_movement` parallel array, re-keyed by player
    *  id (Track Z0e). The hosts' mergeUnpacked carries this onto the
    *  returned WorldState so the NEXT tick's packWorldState can write it
@@ -2333,7 +2522,12 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   const suddenDeathActive = view.getUint8(off) !== 0 ? true : undefined;
   off += 1;
   off += 2;
-  off += 4 + 4; // next_entity_id, map_id (placeholders)
+  // next_entity_id — read back (Track E1c) so the hosts can carry Zig's
+  // post-step spawn-id cursor into the next pack; map_id stays a
+  // skipped placeholder (see packWorldState's matching comments).
+  const nextEntityId = view.getUint32(off, true);
+  off += 4;
+  off += 4; // map_id (placeholder)
   const chaosMask = view.getUint32(off, true);
   off += 4;
   const chaosModifierIds = decodeChaosMask(chaosMask);
@@ -2458,10 +2652,24 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   }
   off = pickupStart + MAX_PICKUPS * PICKUP_ENTITY_SIZE;
 
-  // Paper Double decoys (2026-07-20 gap-closure pass item 3) — 4 count + 4
-  // pad + N×PaperDoubleEntity. Skipped (host doesn't consume yet; nothing
-  // spawns these).
-  off += 8 + MAX_PAPER_DOUBLES * PAPER_DOUBLE_ENTITY_SIZE;
+  // Paper Double decoys — 4 count + 4 pad + N×PaperDoubleEntity. BRIDGED
+  // as of Track E1c (was skipped with "host doesn't consume yet; nothing
+  // spawns these" — stale on both counts once world.zig's `.paper_double`
+  // cast arm landed): read back keyed by id like every entity collection
+  // above, so the hosts' mergeUnpacked can carry live decoys across the
+  // every-tick full-sync repack.
+  const paperDoubles: Record<EntityId, PaperDoubleEntity> = {} as Record<
+    EntityId,
+    PaperDoubleEntity
+  >;
+  const pdCount = view.getUint32(off, true);
+  off += 8;
+  const pdStart = off;
+  for (let i = 0; i < pdCount; i++) {
+    const e = unpackPaperDouble(view, pdStart + i * PAPER_DOUBLE_ENTITY_SIZE);
+    paperDoubles[e.id] = e;
+  }
+  off = pdStart + MAX_PAPER_DOUBLES * PAPER_DOUBLE_ENTITY_SIZE;
 
   // I14 player_movement parallel array — 16 × 48 bytes. BRIDGED as of
   // Track Z0e (was skipped, which combined with the hosts' every-tick
@@ -2614,6 +2822,8 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
     destructibles,
     firePatches,
     pickups,
+    paperDoubles,
+    nextEntityId,
     events,
     movementMemory,
     meleeSwingMemory,
