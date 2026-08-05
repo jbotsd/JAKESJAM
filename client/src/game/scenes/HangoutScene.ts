@@ -40,6 +40,7 @@ import { ConstructVfxController } from "../systems/ConstructVfxController";
 import { classIdForArchetype } from "../../sim/data/cardTypes";
 import { spawnFloatingDamageNumber } from "../render/damageNumber.js";
 import { TouchControls } from "../input/TouchControls";
+import { hangoutTouchKeys } from "../input/hangoutTouchKeys";
 import { isTouchPrimary, isPortraitMobile } from "../input/mobile";
 import { getRenderScale, uiWidth } from "../render/renderResolution.js";
 import { installHudCamera } from "../systems/HudCamera.js";
@@ -203,6 +204,14 @@ export class HangoutScene extends Phaser.Scene {
   private venueStatusAtMs = 0;
   private feedText: Phaser.GameObjects.Text | null = null;
   private bellLabel: Phaser.GameObjects.Text | null = null;
+  /** Touch combat (Doors 1.5a) — same last-aim convention as
+   *  OnlineMatchScene: shots keep their heading when the thumb lifts. */
+  private lastTouchAim: { x: number; y: number } = { x: 1, y: 0 };
+  /** Last-frame local feet (updated AFTER pump) so the touch aim origin
+   *  never reads getRenderState before pump — that would advance the
+   *  smoother twice per frame (OnlineMatchScene's own convention). */
+  private lastLocalRenderX: number | null = null;
+  private lastLocalRenderY: number | null = null;
   // Venue mode (S2.C): projectiles + practice dummies render through the
   // same coordinator the arena uses (pool null — no combat frame budget to
   // amortize here, straight Graphics is fine).
@@ -259,11 +268,17 @@ export class HangoutScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor("#05080f");
     this.input.mouse?.disableContextMenu();
 
-    // Movement-only twin-stick — same precedent as offline Practice
-    // (MatchScene.ts, combatButtons:false): nothing here for Shield/Dash
-    // buttons to react to, walking-only.
+    // Touch controls. VENUE: the lobby is a live-fire room (S2.C practice
+    // dummies), so touch mounts the SAME combat verbs the touch MATCH has
+    // (Doors 1.5a — the bell wait can reach ~100 s and phones couldn't
+    // even hit the dummies while keyboard visitors could). PRIVATE: the
+    // original movement-only contract stands — same precedent as offline
+    // Practice (MatchScene.ts, combatButtons:false): nothing there for
+    // Shield/Dash buttons to react to, walking-only.
     if (isTouchPrimary()) {
-      this.touchControls = new TouchControls(document.body, { combatButtons: false });
+      this.touchControls = new TouchControls(document.body, {
+        combatButtons: this.mode === "venue",
+      });
       this.touchControls.attach();
       this.touchControls.setVisible(true);
     }
@@ -330,20 +345,15 @@ export class HangoutScene extends Phaser.Scene {
       // renders, so cooldowns/glyphs for whatever's equipped are visible
       // while standing at a dummy — venue-only, mirroring entityRender's
       // gate immediately above (private hangouts have no loadout station).
-      // C4 mobile-QA fix (wave 2, 2026-07-29): touch is walk-only in this
-      // scene (`combatButtons: false` a few lines up, and update()'s input
-      // assembly never sets Fire/Shield/slot bits for a touch player here —
-      // see C3's doc note) — nothing a touch visitor does can ever move
-      // these vitals or trigger a cooldown, so the bar is dead weight
-      // (construction + a per-frame draw + vitals/chip derivation with zero
-      // payoff) specifically on touch. Desktop/keyboard venue visitors DO
-      // get real Fire/Shield/slot input here (same input assembly, a few
-      // lines down) and keep the bar exactly as before — this gate is
-      // touch-only and local to this scene; OnlineMatchScene/MatchScene
-      // (real combat, all inputs) are untouched.
-      if (!isTouchPrimary()) {
-        this.actionBar = new ActionBarSystem(this);
-      }
+      // The C4 mobile-QA gate (wave 2, 2026-07-29: `!isTouchPrimary()`)
+      // is GONE with Doors 1.5a — its whole premise was "touch is
+      // walk-only here so the bar's vitals can never move". Touch now
+      // carries the full combat verbs (combatButtons above + update()'s
+      // venue passthrough), and the bar's per-frame pass is ALSO what
+      // arms the touch EMIT/slot buttons (updateActionBar mirrors
+      // OnlineMatchScene's own bar→TouchControls coupling), so it's load-
+      // bearing on touch, not dead weight.
+      this.actionBar = new ActionBarSystem(this);
 
       // Lobby VFX parity (docs/lobby-vfx-parity-goal.md Pillar 1): the exact
       // trio OnlineMatchScene constructs (`OnlineMatchScene.ts:673,676`) —
@@ -1254,26 +1264,50 @@ export class HangoutScene extends Phaser.Scene {
     }
 
     // Aim orients the rig — and in venue mode it aims live practice fire.
-    // Mouse position on desktop, last known local position on touch (touch
-    // aim stick still exists per the combatButtons:false precedent; touch
-    // stays walk-only until the venue gets real touch combat controls).
+    // Mouse position on desktop; on touch, last-frame feet + the aim
+    // stick's kept heading (below).
     const pointer = this.input.activePointer;
     const cam = this.cameras.main;
     const aimWorld = cam.getWorldPoint(pointer.x, pointer.y);
     let aimX = aimWorld.x;
     let aimY = aimWorld.y;
 
+    // Touch REPLACES the keyboard/mouse assembly above, same shape as
+    // OnlineMatchScene's own touch branch (Doors 1.5a): venue mode passes
+    // the FULL combat bitfield through (Fire/Shield/Dash/Emission/slots —
+    // dummies are hittable on a phone at last); private hangouts keep the
+    // original walk-only mask (hangoutTouchKeys owns both contracts).
     if (this.touchControls) {
       const t = this.touchControls.getState();
-      keys = t.keys & (InputBit.Left | InputBit.Right | InputBit.Jump | InputBit.Down | InputBit.Crouch);
-      const state = this.loop.getRenderState();
-      const me = state?.players[this.localPlayerId];
-      if (me && t.aimDir) {
-        aimX = me.x + t.aimDir.x * 100;
-        aimY = me.y + t.aimDir.y * 100;
-      } else if (me) {
-        aimX = me.x;
-        aimY = me.y;
+      keys = hangoutTouchKeys(t.keys, this.mode);
+      // Kept heading (OnlineMatchScene convention): shots hold their
+      // direction when the thumb lifts; origin is LAST-frame feet so we
+      // never call getRenderState before pump (double-advances the
+      // smoother — the exact thing the match's comment warns about; the
+      // old walk-only branch here did it anyway because aim was inert).
+      if (t.aimDir) this.lastTouchAim = t.aimDir;
+      const AIM_REACH = 420;
+      const ox = this.lastLocalRenderX ?? aimX;
+      const oy = this.lastLocalRenderY ?? aimY;
+      // Deliberately NO assistTouchAim here (a divergence from the match,
+      // not an omission): the assist cone bends aim toward living PLAYERS
+      // only, and everyone in the lobby is PvP-immune — in a room whose
+      // real targets are destructible dummies it would steer shots OFF
+      // the dummy toward an immune bystander. Raw stick + kept heading is
+      // the honest lobby aim.
+      aimX = ox + this.lastTouchAim.x * AIM_REACH;
+      aimY = oy + this.lastTouchAim.y * AIM_REACH;
+      // DASH DIRECTION (mirrors the match): the sim dashes toward AIM,
+      // and on touch the aim is stale while the right thumb is on the
+      // DASH button — point the aim where the dash gesture says (drag
+      // direction, or the move stick for a plain tap); an actively held
+      // aim stick still wins.
+      if (keys & InputBit.Dash) {
+        const dd = t.dashDir ?? (t.aimDir ? null : t.moveDir);
+        if (dd) {
+          aimX = ox + dd.x * AIM_REACH;
+          aimY = oy + dd.y * AIM_REACH;
+        }
       }
     }
 
@@ -1282,6 +1316,14 @@ export class HangoutScene extends Phaser.Scene {
 
     const state = this.loop.getRenderState();
     if (!state) return;
+
+    // Last-frame feet for the touch aim origin (recorded AFTER pump —
+    // same convention as OnlineMatchScene's lastLocalRenderX/Y).
+    const me = state.players[this.localPlayerId];
+    if (me) {
+      this.lastLocalRenderX = me.x;
+      this.lastLocalRenderY = me.y;
+    }
 
     const now = performance.now();
     const deltaMs = Math.max(1, Math.min(50, now - this.lastFrameMs));
@@ -1378,6 +1420,23 @@ export class HangoutScene extends Phaser.Scene {
     const character = this.getCharacter(local?.characterId);
     const chips = deriveHudChips(local, state.tick);
     const localActives = local ? activeSlotVitals(local, state.tick) : [];
+    const isDead = local ? !local.alive : false;
+    // Touch arming (Doors 1.5a) — the same per-frame calls the match's
+    // action-bar pass makes (OnlineMatchScene.ts, `if (this.actionBar)`
+    // block): EMIT arms only at full predicted charge (keeps the sim's
+    // parry fall-through human-unreachable on touch — same client gate as
+    // the match), slot buttons appear/arm from the same vitals the bar
+    // draws, and the Shield/Dash button text shares one classId resolve
+    // with the bar (clusterA-03: the DOM button and the canvas HUD can
+    // never name the same ability two different ways).
+    const localClassId = local ? classIdForArchetype(local.characterId) : undefined;
+    this.touchControls?.setEmissionReady(
+      (local?.abilityCharge ?? 0) >= EMISSION_CHARGE_MAX && !isDead,
+    );
+    this.touchControls?.setActiveSlots(
+      localActives.map((a) => ({ ready: a.readyFrac >= 1 && !isDead })),
+    );
+    this.touchControls?.setClassId(localClassId);
     const vitals: ActionBarVitals = {
       health: local?.health ?? 0,
       maxHealth: character.maxHealth,
@@ -1391,7 +1450,8 @@ export class HangoutScene extends Phaser.Scene {
       actives: localActives,
       acquired: local ? acquiredAbilities(resolvePlayerBuild(local)) : [],
       stolenFangsCharges: local?.pendingLockCharges ?? 0,
-      isDead: local ? !local.alive : false,
+      isDead,
+      classId: localClassId,
     };
     this.actionBar.update(vitals, chips);
   }
@@ -1604,6 +1664,9 @@ export class HangoutScene extends Phaser.Scene {
     this.bellLabel = null;
     this.venueStatus = null;
     this.duoHintText = null;
+    this.lastTouchAim = { x: 1, y: 0 };
+    this.lastLocalRenderX = null;
+    this.lastLocalRenderY = null;
     this.duoIntentLocal = false;
     this.lobbyTransport = null;
     this.entityRender?.destroy();
