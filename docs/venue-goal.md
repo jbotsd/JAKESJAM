@@ -627,7 +627,9 @@ pillar's structural acceptance tests do not pass)**
    params) still starts MainMenu (the splash). The venue lobby is
    reached only via `?world=1`, `?venue=1`, a room/code link, or the
    CrazyGames instant-multiplayer flag (grep of the `urlParams` branch
-   in main.ts, ~line 2225). The splash's own "Lobby" button is one of
+   in main.ts, ~line 2225). *[2026-08-05: the CrazyGames flag is gone —
+   removed with the SDK in 10b359e; entry today is `?world=1` /
+   `?venue=1` / room/code links only.]* The splash's own "Lobby" button is one of
    five equal-weight buttons (Practice / Join room / Private room /
    Lobby) — not an overlay over a lobby-first landing.
 3. OPEN — `?fight` fast path: no `?fight` handling exists anywhere in

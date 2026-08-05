@@ -93,7 +93,7 @@ If a screen can't say which word it's serving, it's off-model.
 4. The ident/anthem plays ONCE as lore content discoverable from the menu,
    never as a gate (seam #1).
 
-### 4.2 Funnel fast-path (`?fight` / Fight Night links / CrazyGames)
+### 4.2 Funnel fast-path (`?fight` / Fight Night links)
 `?world=1` → `?fight`: lands in the lobby ALREADY walking toward the totem,
 auto-readied; enters at the next bell. Median time-to-combat 8–20s, and the
 first 8s were already play. The link promise and the experience finally agree.
