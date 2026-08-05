@@ -162,6 +162,11 @@ pub const DestructibleKind = enum(u8) {
     box = 1,
     mine = 2,
     cube = 3,
+    // Venue-lobby practice dummy (types.ts 2026-07-18). Behaviorally a
+    // plain destructible in the sim — the kind exists so the codec can
+    // carry it; found live 2026-08-05 when the E1d hangout-pin lift made
+    // the lobby pack for the first time and encEnum threw on it.
+    training_dummy = 4,
 };
 
 pub const PickupKind = enum(u8) {

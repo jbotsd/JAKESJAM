@@ -599,7 +599,11 @@ const PROJECTILE_SHAPES = [
   "bar",
 ] as const;
 
-const DESTRUCTIBLE_KINDS = ["barrel", "box", "mine", "cube"] as const;
+// Order mirrors world_state.zig's DestructibleKind enum values exactly.
+// "trainingDummy" (venue lobby tableau) was missing until 2026-08-05 —
+// invisible while the hangout pin kept the lobby off the wasm path, then
+// a live per-tick encode throw the moment E1d lifted it.
+const DESTRUCTIBLE_KINDS = ["barrel", "box", "mine", "cube", "trainingDummy"] as const;
 
 const PICKUP_KINDS = [
   "health-shard",
