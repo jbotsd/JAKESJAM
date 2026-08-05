@@ -55,17 +55,27 @@ result but does not gate it.
       tests, ops clip file/archive routes, email-gate changes, **the global
       governor attach** (`main.ts:668` — a checkout loses menu/lobby/tutorial
       governor coverage). Split into logical commits.
-- [ ] 0.2 **Fix the static-host unfurl.** `client/dist/index.html:104,105,115`
+- [x] 0.2 **Fix the static-host unfurl.** DONE 2026-08-05 (09c5960) —
+      vercel-build.sh substitutes PUBLIC_ORIGIN >
+      VERCEL_PROJECT_PRODUCTION_URL > VERCEL_URL > play.elyad.io, with a
+      fail-the-build guard if the token survives. Original item: `client/dist/index.html:104,105,115`
       ships the literal `__ORIGIN__` token — every Discord/X paste of a
       statically-hosted landing URL unfurls broken. Substitute in
       `scripts/vercel-build.sh` (the Bun server already rewrites it;
       `server/src/index.ts:198-203`).
-- [ ] 0.3 **Load the brand font.** `Noto Serif Display` is specified on the
+- [x] 0.3 **Load the brand font.** DONE 2026-08-05 (f926af4) — all three
+      families self-hosted (latin woff2, ~97 KB, /fonts), first-paint
+      preloads, googleapis dependency removed; headless screenshot
+      confirms the serif face renders. Original item: `Noto Serif Display` is specified on the
       wordmark, "INTREPID DEVELOPMENT PRESENTS", "CLICK TO INITIATE", credits
       (`style.css:2115,2186,2296,2437,2778,2943`) and never loaded — the first
       three seconds render in fallback serif. Self-host via `@font-face`
       (kills the fonts.googleapis.com dependency at the same time).
-- [ ] 0.4 **Kill the eager media preload.** `preload="auto"` on menu (2.7 MB),
+- [x] 0.4 **Kill the eager media preload.** DONE 2026-08-05 (f926af4) —
+      music tracks preload="none" (play() fetches on surface entry, the
+      crossfade masks the start), splash video 49 KB poster +
+      preload="metadata" + starts on the click-to-initiate gesture.
+      ~13.3 MB → ~0 media at boot. Original item: `preload="auto"` on menu (2.7 MB),
       world (2.7 MB) and venue (3.9 MB) music at `main.ts:1257,1277,1288` plus
       the 4 MB splash video = ~13.3 MB before any gameplay. Load venue/world
       tracks on surface entry; `preload="metadata"` + poster for the video.
@@ -257,6 +267,9 @@ orchestrator (finish-line Z5 leftover) · snapshot-relay spectate · portals
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-05 (later still) · 0.2/0.3/0.4 DONE (09c5960, f926af4), dist
+  rebuilt + live. Phase 0 remaining: 0.5 (CTA fold — needs the 4-viewport
+  pass), 0.6 doc-drift, 0.7 honest-copy, 0.8 hygiene.
 - 2026-08-05 (later) · Subsumed as gospel-goal.md Track D (Jake: "GO ALL
   ZIG", both programs merged). Phase 0.1 committed (hashes at the item).
   Zig toolchain question resolved — see gospel-goal L2 (pin stays

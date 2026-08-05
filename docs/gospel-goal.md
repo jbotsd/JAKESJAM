@@ -180,6 +180,10 @@ position (1.2), bell taper (1.5), announcer (4.3), board persistence.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-05 (b) · Doors 0.2 (unfurl, 09c5960) + 0.3 (fonts) + 0.4
+  (media preload) DONE in f926af4; dist rebuilt and serving. Next-weakest:
+  Doors 0.5–0.8 (0.5 needs the 4-viewport pass), then E1, then the
+  2026-07-31 replay renders (Track P queue).
 - 2026-08-05 · **Doc created; goal live.** Phase 0.1 DONE — the 29 Jul
   dirty tree landed as six lossless commits (a8a4eaa net identity-
   escalation +tests · 10b359e CrazyGames removal · c3895ca global render
