@@ -46,4 +46,27 @@ if [ ! -f client/dist/wasm/sim.wasm ]; then
 fi
 echo "[vercel-build] dist wasm size: $(stat -c%s client/dist/wasm/sim.wasm) bytes"
 
+# ── OG/Twitter card origin (open-doors 0.2) ──────────────────────────
+# The Bun host rewrites __ORIGIN__ per-request (server/src/index.ts),
+# but a static host serves dist/index.html verbatim — without this
+# substitution every Discord/X paste of a statically-hosted URL unfurls
+# with a literal "__ORIGIN__/og-image.png". Resolution order: explicit
+# PUBLIC_ORIGIN env > Vercel's canonical prod domain > this deploy's own
+# URL > the play domain.
+if [ -n "${PUBLIC_ORIGIN:-}" ]; then
+  ORIGIN="${PUBLIC_ORIGIN}"
+elif [ -n "${VERCEL_PROJECT_PRODUCTION_URL:-}" ]; then
+  ORIGIN="https://${VERCEL_PROJECT_PRODUCTION_URL}"
+elif [ -n "${VERCEL_URL:-}" ]; then
+  ORIGIN="https://${VERCEL_URL}"
+else
+  ORIGIN="https://play.elyad.io"
+fi
+echo "[vercel-build] Substituting __ORIGIN__ -> ${ORIGIN} in dist/index.html"
+sed -i "s|__ORIGIN__|${ORIGIN}|g" client/dist/index.html
+if grep -q "__ORIGIN__" client/dist/index.html; then
+  echo "[vercel-build] ERROR: __ORIGIN__ still present in dist/index.html after substitution"
+  exit 1
+fi
+
 echo "[vercel-build] Done."
