@@ -120,13 +120,13 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <!-- Display + mono fonts: Space Grotesk (headers, card titles) + Space Mono (numerics, HUD) -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700;900&family=Space+Mono:wght@400;700&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Fonts are self-hosted from /fonts (open-doors 0.3 — @font-face
+         rules live in style.css; no Google Fonts dependency). Preload the
+         two families painted in the first seconds: Noto Serif Display
+         (wordmark, CLICK TO INITIATE) and Space Grotesk (headers).
+         `crossorigin` is required on font preloads even same-origin. -->
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/noto-serif-display-var.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/space-grotesk-var.woff2" crossorigin />
   </head>
   <body>
     <div id="app"></div>

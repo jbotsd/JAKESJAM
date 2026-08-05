@@ -11,6 +11,43 @@
    and every component reading these custom properties picks up the new
    hue automatically); only the hex values moved. */
 
+/* ─── Self-hosted fonts (open-doors 0.3) ─────────────────────────────────
+   Noto Serif Display carries the wordmark, "INTREPID DEVELOPMENT
+   PRESENTS", "CLICK TO INITIATE" and the credits — it was specified below
+   but NEVER loaded (the old Google Fonts <link> only fetched Space
+   Grotesk/Mono), so the first three seconds of the game rendered in
+   fallback serif. All three families now ship from /fonts (latin subset,
+   ~97 KB total, OFL-licensed), which also removes the
+   fonts.googleapis.com third-party dependency from the boot path. */
+@font-face {
+  font-family: "Noto Serif Display";
+  src: url("/fonts/noto-serif-display-var.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/space-grotesk-var.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Mono";
+  src: url("/fonts/space-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Mono";
+  src: url("/fonts/space-mono-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   color: #f7fbff;
   background: #05080f;

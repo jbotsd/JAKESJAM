@@ -188,10 +188,16 @@ if (isKioskMode) {
 
 app.innerHTML = `
   <section class="splash-screen" data-splash data-shell-home>
+    <!-- No autoplay (open-doors 0.4): autoplay forces the whole 4 MB
+         fetch at boot, ahead of the bundle and the wasm sim, on every
+         phone. The poster is the first paint; playback starts on the
+         click-to-initiate gesture (startSplashVideo), which the gate
+         requires anyway. -->
     <video
       class="splash-bg-video"
       src="/video/splash-loop.mp4"
-      autoplay
+      poster="/video/splash-poster.jpg"
+      preload="metadata"
       muted
       loop
       playsinline
@@ -1196,17 +1202,27 @@ window.setInterval(() => {
       window.addEventListener("keydown", skip, { once: true });
     }, identSeen ? 250 : 1500);
   };
+  // Pairs with the template's no-autoplay video (open-doors 0.4): the
+  // poster holds the frame until the gate gesture; muted play() is never
+  // gesture-gated, so the catch is just belt-and-braces.
+  const startSplashVideo = () => {
+    const v = app.querySelector<HTMLVideoElement>(".splash-bg-video");
+    if (v && v.paused) void v.play().catch(() => undefined);
+  };
   if (instant) {
     gate?.remove();
     ident?.remove();
     document.documentElement.classList.add("ident-done");
+    startSplashVideo();
   } else if (forceIntro || isKioskMode) {
     // forceIntro: the Intro-button click was already the required user
     // gesture — skip the click-to-initiate gate and run straight in.
     gate?.remove();
+    startSplashVideo();
     runIdent();
   } else {
     const arm = () => {
+      startSplashVideo();
       // The email-capture overlay sits ABOVE this gate (z-index 60 vs 50),
       // so a real pointerdown on `gate` is already physically blocked
       // while it's open. keydown is NOT blocked by z-index — it bubbles
@@ -1252,9 +1268,12 @@ const musicFades = new WeakMap<HTMLAudioElement, number>();
 let musicStartedForContext: MusicContext | null = null;
 
 // Menu/lobby theme — the "Jakes Jam" track, looped.
+// preload="none" (open-doors 0.4): the three context tracks are ~9.3 MB
+// combined and were all fetched eagerly at boot, ahead of gameplay.
+// play() fetches on demand and the crossfade masks the start latency.
 const menuMusic = new Audio(getAudioUrl("jakes-jam-theme.mp3"));
 menuMusic.loop = true;
-menuMusic.preload = "auto";
+menuMusic.preload = "none";
 
 // In-world / match soundtrack — cycled for variety (advance on `ended`, wrap
 // around) so a long session doesn't hear the same 2 minutes on repeat.
@@ -1274,7 +1293,7 @@ const worldMusic = new Audio(getAudioUrl(WORLD_MUSIC_TRACKS[0]));
 // transitions fade through the one machinery, no new audio category.
 const venueMusic = new Audio(getAudioUrl("venue-lobby.mp3"));
 venueMusic.loop = true;
-venueMusic.preload = "auto";
+venueMusic.preload = "none"; // see menuMusic's preload note
 musicRegistry.add(menuMusic);
 musicRegistry.add(worldMusic);
 musicRegistry.add(venueMusic);
@@ -1285,7 +1304,7 @@ const contextTracks: Record<MusicContext, HTMLAudioElement> = {
   world: worldMusic,
   venue: venueMusic,
 };
-worldMusic.preload = "auto";
+worldMusic.preload = "none"; // see menuMusic's preload note
 worldMusic.addEventListener("ended", () => {
   worldTrackIdx = (worldTrackIdx + 1) % WORLD_MUSIC_TRACKS.length;
   worldMusic.src = getAudioUrl(WORLD_MUSIC_TRACKS[worldTrackIdx]!);
