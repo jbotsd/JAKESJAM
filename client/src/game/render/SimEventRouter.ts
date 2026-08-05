@@ -613,8 +613,12 @@ export class SimEventRouter {
         // Ninja windup tell (2026-07-18, verb v1 — sim correctness pass,
         // minimal rendering per scope). No bespoke whoosh asset exists and
         // the hard rule is never synthesize audio (rip only) — left silent
-        // rather than reusing an unrelated cue. Fast-follow: a real swing
-        // SFX + rig animation once assets exist.
+        // rather than reusing an unrelated cue. The rig-animation half of
+        // the old fast-follow SHIPPED in 2d14dcb (real blade-swing drawing
+        // wired into the live rig — meleeTiming.ts pose derivation +
+        // ProceduralPlayerRig tip-history trail); what remains is the
+        // swing SFX, blocked on a ripped asset (the slash-audio candidate
+        // slate must be regenerated — finish-line-goal.md Track F2).
         //
         // WHIFF WATCH (K12, R1 row 10) — local swings only (camera feel is
         // local-scoped, same rule as every kick above). Deadline = the
