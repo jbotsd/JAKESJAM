@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import "./style.css";
 import { buildGameConfig } from "./game/GameConfig";
 import { installRenderResolution, getRenderScale } from "./game/render/renderResolution";
+import { attachGlobalRenderGovernor } from "./game/render/renderGovernor";
 import {
   getQualityProfile,
   isTouchMobile,
@@ -651,6 +652,10 @@ const game = new Phaser.Game(buildGameConfig());
 // Scale.NONE does no automatic window tracking — this owns it (backing
 // store = CSS × renderScale; see game/render/renderResolution.ts).
 installRenderResolution(game);
+// Frame-time governor, game-wide — AFTER installRenderResolution so its
+// ceiling reads the resolved boot scale. Covers every scene (lobby, menus,
+// tutorial, replay), not just matches — see renderGovernor.ts.
+attachGlobalRenderGovernor(game);
 
 // Sovereign telemetry (docs/TELEMETRY.md): global error capture + boot
 // facts. Installed after profile detection so the boot event carries the

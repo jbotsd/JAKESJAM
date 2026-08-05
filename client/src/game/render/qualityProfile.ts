@@ -94,6 +94,21 @@ function detectTier(): QualityTier {
   if (/videocore|v3d|swiftshader|llvmpipe|softpipe|software rasterizer/.test(renderer)) {
     return "potato";
   }
+  // Aged integrated laptop GPUs (2026-07-31, "old laptop lags in the lobby"
+  // report): pre-Iris Intel iGPUs and GMA-era parts hit the same fill wall
+  // as the Pi on this vector-fill-heavy game, but read as "standard" here
+  // and got DPR-native scale + uncapped fps + live rigs. Matches both Mesa
+  // strings ("Mesa Intel(R) HD Graphics 4000 (IVB GT2)") and Windows ANGLE
+  // ("ANGLE (Intel, Intel(R) HD Graphics 4600 Direct3D11 ...)"). Kept
+  // deliberately narrow — Iris/Xe/Arc and UHD 6xx stay "standard" and the
+  // (now game-wide) governor covers the middle ground.
+  if (
+    /\bgma\b|intel\(r\) hd graphics(?! [6-9]\d\d)|hd graphics (2000|2500|3000|4000|4200|4400|4600|5000|5300|5500|515|520|530)\b|\b(ivb|snb|hsw|byt|bsw|bdw) gt/.test(
+      renderer,
+    )
+  ) {
+    return "potato";
+  }
   if (isTouchMobile()) return "phone";
   // Discrete desktop GPUs earn supersampling. Conservative match — an
   // unknown renderer string stays "standard" and the user can opt up.

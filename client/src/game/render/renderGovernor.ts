@@ -95,6 +95,42 @@ export function deriveGovernorTiming(tier: QualityTier, fpsLimit: number): Gover
   };
 }
 
+// ── Global attachment (2026-07-31) ──────────────────────────────────────
+// The governor originally lived inside OnlineMatchScene.update(), so the
+// quality ladder could only ever react mid-match — the hangout venue,
+// menus, tutorial and replay all rendered ungoverned (the "old laptop is
+// slideshow-slow in the lobby and nothing downgrades" report). Frame time
+// is a property of the game, not of one scene: attach once at boot,
+// measure the real rAF cadence at POST_STEP, and every scene is covered
+// with one shared instance (two instances would double-step the ladder).
+
+const GLOBAL_EMA_ALPHA = 0.1;
+let globalGovernor: RenderGovernor | null = null;
+
+export function attachGlobalRenderGovernor(game: Phaser.Game): RenderGovernor {
+  if (globalGovernor) return globalGovernor;
+  const governor = new RenderGovernor(game);
+  globalGovernor = governor;
+  let lastTs = 0;
+  let ema = 0;
+  // Literal event key, NOT Phaser.Core.Events.POST_STEP: everything else in
+  // this file uses Phaser in type position only, so Bun's transpiler elides
+  // the phaser import under `bun test` — a value reference here would pull
+  // Phaser's real module init (window-dependent device detection) into the
+  // DOM-less test process and abort the whole test file.
+  game.events.on("poststep", () => {
+    const now = performance.now();
+    const dt = lastTs > 0 ? now - lastTs : 0;
+    lastTs = now;
+    // Hidden-tab rAF gaps / debugger pauses are not frame time — one
+    // multi-second delta would poison the EMA into an instant down-step.
+    if (dt <= 0 || dt > 500) return;
+    ema = ema === 0 ? dt : ema + (dt - ema) * GLOBAL_EMA_ALPHA;
+    governor.update(now, ema);
+  });
+  return governor;
+}
+
 export class RenderGovernor {
   private readonly game: Phaser.Game;
   /** Scale the session STARTED at — the governor never climbs above it. */

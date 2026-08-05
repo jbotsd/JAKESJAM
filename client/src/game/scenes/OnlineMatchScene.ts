@@ -110,7 +110,6 @@ import { CameraJuice } from "../systems/CameraJuice.js";
 import { installHudCamera } from "../systems/HudCamera.js";
 import { killstreakLabel } from "../ui/killstreakLabels.js";
 import { getRenderScale, uiWidth, uiHeight } from "../render/renderResolution.js";
-import { RenderGovernor } from "../render/renderGovernor.js";
 import { getQualityProfile, getEffectiveRigStyle } from "../render/qualityProfile.js";
 import { BakedPlayerRig } from "../rendering/BakedPlayerRig.js";
 import { assistTouchAim } from "../input/touchAimAssist.js";
@@ -490,7 +489,6 @@ export class OnlineMatchScene extends Phaser.Scene {
    *  renderWorld), consumed by followLocalPlayer instead of re-scanning. */
   private readonly aliveNonLocalScratch: Array<{ x: number; y: number }> = [];
   private aimWorldScratch = new Phaser.Math.Vector2();
-  private renderGovernor: RenderGovernor | null = null;
   /** Previous frame's render state — touch aim assist reads it (aim input
    *  is assembled before pump, so this frame's state doesn't exist yet). */
   private lastStateForAssist: WorldState | null = null;
@@ -1080,10 +1078,9 @@ export class OnlineMatchScene extends Phaser.Scene {
     this.updateRttBadge();
     this.updateDetOverlay(state);
 
-    // Frame-time governor: trades render resolution for frame time under
-    // sustained pressure (encoder load, weak GPU, thermal throttle).
-    this.renderGovernor ??= new RenderGovernor(this.game);
-    this.renderGovernor.update(performance.now(), this.loop.frameDtEma());
+    // Frame-time governor: game-wide since 2026-07-31 — one instance
+    // attached at boot (main.ts → attachGlobalRenderGovernor) covers every
+    // scene including this one; a per-scene copy would double-step it.
   }
 
   // ---------------- HUD ----------------
