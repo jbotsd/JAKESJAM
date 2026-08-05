@@ -4724,3 +4724,276 @@ test "split-spawn: boomerang home-return — a returning boomerang crossing its 
     try std.testing.expectEqual(root.world_state.ProjectilePathing.straight, state.projectiles[0].pathing);
     try std.testing.expectEqual(root.world_state.ProjectilePathing.straight, state.projectiles[1].pathing);
 }
+
+// ── Hangout flag (Track E1d — gospel-goal.md "hangout flag in `step_world`",
+//    lifting the hosts' TS-only pin; docs/venue-goal.md's no-PvP lobby).
+//    Each test drives the COMBAT control first (proves the behavior is
+//    reachable — vacuity guard), then the identical scenario under
+//    world_state_set_hangout_mode(1). The flag is a module-level step
+//    input, so every test defers a reset to 0. ───────────────────────────
+
+test "hangout: real projectiles ghost through players — zero damage, shard keeps flying; identical combat scenario lands the hit (vacuity guard)" {
+    defer root.world.world_state_set_hangout_mode(0);
+
+    // Combat control: the shard consumes on the victim's body.
+    {
+        root.world.world_state_set_hangout_mode(0);
+        var state = freshFightingState();
+        state.player_count = 1;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        state.players[0].x = 600;
+        state.players[0].y = 300; // dead body-centre -> no headshot band question
+        setPlayerId(&state.players[0], "victim");
+        state.projectile_count = 1;
+        state.projectiles[0] = splitParentLiteral();
+        state.projectiles[0].split_count = 0;
+        state.projectiles[0].flags.has_split = false;
+        state.projectiles[0].x = 580; // 580 + 600*0.016 = 589.6; victim box left edge 585
+        state.projectiles[0].origin_x = 580;
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expectApproxEqAbs(@as(f64, 70.0), state.players[0].health, 1e-9);
+        try std.testing.expectEqual(@as(u32, 0), state.projectile_count); // consumed
+    }
+
+    // Hangout: same shard, same victim — ghosts straight through
+    // (World.ts:6770's empty projectilePlayerIds mirror).
+    {
+        root.world.world_state_set_hangout_mode(1);
+        var state = freshFightingState();
+        state.player_count = 1;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        state.players[0].x = 600;
+        state.players[0].y = 300;
+        setPlayerId(&state.players[0], "victim");
+        state.projectile_count = 1;
+        state.projectiles[0] = splitParentLiteral();
+        state.projectiles[0].split_count = 0;
+        state.projectiles[0].flags.has_split = false;
+        state.projectiles[0].x = 580;
+        state.projectiles[0].origin_x = 580;
+        // 4 ticks: 580 -> ~618.4, all the way THROUGH the body (right edge
+        // 615) and out the far side, never connecting.
+        var t: u32 = 0;
+        while (t < 4) : (t += 1) _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.players[0].health, 1e-9);
+        try std.testing.expectEqual(@as(u32, 1), state.projectile_count); // still flying
+        try std.testing.expect(state.projectiles[0].x > 615.0); // genuinely passed through
+    }
+}
+
+test "hangout: hitscan ghosts players but still breaks practice dummies; identical combat ray hits the player and never reaches the dummy (vacuity guard)" {
+    defer root.world.world_state_set_hangout_mode(0);
+
+    // Combat control: the ray stops on the player (pierce 0), dummy behind
+    // is untouched.
+    {
+        root.world.world_state_set_hangout_mode(0);
+        var state = freshFightingState();
+        state.player_count = 2;
+        setupHitscanShooter(&state, 0, "shooter", 500, 0);
+        state.players[1].flags.alive = true;
+        state.players[1].health = 100;
+        state.players[1].x = 300;
+        state.players[1].y = RAY_Y; // body centre dead on the ray
+        setPlayerId(&state.players[1], "victim");
+        state.destructible_count = 1;
+        state.destructibles[0] = .{
+            .x = 400,
+            .y = RAY_Y,
+            .width = 32,
+            .height = 64,
+            .health = 50,
+            .id = 101,
+            .flags = 0,
+            .kind = .box,
+        };
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expect(state.players[1].health < 100.0);
+        try std.testing.expectApproxEqAbs(@as(f64, 50.0), state.destructibles[0].health, 1e-9);
+    }
+
+    // Hangout: EMPTY player candidate pool (World.ts:3113 mirror) — the ray
+    // ghosts the same victim and connects with the dummy behind them.
+    {
+        root.world.world_state_set_hangout_mode(1);
+        var state = freshFightingState();
+        state.player_count = 2;
+        setupHitscanShooter(&state, 0, "shooter", 500, 0);
+        state.players[1].flags.alive = true;
+        state.players[1].health = 100;
+        state.players[1].x = 300;
+        state.players[1].y = RAY_Y;
+        setPlayerId(&state.players[1], "victim");
+        state.destructible_count = 1;
+        state.destructibles[0] = .{
+            .x = 400,
+            .y = RAY_Y,
+            .width = 32,
+            .height = 64,
+            .health = 50,
+            .id = 101,
+            .flags = 0,
+            .kind = .box,
+        };
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.players[1].health, 1e-9);
+        try std.testing.expectApproxEqAbs(@as(f64, 30.0), state.destructibles[0].health, 1e-9); // raw base 20, dummies still break
+    }
+}
+
+test "hangout: round machine frozen — countdown never decrements, a stale non-fighting phase neither transitions nor freezes movement (the is_fighting OR-pin); combat control decrements (vacuity guard)" {
+    defer root.world.world_state_set_hangout_mode(0);
+
+    // Combat control: roundStepPhase decrements the fighting countdown.
+    {
+        root.world.world_state_set_hangout_mode(0);
+        var state = freshFightingState();
+        state.player_count = 2;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        setPlayerId(&state.players[0], "a");
+        state.players[1].flags.alive = true;
+        state.players[1].health = 100;
+        state.players[1].x = 500;
+        setPlayerId(&state.players[1], "b");
+        _ = root.world.stepWorld(&state, 2000.0);
+        try std.testing.expectApproxEqAbs(@as(f64, 88_000.0), state.header.countdown_remaining_ms, 1e-9);
+    }
+
+    // Hangout: the whole section-1 machine is skipped (World.ts:7407
+    // passthrough) — clock frozen, no events, rng untouched.
+    {
+        root.world.world_state_set_hangout_mode(1);
+        var state = freshFightingState();
+        state.player_count = 2;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        setPlayerId(&state.players[0], "a");
+        state.players[1].flags.alive = true;
+        state.players[1].health = 100;
+        state.players[1].x = 500;
+        setPlayerId(&state.players[1], "b");
+        state.header.rng_state = 4242;
+        _ = root.world.stepWorld(&state, 2000.0);
+        try std.testing.expectApproxEqAbs(@as(f64, 90_000.0), state.header.countdown_remaining_ms, 1e-9);
+        try std.testing.expectEqual(@as(u8, @intFromEnum(root.round.RoundPhase.fighting)), state.header.round_phase);
+        try std.testing.expectEqual(@as(u32, 4242), state.header.rng_state);
+        try std.testing.expectEqual(@as(u32, 0), state.event_count);
+    }
+
+    // Hangout + a STALE non-fighting phase cell: movement stays live (the
+    // World.ts:2510 fightingPhase OR-pin) and the frozen machine never
+    // "fixes" the phase either.
+    {
+        root.world.world_state_set_hangout_mode(1);
+        var state = freshFightingState();
+        state.header.round_phase = @intFromEnum(root.round.RoundPhase.countdown);
+        state.player_count = 1;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        state.players[0].x = 100;
+        state.players[0].y = 0;
+        state.players[0].current_keys = 1 << 1; // Right held
+        setPlayerId(&state.players[0], "walker");
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expect(state.players[0].x > 100.0); // moved despite phase
+        try std.testing.expectEqual(@as(u8, @intFromEnum(root.round.RoundPhase.countdown)), state.header.round_phase);
+    }
+}
+
+test "hangout: a void-plane fall is a SILENT respawn at the map's first spawn point — no death, no events; combat control kills (vacuity guard)" {
+    defer root.world.world_state_set_hangout_mode(0);
+    defer root.world.world_state_set_arena_bounds(0, 0, 0);
+    defer {
+        const none = [_]f64{};
+        _ = root.world.world_state_set_spawn_points(&none, 0);
+    }
+
+    root.world.world_state_set_arena_bounds(0, 0, 1000);
+    const spawn_flat = [_]f64{ 111.0, 222.0 };
+    _ = root.world.world_state_set_spawn_points(&spawn_flat, 1);
+
+    // Combat control: force-kill + hit_confirmed + player_killed.
+    {
+        root.world.world_state_set_hangout_mode(0);
+        var state = freshFightingState();
+        state.player_count = 1;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        state.players[0].x = 300;
+        state.players[0].y = 2000; // past the 1000 kill plane
+        setPlayerId(&state.players[0], "faller");
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expect(!state.players[0].flags.alive);
+        var saw_kill = false;
+        var ei: u32 = 0;
+        while (ei < state.event_count) : (ei += 1) {
+            if (state.events[ei].kind == @intFromEnum(root.world_state.SimEventKind.player_killed)) saw_kill = true;
+        }
+        try std.testing.expect(saw_kill);
+    }
+
+    // Hangout: World.ts:6397 mirror — alive, teleported to spawns[0],
+    // velocity zeroed, zero events.
+    {
+        root.world.world_state_set_hangout_mode(1);
+        var state = freshFightingState();
+        state.player_count = 1;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        state.players[0].x = 300;
+        state.players[0].y = 2000;
+        state.players[0].vx = 50;
+        state.players[0].vy = 900;
+        setPlayerId(&state.players[0], "faller");
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expect(state.players[0].flags.alive);
+        try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.players[0].health, 1e-9);
+        try std.testing.expectApproxEqAbs(@as(f64, 111.0), state.players[0].x, 1e-9);
+        try std.testing.expectApproxEqAbs(@as(f64, 222.0), state.players[0].y, 1e-9);
+        try std.testing.expectEqual(@as(f64, 0.0), state.players[0].vx);
+        try std.testing.expectEqual(@as(f64, 0.0), state.players[0].vy);
+        try std.testing.expectEqual(@as(u32, 0), state.event_count);
+    }
+}
+
+test "hangout: the shrink-zone storm never ticks — the pinned round clock would otherwise read as 'final seconds' forever; combat control burns (vacuity guard)" {
+    defer root.world.world_state_set_hangout_mode(0);
+    defer root.world.world_state_set_arena_size(0, 0);
+
+    root.world.world_state_set_arena_size(4000, 4000);
+
+    // Combat control: countdown 100ms -> deep in the soft endgame zone; a
+    // corner player sits outside the safe radius and takes storm DoT.
+    {
+        root.world.world_state_set_hangout_mode(0);
+        var state = freshFightingState();
+        state.header.countdown_remaining_ms = 100.0;
+        state.player_count = 1;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        state.players[0].x = 100;
+        state.players[0].y = 100;
+        setPlayerId(&state.players[0], "corner");
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expect(state.players[0].health < 100.0);
+    }
+
+    // Hangout: identical corner player, storm skipped entirely
+    // (World.ts:7167 mirror).
+    {
+        root.world.world_state_set_hangout_mode(1);
+        var state = freshFightingState();
+        state.header.countdown_remaining_ms = 100.0;
+        state.player_count = 1;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        state.players[0].x = 100;
+        state.players[0].y = 100;
+        setPlayerId(&state.players[0], "corner");
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.players[0].health, 1e-9);
+    }
+}
