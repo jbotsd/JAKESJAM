@@ -6,28 +6,25 @@
 // `applyHitscanHitOnPlayer` doc comment for why no real card reaches that
 // combination today).
 //
-// SCOPE NOTE (documented, not silent): the only real card that sets
-// `leechFraction` is Stolen Fangs' `classModifiers.priest` reading
-// (cards.ts) — Zig's card codegen carries NO classModifiers data at all
-// (weapon_build.zig's `resolve_player_fire_config` doc comment flags this
-// exact gap for a different field), so a genuine end-to-end parity claim
-// needs `fireConfigShared.ts`'s `patchLeechFraction` stopgap (patches this
-// ONE field straight from the real `resolvePlayerBuild` TS resolution,
-// bypassing the general classModifiers gap for just this field).
+// SCOPE NOTE (updated for Track E1, the classModifiers codegen port): the
+// only real card that sets `leechFraction` is Stolen Fangs'
+// `classModifiers.priest` reading (cards.ts). The old `patchLeechFraction`
+// stopgap this note used to describe is RETIRED — the leech now resolves
+// IN ZIG (`leech_fraction` is a first-class CardMod field; the priest
+// override crosses via cards_gen.zig's class_mods table), and the
+// per-class starter bases cross too (cards_gen.zig class_bases), so the
+// resolved CONFIG is byte-identical between engines
+// (classModifierGapFieldsParity.test.ts proves it field-by-field).
 //
-// SEPARATE, ALSO PRE-EXISTING gap this test deliberately does NOT exercise:
-// weapon_build.zig's `StarterBase` resolves EVERY class from the same
-// class-blind base weapon stats regardless of `character_id` (only the
-// `delivery` byte is class-gated, per Track Z1c item 1's own "Deliberately
-// NARROW" test note in weaponBuildParity.test.ts) — so a live Priest's
-// ACTUAL tendril damage/speed/homing/count never matches between TS and
-// Zig today, independent of anything this pass touches. Rather than fight
-// that gap (or silently launder it into a false "parity" claim), this test
-// verifies the LEECH FORMULA is self-consistent on EACH side against that
-// side's OWN observed damage-dealt, rather than asserting TS's and Zig's
-// damage numbers themselves match. That is exactly what this item is
-// responsible for (the consumption formula + the chassis-aware cap); the
-// base-stat gap is somebody else's item.
+// This test still verifies the leech FORMULA self-consistently on EACH
+// side against that side's OWN observed damage-dealt rather than
+// asserting the two sides' damage numbers match: the remaining
+// divergence between engines is projectile FLIGHT under wasm authority
+// (world.zig's integration passes empty player arrays — "homing ... is a
+// follow-on" — and worldStateBridge packs `next_entity_id` as a 0
+// placeholder; see the VICTIM_X note below), which is exactly NOT this
+// item's responsibility (the consumption formula + the chassis-aware
+// cap is).
 
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
@@ -101,7 +98,23 @@ const MAP: MapDefinition = {
 const SHOOTER = PlayerId("shooter");
 const VICTIM = PlayerId("victim");
 const SHOOTER_X = 700;
-const VICTIM_X = 850; // close range — well inside every weapon's reach.
+// Point-blank (Track E1 classModifiers/class-base port): the shooter is a
+// PRIEST (the only class with a leech source), and the priest starter's
+// REAL stats now cross to Zig — slow (305px/s) homing tendrils, not the
+// old class-blind 650px/s straight bolt this scenario was tuned for. Two
+// PRE-EXISTING wasm-path gaps (both outside the port, both already
+// documented in their own files) cap a Zig tendril's useful flight at one
+// fire-cooldown (~16 ticks ≈ 81px): world.zig's projectile integration
+// passes EMPTY player arrays ("homing needs the player array and is a
+// follow-on"), so tendrils never curve in; and worldStateBridge's pack
+// writes the `next_entity_id` header as a 0 placeholder, so each volley's
+// ids collide with the previous volley's at unpack and the older shards
+// vanish. 90px keeps the victim inside straight-line one-volley reach on
+// the Zig side — this test proves the LEECH FORMULA on each side's OWN
+// damage-dealt (see the header), not tendril flight parity, so closing
+// the range keeps its substance intact instead of failing on those two
+// unrelated gaps.
+const VICTIM_X = 790;
 const Y = 400;
 // Stolen Fangs' Priest reading (cards.ts classModifiers.priest.leechFraction).
 const LEECH_FRACTION = 0.08;

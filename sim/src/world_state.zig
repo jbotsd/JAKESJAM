@@ -1364,23 +1364,17 @@ pub const ResolvedFireConfig = extern struct {
     /// round-trips through f32 with ample precision, and f32 is exactly what
     /// fits the 4 bytes `_pad3` gave up above without growing the struct.
     ///
-    /// KNOWN GAP, NOT closed by this field (recorded, not silent): Zig's
-    /// card codegen (`gen_card_data.ts` → `cards_gen.zig`'s `CardMod`)
-    /// carries no `classModifiers` data at all — ONLY Stolen Fangs' base
-    /// (class-blind) `modifier` would cross via normal card resolution, and
-    /// that variant has no `leechFraction` (only the `classModifiers.priest`
-    /// override does — weapon_build.zig's `resolve_player_fire_config` doc
-    /// comment already flags this exact gap for a different field:
-    /// "Zig carries no classModifiers data"). Porting `classModifiers`
-    /// generally is a separate, much larger item (9 cards use it across 4
-    /// fields each) — out of scope here. The STOPGAP that makes this field
-    /// actually reach a real Priest build today: `fireConfigShared.ts`'s
-    /// `resolveFireConfigsViaZig` ALSO patches this one field from the TS-
-    /// resolved `resolvePlayerBuild(player).leechFraction` right after the
-    /// Zig card resolver runs (same "host resolves in TS, patches into wasm
-    /// memory" shape every other augment field on this struct already uses
-    /// — see `sizeof_resolved_fire_config`'s neighbors), via the existing
-    /// `offset_player_fire_config` export — no new Zig export needed.
+    /// GAP CLOSED (Track E1, the classModifiers codegen port — the "KNOWN
+    /// GAP" this comment used to record): `cards_gen.zig` now carries
+    /// every card's `classModifiers` as per-class CardMod literals
+    /// (`CardEntry.class_mods`, wholesale-replace via `effectiveCardMod`),
+    /// and `leech_fraction` is a first-class CardMod field max-folded +
+    /// clamped in weapon_build.zig's `resolveMods` — so Stolen Fangs'
+    /// Priest-only leech resolves IN-SIM through normal card resolution.
+    /// The host-side `patchLeechFraction` stopgap (fireConfigShared.ts)
+    /// that used to write this field after every resolve is retired.
+    /// Parity: classModifierGapFieldsParity.test.ts + the priest walk in
+    /// weaponBuildParity.test.ts.
     leech_fraction: f32 = 0,
 };
 

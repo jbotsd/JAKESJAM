@@ -129,16 +129,11 @@ function compare(i: number, label: string, classId?: ClassId) {
   // card upgrades + wizard-forces-raycast enforcement), now actually
   // returned from `resolveMods` instead of being silently dropped.
   expect(U8(248), "delivery" + ctx).toBe(t.delivery);
-  // Track Z1c "six-axes axis payloads" — passive Tithe leech. Safe to
-  // assert here for EVERY card/class this file walks (class-blind + wizard
-  // only): the one card with a nonzero `leechFraction` (Stolen Fangs) only
-  // sets it via `classModifiers.priest`, and no `compare()` call in this
-  // file resolves as priest (see the two narrow priest-only tests below,
-  // which assert the delivery byte only) — so both sides are 0≡0 for every
-  // card table walk here. `resolveByIndices` has no classModifiers data
-  // (documented gap, see world_state.zig's leech_fraction doc comment), so
-  // this assertion would need loosening the day a priest-class walk is
-  // added here.
+  // Track Z1c "six-axes axis payloads" — passive Tithe leech, resolved
+  // IN ZIG since the Track E1 classModifiers port (`leech_fraction` is a
+  // first-class CardMod field; Stolen Fangs' `classModifiers.priest`
+  // crosses via cards_gen.zig's class_mods table) — the priest walk below
+  // exercises the real 0.08 against TS, every other class asserts 0≡0.
   expect(F32(252), "leechFraction" + ctx).toBeCloseTo(t.leechFraction, 5);
 }
 
@@ -159,39 +154,48 @@ describe("Zig build resolver ≡ TS createWeaponBuild → ResolvedFireConfig", (
   // numbers (speed/lifetime/range) now resolves through the raycast feel
   // floors on both sides.
   //
-  // Cards with an authored `classModifiers.wizard` are skipped: Zig carries
-  // no classModifiers data at all (gen_card_data.ts emits only the class-
-  // blind `modifier`; a pre-existing, documented gap orthogonal to the
-  // delivery rule), so TS-wizard resolution legitimately diverges from Zig
-  // for those few cards on OTHER fields (e.g. seeker-facets' wizard damage
-  // tax). The delivery rule itself is still fully exercised — every
-  // Category-A travel-time card except seeker-facets is class-blind.
-  test("every class-blind card resolves identically AS WIZARD (forced-raycast parity)", () => {
+  // Track E1 (classModifiers codegen port): the old "cards with an
+  // authored classModifiers.wizard are skipped" carve-out is GONE — Zig
+  // carries every card's per-class overrides (cards_gen.zig class_mods),
+  // the per-class starter bases (class_bases), AND weaponBuild.ts's real
+  // merge semantics (prefer-ranks/max/min/orthogonalScale), so EVERY card
+  // walks as EVERY class, full-struct. classModifierGapFieldsParity.test.ts
+  // is the port's own dedicated gate; these walks make the whole 104-card
+  // table hold under it.
+  test("every card resolves identically AS WIZARD (forced-raycast parity, classModifiers included)", () => {
     for (let i = 0; i < cards.length; i++) {
-      if (cards[i]!.classModifiers?.wizard) continue;
       compare(i, `${cards[i]!.id} (wizard)`, "wizard");
     }
   });
   test("base (no cards) matches as wizard too", () => compare(-1, "base (wizard)", "wizard"));
+  test("every card resolves identically AS NINJA (shares starter base; classModifiers fallback)", () => {
+    for (let i = 0; i < cards.length; i++) {
+      compare(i, `${cards[i]!.id} (ninja)`, "ninja");
+    }
+  });
+  test("every card resolves identically AS PALADIN (class base + overrides)", () => {
+    for (let i = 0; i < cards.length; i++) {
+      compare(i, `${cards[i]!.id} (paladin)`, "paladin");
+    }
+  });
+  test("every card resolves identically AS PRIEST (tendril base + overrides)", () => {
+    for (let i = 0; i < cards.length; i++) {
+      compare(i, `${cards[i]!.id} (priest)`, "priest");
+    }
+  });
+  test("base (no cards) matches per class too", () => {
+    compare(-1, "base (ninja)", "ninja");
+    compare(-1, "base (paladin)", "paladin");
+    compare(-1, "base (priest)", "priest");
+  });
 
   // Track Z1c item 1 — class-gated BASE DELIVERY: priest/paladin resolve
   // from priestStarterWeapon/paladinStarterWeapon, both explicit
   // `delivery: "projectile"` overrides (weapons.ts), not the shared
-  // starterWeapon's raycast — mirroring weapon_build.zig's `base_delivery`
-  // switch (`.priest, .paladin => 0, else => B.delivery`) exactly.
-  //
-  // Deliberately NARROW (delivery byte only, not a full `compare()` walk):
-  // priestStarterWeapon/paladinStarterWeapon also carry distinct STAT
-  // overrides (priest's tendril damage/speed/homing, paladin's heavier
-  // bolt) that weapon_build.zig's `StarterBase` does NOT mirror — Zig
-  // still resolves every class from the ONE class-blind `StarterBase`
-  // regardless of `class_id`, so a full-struct priest/paladin walk would
-  // fail on `damage`/`projectileSpeed`/etc for every card, not prove
-  // anything about delivery. That gap is real, pre-existing (predates
-  // this cut — see weapon_build.zig's `base_delivery` doc comment: "the
-  // per-class starter STAT overrides... remain an unported, recorded
-  // gap"), and out of THIS item's delivery-routing scope; recorded here so
-  // the next reader doesn't mistake the narrow scope for an oversight.
+  // starterWeapon's raycast. Since Track E1 the WHOLE per-class base
+  // crosses (cards_gen.zig class_bases — the full-struct walks above
+  // prove damage/speed/homing/etc too); these two stay as the delivery
+  // ordinal's own named regression pins.
   test("priest resolves the PROJECTILE delivery ordinal (class-gated base, not the shared raycast starter)", () => {
     const PROJECTILE = 0;
     const zigDelivery = zig(-1, "priest").getUint8(248);

@@ -4724,3 +4724,80 @@ test "split-spawn: boomerang home-return — a returning boomerang crossing its 
     try std.testing.expectEqual(root.world_state.ProjectilePathing.straight, state.projectiles[0].pathing);
     try std.testing.expectEqual(root.world_state.ProjectilePathing.straight, state.projectiles[1].pathing);
 }
+
+// ── classModifiers codegen port (Track E1 — gospel-goal.md) ──────────────
+// gen_card_data.ts now emits cardTypes.ts's `classModifiers` as per-class
+// CardMod literals (CardEntry.class_mods, wholesale-replace semantics via
+// effectiveCardMod), the class-gated starter bases (class_bases —
+// weapons.ts baseWeaponForClass), and `leech_fraction` as a first-class
+// CardMod field. These pins guard the generated data model itself; the
+// byte-level TS parity lives in classModifierGapFieldsParity.test.ts /
+// weaponBuildParity.test.ts's full class walks.
+
+fn cardEntryById(id: []const u8) ?*const root.cards_gen.CardEntry {
+    for (&root.cards_gen.cards) |*c| {
+        if (std.mem.eql(u8, c.id, id)) return c;
+    }
+    return null;
+}
+
+test "cards_gen: exactly 9 cards carry class_mods (the classModifiers set)" {
+    var n: usize = 0;
+    for (root.cards_gen.cards) |c| {
+        const cm = c.class_mods;
+        if (cm.wizard != null or cm.ninja != null or cm.paladin != null or cm.priest != null) n += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 9), n);
+}
+
+test "cards_gen: effectiveCardMod — authored override replaces wholesale, absent class falls back, null class is class-blind" {
+    const entry = cardEntryById("cluster-bomb").?;
+    // Paladin authored: 2-split, bigger chips.
+    const pal = root.cards_gen.effectiveCardMod(entry, .paladin);
+    try std.testing.expectEqual(@as(f64, 2), pal.proj_split_add);
+    try std.testing.expectEqual(@as(f64, 1.35), pal.proj_size_mul);
+    // Ninja unauthored: the class-blind modifier, byte-for-byte.
+    const nin = root.cards_gen.effectiveCardMod(entry, .ninja);
+    try std.testing.expectEqual(entry.mod, nin);
+    try std.testing.expectEqual(@as(f64, 6), nin.proj_split_add);
+    // Class-blind (null): also the base modifier.
+    try std.testing.expectEqual(entry.mod, root.cards_gen.effectiveCardMod(entry, null));
+}
+
+test "cards_gen: class_bases — wizard/ninja share starter_base; paladin/priest carry their authored starter stats" {
+    try std.testing.expectEqual(@as(?root.cards_gen.BaseWeapon, null), root.cards_gen.class_bases[0]); // wizard
+    try std.testing.expectEqual(@as(?root.cards_gen.BaseWeapon, null), root.cards_gen.class_bases[1]); // ninja
+    const pal = root.cards_gen.class_bases[2].?;
+    try std.testing.expectEqual(@as(u8, 0), pal.delivery); // explicit projectile override
+    try std.testing.expectEqual(@as(f64, 15), pal.damage);
+    try std.testing.expectEqual(@as(f64, 3), pal.fire_rate);
+    try std.testing.expectEqual(@as(f64, 1.15), pal.p_size_mul);
+    const pri = root.cards_gen.class_bases[3].?;
+    try std.testing.expectEqual(@as(u8, 0), pri.delivery);
+    try std.testing.expectEqual(@as(f64, 2.5), pri.damage); // SYZ_TENDRIL_DAMAGE
+    try std.testing.expectEqual(@as(f64, 3), pri.p_count); // SYZ_TENDRIL_COUNT
+    try std.testing.expectEqual(@as(u8, 4), pri.p_pathing); // homing
+    try std.testing.expectEqual(@as(u8, 2), pri.p_element); // fire
+    // Fallbacks resolve the shared starter (raycast since true-hitscan).
+    try std.testing.expectEqual(root.cards_gen.starter_base, root.cards_gen.baseWeaponForClass(null));
+    try std.testing.expectEqual(root.cards_gen.starter_base, root.cards_gen.baseWeaponForClass(.ninja));
+    try std.testing.expectEqual(@as(u8, 1), root.cards_gen.starter_base.delivery);
+}
+
+test "weapon_build: stolen-fangs' Priest-only leech resolves in-sim (patchLeechFraction stopgap retired)" {
+    const hand = [_][]const u8{"stolen-fangs"};
+    const pri = root.weapon_build.resolveBuild(&hand, .priest);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.08), pri.leech_fraction, 1e-6);
+    const nin = root.weapon_build.resolveBuild(&hand, .ninja);
+    try std.testing.expectEqual(@as(f32, 0), nin.leech_fraction);
+}
+
+test "weapon_build: cluster-bomb resolves per class — paladin 2-split on the heavy base, ninja class-blind 6-split" {
+    const hand = [_][]const u8{"cluster-bomb"};
+    const pal = root.weapon_build.resolveBuild(&hand, .paladin);
+    try std.testing.expectEqual(@as(u32, 2), pal.split_count);
+    // paladinStarterWeapon fire_rate 3 x the card's 0.72 = 2.16 (round2).
+    try std.testing.expectApproxEqAbs(@as(f64, 2.16), pal.fire_rate, 1e-9);
+    const nin = root.weapon_build.resolveBuild(&hand, .ninja);
+    try std.testing.expectEqual(@as(u32, 6), nin.split_count);
+}

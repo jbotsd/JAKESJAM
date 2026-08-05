@@ -2,16 +2,28 @@
 // job is to tell the sim which cards each player holds — as indices into the
 // codegen'd card table (cards_gen.zig) — then call the Zig resolver, which
 // writes the loadout in place. No TS createWeaponBuild / packResolvedFireConfig.
+//
+// STOPGAPS RETIRED (Track E1, gospel-goal.md — classModifiers carried in the
+// Zig codegen): this file used to patch class-gated build fields into wasm
+// memory host-side after every resolve, because `cards_gen.zig` carried no
+// `classModifiers` data at all:
+//   - `patchLeechFraction` (Track Z1c) — Stolen Fangs' Priest-only
+//     `leechFraction`, the narrow first patch;
+//   - `patchClassModifierGapFields` (Track Z5 item 2) — the generalized
+//     patch for the remaining 8 cards' class-conditional fields.
+// Both are gone, not reduced: gen_card_data.ts now emits every card's
+// `classModifiers` as per-class CardMod literals (`CardEntry.class_mods`,
+// selected by `effectiveCardMod` — weaponBuild.ts's `effectiveCardModifier`
+// mirrored), `leech_fraction` is a first-class CardMod field, and the
+// per-class starter bases (weapons.ts `baseWeaponForClass` — priest
+// tendrils / paladin heavy bolt) cross as `cards_gen.class_bases`, so the
+// Zig resolver produces the whole class-aware ResolvedFireConfig itself.
+// Parity: classModifierGapFieldsParity.test.ts (all 9 cards × all 4
+// classes, no patch active) + weaponBuildParity.test.ts's full class walks.
 
-import type { PlayerEntity, PlayerId, WorldState } from "../types.js";
-import { WORLD_STATE_TOTAL_SIZE, RESOLVED_FIRE_CONFIG_SIZE } from "./worldStateBridge.js";
+import type { PlayerId, WorldState } from "../types.js";
+import { WORLD_STATE_TOTAL_SIZE } from "./worldStateBridge.js";
 import { crystalRoundsCards } from "../data/cards.js";
-import { resolvePlayerBuild } from "../weapon.js";
-import { packResolvedFireConfig } from "../data/packResolvedFireConfig.js";
-import { createWeaponBuild, findCardsById } from "../data/weaponBuild.js";
-import { baseWeaponForClass } from "../data/weapons.js";
-import { classIdForArchetype, type ClassId } from "../data/cardTypes.js";
-import type { ResolvedFireConfigBytes } from "./wasmHost.js";
 
 // card id → index into the Zig card table. Mirrors cards_gen.zig ordering,
 // which is `crystalRoundsCards` UNFILTERED — gen_card_data.ts emits an
@@ -60,225 +72,12 @@ export type FireConfigResolverExports = {
     count: number,
   ) => void;
   /** Byte offset of `player_fire_config[0]` from `state_ptr` (world_state.zig
-   *  — already existed for test use, e.g. loadoutBridge.test.ts's gate A).
-   *  Reused here (Track Z1c "six-axes axis payloads") to patch the ONE
-   *  `leech_fraction` field the Zig card resolver can't derive on its own —
-   *  see `LEECH_FRACTION_PATCH` below. Optional so older sim.wasm builds
-   *  degrade gracefully (passive Tithe leech just stays inert for them,
-   *  same as before this pass). */
+   *  — a test-facing export; the parity suites read resolved config bytes
+   *  through it). No production caller here since the Track E1 stopgap
+   *  retirement — kept in the type because it IS part of the export surface
+   *  this resolver path loads. */
   offset_player_fire_config?: () => number;
 };
-
-/** Byte offset of `ResolvedFireConfig.leech_fraction` within one player's
- *  slot (world_state.zig: offset 252, an f32 reusing `delivery`'s own
- *  trailing pad — see that field's doc comment). */
-const LEECH_FRACTION_OFFSET = 252;
-
-/**
- * STOPGAP (Track Z1c "six-axes axis payloads", documented, not silent):
- * Zig's card codegen (`gen_card_data.ts` → `cards_gen.zig`'s `CardMod`)
- * carries no `classModifiers` data at all (weapon_build.zig's
- * `resolve_player_fire_config` doc comment already flags this exact gap
- * for a different field) — so a class-gated leech reading (Stolen Fangs'
- * Priest-only `classModifiers.priest.leechFraction`, the only card that
- * sets this field today) can never resolve correctly through the normal
- * Zig card resolver above. Porting `classModifiers` generally is a much
- * larger, separate item (9 cards, several fields each); this patches JUST
- * the one field this pass adds, straight from the REAL TS build resolution
- * (`resolvePlayerBuild`, the same production function World.ts/weapon.ts
- * use), the same "host resolves in TS, patches into wasm memory" shape
- * every other augment field on `ResolvedFireConfig` already uses.
- */
-function patchLeechFraction(
-  ex: FireConfigResolverExports,
-  statePtr: number,
-  playerIndex: number,
-  leechFraction: number,
-): void {
-  if (typeof ex.offset_player_fire_config !== "function") return;
-  const view = new DataView(ex.memory.buffer);
-  const base =
-    statePtr +
-    ex.offset_player_fire_config() +
-    playerIndex * RESOLVED_FIRE_CONFIG_SIZE +
-    LEECH_FRACTION_OFFSET;
-  view.setFloat32(base, leechFraction, true);
-}
-
-/**
- * Track Z5 item 2 — the general classModifiers-codegen gap this file's own
- * header comment (and `patchLeechFraction`'s) already named: Zig's card
- * codegen carries no `classModifiers` data at all, only the top-level
- * class-blind `modifier`, so ANY card with a `classModifiers` entry
- * silently resolves as if that entry didn't exist for every class it names.
- * Nine cards have one (grepped directly against cards.ts): `seeker-facets`,
- * `cluster-bomb`, `slow-field`, `molten-core`, `frost-prism`,
- * `crystal-plating`, `spring-heel`, `double-jump`, `stolen-fangs`.
- * `stolen-fangs` already had its own narrow stopgap above
- * (`patchLeechFraction`, Track Z1c) — this generalizes the SAME "host
- * resolves in TS, patches into wasm memory" shape to the remaining 8,
- * rather than porting the codegen generally (a much larger change: every
- * one of these touches several different `ResolvedFireConfig` fields, and
- * `weapon_build.zig`'s resolver would need a whole second per-class literal
- * table alongside `cards_gen.zig`'s existing class-blind one).
- *
- * `CLASS_MODIFIER_GAP_FIELDS[cardId][classId]` lists exactly the
- * `ResolvedFireConfigBytes` field names THAT card's `classModifiers[classId]`
- * touches (hand-enumerated against cards.ts, one entry per card × listed
- * class — classes a card doesn't mention fall back to the class-blind
- * `modifier`, which Zig already resolves correctly, so they're deliberately
- * absent here rather than patched to a no-op value). Each listed field gets
- * OVERWRITTEN with the real `resolvePlayerBuild` value — safe regardless of
- * what OTHER cards also touch the same field, since that TS build already
- * composes every held card (gap or not) into one final number; only fields
- * NOT in this list are left as Zig's own (correct, class-blind) resolution.
- *
- * One documented overlap with a SEPARATE, pre-existing, already-recorded
- * gap (weaponBuildParity.test.ts's own note: `weapon_build.zig`'s
- * `StarterBase` resolves every class from the same class-blind BASE weapon
- * stats, so a live Priest/Paladin's actual base damage/speed/etc never
- * matches TS independent of classModifiers): `slow-field`'s Priest
- * `damageMultiplier` and `cluster-bomb`'s Paladin `fireRateMultiplier` both
- * patch a field (`damage`/`fireRate`) that ALSO carries that separate gap.
- * Patching here still lands on the correct TS-truth number (strictly more
- * correct, never a regression), it just also incidentally closes that
- * other gap FOR THOSE TWO NARROW card+class combinations — recorded here,
- * not silently absorbed, so a future reader doesn't mistake it for scope
- * creep on this item.
- */
-const CLASS_MODIFIER_GAP_FIELDS: Readonly<
-  Record<string, Partial<Record<ClassId, ReadonlyArray<keyof ResolvedFireConfigBytes>>>>
-> = {
-  "seeker-facets": {
-    wizard: ["delivery", "projectileSpeed", "damage", "pathingIdx", "homingStrength"],
-    paladin: ["pathingIdx", "homingStrength"],
-    priest: ["delivery", "projectileSpeed", "pathingIdx", "homingStrength"],
-  },
-  "cluster-bomb": {
-    wizard: ["fireRate", "splitCount", "sizeMultiplier"],
-    paladin: ["fireRate", "splitCount", "sizeMultiplier"],
-  },
-  "slow-field": {
-    priest: ["damage", "impactIdx", "impactRadiusPx", "slowMultiplier"],
-  },
-  "molten-core": {
-    wizard: ["elementIdx", "impactRadiusPx"],
-    paladin: ["elementIdx", "impactRadiusPx"],
-  },
-  "frost-prism": {
-    wizard: ["elementIdx", "impactIdx", "slowMultiplier"],
-    paladin: ["elementIdx", "impactIdx", "slowMultiplier"],
-  },
-  "crystal-plating": {
-    wizard: ["maxHealthAdd", "moveSpeedMultiplier", "shapeIdx", "sizeMultiplier", "elementIdx"],
-    paladin: ["maxHealthAdd", "moveSpeedMultiplier", "shapeIdx", "sizeMultiplier", "elementIdx"],
-  },
-  "spring-heel": {
-    wizard: ["jumpMultiplier", "wallJumpMultiplier"],
-    paladin: ["jumpMultiplier", "wallJumpMultiplier"],
-  },
-  // Both classes' `airJumpsAdd` happens to equal the class-blind
-  // `modifier.airJumpsAdd` already (1, same as every class) — no OBSERVABLE
-  // divergence exists today (Zig's fallback is already numerically right),
-  // but the crossing is wired for real here like every other entry, so a
-  // future re-tune of either class's number starts correct immediately
-  // instead of silently falling back to the wrong (class-blind) one.
-  "double-jump": {
-    wizard: ["airJumps"],
-    paladin: ["airJumps"],
-  },
-};
-
-/** Byte offset + wire width of each `ResolvedFireConfigBytes` field this
- *  gap patch can touch (world_state.zig's `ResolvedFireConfig` layout,
- *  verified directly against `weaponBuildParity.test.ts`'s own offset
- *  table — the two must never drift apart independently). */
-const FIELD_OFFSETS: Readonly<
-  Partial<Record<keyof ResolvedFireConfigBytes, { off: number; kind: "f64" | "u32" | "u8" }>>
-> = {
-  damage: { off: 0, kind: "f64" },
-  fireRate: { off: 8, kind: "f64" },
-  projectileSpeed: { off: 16, kind: "f64" },
-  homingStrength: { off: 48, kind: "f64" },
-  slowMultiplier: { off: 72, kind: "f64" },
-  impactRadiusPx: { off: 80, kind: "f64" },
-  sizeMultiplier: { off: 88, kind: "f64" },
-  splitCount: { off: 124, kind: "u32" },
-  shapeIdx: { off: 128, kind: "u8" },
-  elementIdx: { off: 129, kind: "u8" },
-  pathingIdx: { off: 130, kind: "u8" },
-  impactIdx: { off: 131, kind: "u8" },
-  moveSpeedMultiplier: { off: 136, kind: "f64" },
-  jumpMultiplier: { off: 152, kind: "f64" },
-  wallJumpMultiplier: { off: 160, kind: "f64" },
-  maxHealthAdd: { off: 208, kind: "f64" },
-  airJumps: { off: 216, kind: "u32" },
-  delivery: { off: 248, kind: "u8" },
-};
-
-/** See `CLASS_MODIFIER_GAP_FIELDS`'s own doc comment. Computes the real
- *  build ONCE per player (only when at least one held card actually has a
- *  gap entry for this player's class) and patches exactly the fields that
- *  card's `classModifiers` names, straight from the same production
- *  `resolvePlayerBuild` the leech patch above already trusts. */
-function patchClassModifierGapFields(
-  ex: FireConfigResolverExports,
-  statePtr: number,
-  playerIndex: number,
-  player: PlayerEntity,
-): void {
-  if (typeof ex.offset_player_fire_config !== "function") return;
-  const classId = classIdForArchetype(player.characterId);
-  let fields: Set<keyof ResolvedFireConfigBytes> | null = null;
-  for (const cardId of player.cards) {
-    const perClass = CLASS_MODIFIER_GAP_FIELDS[cardId]?.[classId];
-    if (!perClass) continue;
-    fields ??= new Set();
-    for (const f of perClass) fields.add(f);
-  }
-  if (!fields) return;
-
-  // `resolvePlayerBuild` is safe for every field here EXCEPT
-  // `moveSpeedMultiplier` (`crystal-plating` only): that wrapper folds the
-  // class chassis speed factor (Kindled 0.88 / Interstice 1.14 / Syzygist
-  // 0.96) ONTO the card-resolved number, a fold cohesion-goal.md P1.2's own
-  // doc comment (weapon.ts's `resolvePlayerBuild`) says explicitly lives
-  // ONLY on the TS side — "the folded value flows through the existing
-  // World.ts speed product into Zig's `speed_mul` param, no ABI change".
-  // `step_world`'s own `speed_mul` composition chain (world.zig, the block
-  // right before `if (has_cfg) speed_mul *= fcfg.move_speed_mul`) has NO
-  // chassis term at all — a separate, real, pre-existing gap (chassis
-  // move speed is entirely unmodeled under wasm authority today,
-  // independent of classModifiers and out of THIS item's scope). Patching
-  // `move_speed_mul` with the chassis-folded number would silently invent
-  // chassis-speed compensation for exactly the 1-2 cards that touch this
-  // field — an inconsistent side effect this item doesn't own. Using the
-  // RAW `createWeaponBuild` output instead (bypassing the fold entirely)
-  // matches Zig's own card-only architecture exactly — the same call
-  // `weaponBuildParity.test.ts`'s `ts()` helper already proves
-  // byte-identical to `weapon_build.zig`'s resolver for every card without
-  // a `classModifiers` entry.
-  const packed = packResolvedFireConfig(resolvePlayerBuild(player));
-  const rawMoveSpeedMultiplier = fields.has("moveSpeedMultiplier")
-    ? createWeaponBuild(
-        baseWeaponForClass(classId),
-        findCardsById(crystalRoundsCards, player.cards),
-        classId,
-      ).moveSpeedMultiplier
-    : undefined;
-
-  const view = new DataView(ex.memory.buffer);
-  const base =
-    statePtr + ex.offset_player_fire_config() + playerIndex * RESOLVED_FIRE_CONFIG_SIZE;
-  for (const field of fields) {
-    const spec = FIELD_OFFSETS[field];
-    if (!spec) continue; // unreachable given the table above; keeps TS honest
-    const value = field === "moveSpeedMultiplier" ? rawMoveSpeedMultiplier! : (packed[field] as number);
-    if (spec.kind === "f64") view.setFloat64(base + spec.off, value, true);
-    else if (spec.kind === "u32") view.setUint32(base + spec.off, value, true);
-    else view.setUint8(base + spec.off, value);
-  }
-}
 
 /**
  * Resolve every player's build IN THE ZIG SIM: write their card indices to a
@@ -289,6 +88,11 @@ function patchClassModifierGapFields(
  * so anything written before it is wiped (Track Z1b finding (c); the old
  * "must run BEFORE the pack (pack skips the fire-config region)" note here
  * was wrong about what `heap.set` does to skipped-but-still-copied bytes).
+ *
+ * NOTE (Track E1): the Zig resolver derives each player's CLASS from the
+ * `character_id` already packed at `players[i]` — so the pack-first
+ * ordering above is also a CORRECTNESS requirement for the class-gated
+ * resolution (base weapon + classModifiers), not just a wipe-avoidance one.
  */
 export function resolveFireConfigsViaZig(
   ex: FireConfigResolverExports,
@@ -319,18 +123,5 @@ export function resolveFireConfigsViaZig(
       }
     }
     resolver(statePtr, i, scratch, n);
-    // Leech-fraction stopgap (see `patchLeechFraction`'s own doc comment) —
-    // always overwrites (not just when >0) so a hand that DROPS the card
-    // correctly zeroes it back out too, matching every other build field's
-    // "re-derived fresh every tick" contract.
-    patchLeechFraction(ex, statePtr, i, resolvePlayerBuild(player).leechFraction);
-    // The remaining 8 cards' classModifiers gap (Track Z5 item 2) — see
-    // `patchClassModifierGapFields`'s own doc comment. No "always
-    // overwrite" needed here (unlike leech): `resolver` above already
-    // re-resolves EVERY field fresh from THIS tick's hand before this
-    // runs, so a dropped gap card naturally leaves Zig's own (correct,
-    // class-blind) value standing — this only ever touches fields for a
-    // card that's actually currently held.
-    patchClassModifierGapFields(ex, statePtr, i, player);
   }
 }

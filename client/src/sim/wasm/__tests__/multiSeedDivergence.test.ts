@@ -446,6 +446,31 @@
 // SAME "cardless/class-blind bots can't exercise a class-gated fix" note
 // every prior class-scoped entry in this ledger already records.
 //
+// Track E1 classModifiers codegen port (2026-08-05) — the Z5-item-2
+// stopgap (`patchClassModifierGapFields`, and Z1c's `patchLeechFraction`)
+// is RETIRED: classModifiers cross as cards_gen.zig class_mods literals,
+// the per-class starter bases cross as class_bases (priest tendrils /
+// paladin heavy bolt — the old "unported starter STAT overrides" residual
+// is closed), leech_fraction is a first-class CardMod field, and
+// weapon_build.zig's merge folds now mirror mergeProjectileModifier's
+// real prefer/max/min/orthogonal semantics (the old direct-set folds only
+// coincided with TS from the weakest-in-every-dimension class-blind
+// base). Re-ran byte-identical to Z5's row (376.5/247.5/232.9/274.2/
+// 437.8px, same onsets 230/175/249/160/229) — expected, same structural
+// reason as Z5's own note: this sweep's bots are all "balanced" (wizard)
+// and cardless, so per-class resolution changes are invisible here. The
+// port's own gates: classModifierGapFieldsParity.test.ts (9 cards x all
+// 4 classes + class-blind + a 4-class host-path hand, stopgap-free) and
+// weaponBuildParity.test.ts's new full 104-card walks as wizard, ninja,
+// paladin AND priest. Two PRE-EXISTING wasm-path gaps became REACHABLE
+// (not caused) by the priest base crossing — world.zig's integration
+// phase steps projectiles with empty player arrays (homing never turns:
+// its own "is a follow-on" note) and the bridge packs `next_entity_id`
+// as a 0 placeholder (volley N+1's ids collide with volley N's at
+// unpack, killing shards older than one fire cooldown) — recorded in
+// leechFractionParity.test.ts's VICTIM_X note; both live in files owned
+// by other Track E lanes this wave.
+//
 // Harness-fidelity lessons KEPT from the branch (5e1676a + 3f16fe3):
 //   - setWorldArenaBounds is called (5e1676a's root-cause fix: without it,
 //     Zig's void kill-plane gate is never armed → a player who falls off the
