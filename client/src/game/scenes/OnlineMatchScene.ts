@@ -741,7 +741,11 @@ export class OnlineMatchScene extends Phaser.Scene {
       this.game.events.off(Phaser.Core.Events.FOCUS, onFocus);
     });
 
-    this.setupFtueLegend();
+    // The legend returns where its right-anchored column ends so the
+    // clip-recording disclosure (Doors 0.7) can slot in directly below it
+    // on a fresh profile, or take the legend's own start slot when the
+    // legend has already been seen.
+    this.setupClipDisclosure(this.setupFtueLegend());
 
     // Split the HUD onto its own 1:1 camera so the world can crop in
     // (DESKTOP_CAM_ZOOM) without dragging the edge-anchored HUD off-screen.
@@ -758,11 +762,19 @@ export class OnlineMatchScene extends Phaser.Scene {
    * don't hit a brand-new player as a wall of text, and a longer life (9s vs
    * the old 3s — five lines in 3s wasn't readable while also, you know,
    * being shot at).
+   *
+   * Returns where the legend column ends (`nextLineY`) and when its last
+   * group reveals (`nextLineDelayMs`) so one-shot FTUE siblings (the clip
+   * disclosure below) can join the same staged column without overlap.
+   * When the legend is skipped, callers get the column's base slot back.
    */
-  private setupFtueLegend(): void {
+  private setupFtueLegend(): { nextLineY: number; nextLineDelayMs: number } {
     const FTUE_KEY = "jakesjam-ftue-controls-shown";
+    const baseY = this.touchControls ? 112 : 48;
     try {
-      if (localStorage.getItem(FTUE_KEY) === "1") return;
+      if (localStorage.getItem(FTUE_KEY) === "1") {
+        return { nextLineY: baseY, nextLineDelayMs: 0 };
+      }
       localStorage.setItem(FTUE_KEY, "1");
     } catch {
       // localStorage unavailable (private mode, file://, …). Show every time.
@@ -791,7 +803,7 @@ export class OnlineMatchScene extends Phaser.Scene {
     // so the two don't overlap during the legend's life. Touch phones start
     // lower still — at 393px the score row + build pills reach into the
     // legend's right-anchored column (seen overlapping in portrait QA).
-    let y = this.touchControls ? 112 : 48;
+    let y = baseY;
 
     // clusterA-04 mobile-QA fix (2026-07-28): the touch legend's column
     // (right-anchored, y=112..~250 at 393px) and the round banner (centred,
@@ -834,6 +846,74 @@ export class OnlineMatchScene extends Phaser.Scene {
         });
       });
     }
+    return { nextLineY: y, nextLineDelayMs: groups.length * STAGE_GAP_MS };
+  }
+
+  /**
+   * Doors 0.7 honest-copy: clip capture + upload is default-ON but was only
+   * disclosed deep in Settings (clipConsent.ts:1-4). One FTUE-style line —
+   * same staged right-anchored column, never a modal (ui-axioms bans modal
+   * tutorials) — the first time a player enters a match that is actually
+   * recorded (consent on; a consent-off first match doesn't burn the
+   * one-shot, the line waits for the first recorded one). localStorage-gated
+   * to once ever, mirroring setupFtueLegend's key discipline.
+   */
+  private setupClipDisclosure(slot: { nextLineY: number; nextLineDelayMs: number }): void {
+    if (!isClipsEnabled()) return;
+    const DISCLOSED_KEY = "jakesjam-ftue-clips-disclosed";
+    try {
+      if (localStorage.getItem(DISCLOSED_KEY) === "1") return;
+      localStorage.setItem(DISCLOSED_KEY, "1");
+    } catch {
+      // localStorage unavailable — same call as the legend: keep showing.
+    }
+    // Two short lines, not one long one: at 393px a single line of this
+    // copy (~52ch of 14px Space Mono) is wider than the viewport.
+    const lines = ["MATCHES ARE RECORDED FOR HIGHLIGHTS", "TOGGLE IN SETTINGS"];
+    const LIFE_MS = 9_000;
+    const text = this.add
+      .text(uiWidth(this) - 20, slot.nextLineY, lines.join("\n"), {
+        color: "#cffaff",
+        fontFamily: "'Space Mono', 'Courier New', monospace",
+        fontSize: "14px",
+        align: "right",
+        backgroundColor: "rgba(5,8,15,0.45)",
+        padding: { left: 10, right: 10, top: 8, bottom: 8 },
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(2000)
+      .setAlpha(0);
+    // Touch: this line can extend the FTUE column past the clearance the
+    // legend reserved (250+40) — re-reserve to this line's own bottom edge
+    // so the round banner never paints over it (clusterA-04 discipline).
+    if (this.touchControls) {
+      const bottomPx = slot.nextLineY + lines.length * 18 + 16;
+      const assertClearance = () =>
+        this.roundBannerSystem?.setLegendClearance(bottomPx + 40);
+      assertClearance();
+      // Fresh profile: the legend's own reset (its LEGEND_LIFE_MS + 380)
+      // zeroes the clearance while this staggered line is still alive —
+      // re-assert just after it so the banner keeps clearing the column.
+      if (slot.nextLineDelayMs > 0) {
+        this.time.delayedCall(LIFE_MS + 400, assertClearance);
+      }
+      this.time.delayedCall(slot.nextLineDelayMs + LIFE_MS + 380, () => {
+        this.roundBannerSystem?.setLegendClearance(0);
+      });
+    }
+    this.time.delayedCall(slot.nextLineDelayMs, () => {
+      this.tweens.add({ targets: text, alpha: 1, duration: 260, ease: "Cubic.easeOut" });
+    });
+    this.time.delayedCall(slot.nextLineDelayMs + LIFE_MS, () => {
+      this.tweens.add({
+        targets: text,
+        alpha: 0,
+        duration: 380,
+        ease: "Cubic.easeIn",
+        onComplete: () => text.destroy(),
+      });
+    });
   }
 
   /** Stop the sim loop. Idempotent. Called on tab BLUR. */
