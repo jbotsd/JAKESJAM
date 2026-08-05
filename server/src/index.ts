@@ -272,8 +272,10 @@ function serveOnPort(port: number) {
       );
     }
 
-    // Stable legal-doc URLs (no .html) — required by CrazyGames/Poki portal
-    // review. Backed by client/public/{privacy,terms}.html, copied verbatim
+    // Stable legal-doc URLs (no .html) — originally for CrazyGames/Poki
+    // portal review (portals dropped 2026-08-01; kept because privacy/terms
+    // URLs are load-bearing for the email-gate funnel and outreach pages).
+    // Backed by client/public/{privacy,terms}.html, copied verbatim
     // into the Vite build; served straight off disk here rather than via
     // serveStatic() since that function's extension-sniffing SPA-fallbacks
     // any extensionless path to index.html.

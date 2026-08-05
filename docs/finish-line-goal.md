@@ -204,18 +204,26 @@ precedent as convergence-goal.md.
   `packWorldState`/`unpackWorldState` don't pack/unpack Paper Doubles at
   all yet (a separate, pre-existing, already-documented bridge gap — see
   that file's own `PAPER_DOUBLE_ENTITY_SIZE` comment), so those tests drive
-  `stepWorld` natively instead. Still open: split-spawn — RE-CONFIRMED
-  during the follow-up pass, still true: no Zig code path (real
-  projectiles included) reads `split_count` to spawn children yet.
-  `projectile.zig`'s `projectileSplitVelocities` computes the child-
-  velocity fan (bit-exact parity-tested against TS's `spawnSplit` in
-  `projectileLifecycleParity.test.ts`) but nothing in `world.zig`'s
-  `stepWorld` ever calls it — no death/expiry site materialises split
-  children into `state.projectiles` for ANY delivery path, so there is no
-  equivalent-projectile-path pattern to mirror onto hitscan; building that
-  orchestrator from scratch is a separate, larger task, not attempted here.
-  See world.zig's "Hitscan resolution" section header for the authoritative
-  per-sub-item STATUS list.
+  `stepWorld` natively instead. Split-spawn: **REAL-PROJECTILE HALF
+  CLOSED 2026-08-05** (gospel-goal Track E1, commits eeb1d27/899d517/
+  da4b8f3, merged d6b1b9d): world.zig now queues every TS-mirrored
+  projectile death (fuse-end, lifetime, terrain, player-hit incl.
+  mitigated) and a deferred '4s' pass materialises the child fan via
+  projectileSplitVelocities in ascending slot order (rng-cursor-exact),
+  with spawnSplit's field inheritance and pre-decrement lifetime restore;
+  the verification surfaced and fixed four adjacent stepV2 lifecycle
+  holes (range-cap + boomerang-return deaths never ported; expired
+  pre-step results left frozen zombie shards; lingering sticky shards
+  re-entered the hit chain per tick; stick never zeroed velocity — the
+  Edge Storm smoke expectations had baked the zombie bug in and were
+  un-baked with docs). Proof: 7 new smoke.zig tests (132/132), lockstep
+  splitSpawnWorldParity.test.ts (3 tests / 892 expects, bit-identical
+  incl. rngState + child terrain deaths), full wasm gate 328 pass,
+  divergence sweep byte-flat (honest: sweep bots carry no split builds).
+  Hitscan terminal-point split remains CUT with two provable bit-parity
+  blockers (libm-vs-LUT trig on the synthetic parent; TS's discarded
+  shadow rng cursor) — recorded in world.zig's "Hitscan resolution"
+  STATUS list, still the authoritative per-sub-item ledger.
 - F1 STAB verb: **DONE — reviewed, MERGED, deployed live** (2026-07-26/27,
   commit 66c5e1f). TS FSM + Zig mirror + parity gate (meleeSwingMemoryBridge
   gate F) + dedicated TS suite (ninjaStab.test.ts) + the render pass (thrust

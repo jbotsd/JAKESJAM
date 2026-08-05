@@ -180,6 +180,18 @@ position (1.2), bell taper (1.5), announcer (4.3), board persistence.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-05 (c) · **Wave 1 merged — Doors Phase 0 COMPLETE, E1
+  split-spawn (real-projectile half) CLOSED.** Three parallel worktree
+  lanes (doc-drift d18641b · honest-copy 46843d2 · split-spawn d6b1b9d,
+  which also fixed four adjacent stepV2 lifecycle holes — see
+  finish-line Z5 for the full record). Post-merge gates all green:
+  zig 132/132, client 1909/0 (110,676 asserts), server 338/0 plus
+  338/0 under USE_WASM_STEP_WORLD=1. Host restarted (bot-only, zero
+  humans), new dist + sim.wasm live. Inline same day: 0.5 short-desktop
+  fold fix (e35112e, 4-viewport verified), 0.8 hygiene (~84 MB).
+  Next-weakest: Doors Phase 1 (1.3 admission race + 1.4 false
+  ELIMINATED are the cruellest), E1 remainder (classModifiers codegen,
+  Paper Double bridge, hangout flag), 2026-07-31 replay renders.
 - 2026-08-05 (b) · Doors 0.2 (unfurl, 09c5960) + 0.3 (fonts) + 0.4
   (media preload) DONE in f926af4; dist rebuilt and serving. Next-weakest:
   Doors 0.5–0.8 (0.5 needs the 4-viewport pass), then E1, then the

@@ -87,13 +87,24 @@ result but does not gate it.
       screenshot. Original item: Open since mobile wave 1
       (`docs/mobile-experience.md:199-205`); the uncommitted Discord row
       pushes it further down. Re-verify all four canonical viewports.
-- [ ] 0.6 **Doc-drift purge:** finish-line F2 note (the 34-candidate slate at
+- [x] 0.6 **Doc-drift purge:** DONE 2026-08-05 (lane track-d/doc-drift,
+      5 commits, merged d18641b) — every item fixed with a code-side
+      receipt, plus a 7-hit CrazyGames/Poki sweep (marketing-copy,
+      venue-goal Pillar-6 correction, venue-design heading; 3 dated
+      historical records deliberately kept). Original item: finish-line F2 note (the 34-candidate slate at
       `~/Music/jakesjam-slash-audio/` does not exist on this machine — blocker
       is missing input, not "awaiting picks"); STATE-OF-PLAY still says
       "CrazyGames first" while the tree deletes the SDK; mobile-experience.md
       documents a removed orientation-hint; SimEventRouter.ts:612-617 carries
       a stale "no rig animation" comment (shipped in 2d14dcb).
-- [ ] 0.7 **Small honest-copy fixes:** hide `[T] DUO QUEUE` on touch
+- [x] 0.7 **Small honest-copy fixes:** DONE 2026-08-05 (lane
+      track-d/honest-copy, 3 commits, merged 46843d2) — [T] DUO QUEUE
+      hidden on touch via isTouchPrimary(); "Rematch" → "READY FOR NEXT
+      CYCLE" (+ results-action row now wraps at 393px, fixing a
+      pre-existing marginal overflow); one-shot FTUE-style clip-recording
+      disclosure ("MATCHES ARE RECORDED FOR HIGHLIGHTS / TOGGLE IN
+      SETTINGS", localStorage-gated, consent-off first match doesn't burn
+      it). Full client suite 1906/0 in-lane. Original item: hide `[T] DUO QUEUE` on touch
       (`HangoutScene.ts:1172-1183`); rename "Rematch" to what it does
       ("READY FOR NEXT CYCLE"); clip-recording disclosure line in the first
       match (default-on upload is only disclosed deep in Settings —
@@ -276,6 +287,12 @@ orchestrator (finish-line Z5 leftover) · snapshot-relay spectate · portals
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-05 (wave 1) · **PHASE 0 COMPLETE** — 0.6/0.7 landed via the
+  gospel wave-1 parallel lanes (merged d18641b/46843d2, full post-merge
+  gates green: zig 132, client 1909, server 338 + wasm-authority 338),
+  0.5/0.8 landed inline (e35112e + untracked deletions). Host restarted
+  (bots only, no humans interrupted); new dist + sim.wasm live. Next:
+  Phase 1 (front door), E1 remainder per gospel-goal.
 - 2026-08-05 (later still) · 0.2/0.3/0.4 DONE (09c5960, f926af4), dist
   rebuilt + live. Phase 0 remaining: 0.5 (CTA fold — needs the 4-viewport
   pass), 0.6 doc-drift, 0.7 honest-copy, 0.8 hygiene.
