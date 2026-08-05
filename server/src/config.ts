@@ -23,6 +23,9 @@ export const config = {
   port: Number(process.env.PORT ?? 8088),
   // Auto-heal: if the desired port is taken, server tries the next N ports.
   portSearchRange: Number(process.env.PORT_SEARCH_RANGE ?? 10),
+  // Operator console listener — separate from the public game port so the
+  // tunnel / router port-forward never carries /ops. Private sources only.
+  opsPort: Number(process.env.OPS_PORT ?? 8089),
   region: process.env.REGION ?? "local",
   // Shared secret used to validate per-player WS auth tokens minted by Convex.
   // Must match Convex env var GAME_SERVER_SECRET. Set with:

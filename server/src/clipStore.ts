@@ -348,9 +348,21 @@ export async function handleClipUpload(
  * server-generated UUIDs (see handleClipUpload), so this only needs to guard
  * against path traversal / non-matching extensions, not authenticate.
  */
-export async function serveClip(filename: string): Promise<Response | null> {
+export async function serveClip(
+  filename: string,
+  // preferDisk (2026-08-02, LAN ops downloads): serve local bytes before
+  // considering the R2 redirect — a 302 to R2 loses the caller's attachment
+  // disposition (browsers honor the FINAL response's headers) and pointlessly
+  // round-trips the public edge for a file sitting on this box's disk.
+  opts: { preferDisk?: boolean } = {},
+): Promise<Response | null> {
   if (!/^[a-f0-9-]+\.(webm|mp4)$/i.test(filename)) return null;
   await loadPinnedNames();
+
+  if (opts.preferDisk) {
+    const local = await serveClipFromDisk(filename);
+    if (local) return local;
+  }
 
   // R2 serving (no-op until R2_PUBLIC_CLIP_DOMAIN is connected — see
   // r2Clips.ts). Redirecting (rather than proxying the bytes ourselves)
@@ -373,7 +385,12 @@ export async function serveClip(filename: string): Promise<Response | null> {
     }
   }
 
-  // Prefer live dir, then kept/ backup for pinned highlight reels.
+  return serveClipFromDisk(filename);
+}
+
+/** The disk half of serveClip — live dir first, then kept/ backup for
+ *  pinned highlight reels. Callers have already validated the filename. */
+async function serveClipFromDisk(filename: string): Promise<Response | null> {
   const candidates = [resolve(CLIPS_DIR, filename), resolve(KEPT_DIR, filename)];
   for (const full of candidates) {
     if (!full.startsWith(CLIPS_DIR + "/")) continue; // defense in depth
@@ -394,6 +411,27 @@ export async function serveClip(filename: string): Promise<Response | null> {
     });
   }
   return null;
+}
+
+/**
+ * Whole-inventory tar stream for the LAN ops console's "Download all"
+ * (2026-08-02). Includes kept/ and the .dims.json sidecars — the point is
+ * "everything off this box in one click", not a curated export. Streams
+ * via tar's stdout so a multi-GB inventory never lands in process memory.
+ * Auth is the CALLER's job (ops.ts gates it behind requireOpsAuth).
+ */
+export function archiveClipsResponse(): Response {
+  const stamp = new Date().toISOString().slice(0, 10);
+  const proc = Bun.spawn(["tar", "cf", "-", "-C", CLIPS_DIR, "."], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  return new Response(proc.stdout, {
+    headers: {
+      "content-type": "application/x-tar",
+      "content-disposition": `attachment; filename="jakesjam-clips-${stamp}.tar"`,
+    },
+  });
 }
 
 // ── Ops surface: list / pin / unpin ──────────────────────────────────────────

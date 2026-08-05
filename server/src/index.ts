@@ -58,7 +58,7 @@ import {
   requestWantsClipSharePage,
   resolveClipFilename,
 } from "./clipSharePage.ts";
-import { handleOps } from "./ops.ts";
+import { startOpsServer } from "./ops.ts";
 import { convexClient } from "./convexClient.ts";
 import { recordSignupLocal } from "./signupStore.ts";
 import { ingestTelemetryBatch } from "./telemetryStore.ts";
@@ -290,17 +290,13 @@ function serveOnPort(port: number) {
       }
     }
 
-    // ── Operator console (ADMIN_SECRET) ───────────────────────────────
-    // Deep backend UI + JSON API for the host owner — clips pin/unpin,
-    // world/rooms status, env flags. Never part of the player SPA.
-    {
-      const opsRes = await handleOps(req, url, {
-        registry,
-        worldHost,
-        startedAtMs: processStartedAtMs,
-        port: srv.port ?? config.port,
-      });
-      if (opsRes) return opsRes;
+    // The operator console (/ops) is deliberately NOT routed here — it
+    // lives on its own LAN-only listener (config.opsPort, ops.ts). Hard
+    // 404 rather than falling through: serveStatic()'s SPA fallback would
+    // otherwise answer 200 with the game shell, which reads as "something
+    // is here" to scanners.
+    if (url.pathname === "/ops" || url.pathname.startsWith("/ops/")) {
+      return new Response("not found", { status: 404, headers: corsHeaders });
     }
 
     // Dedicated lightweight endpoints for the client status badges.
@@ -1294,6 +1290,14 @@ console.log(
   `[jakesjam-srv] region=${config.region} listening on :${server.port} (rooms=0 world=ready)`,
 );
 
+// Operator console on its own LAN-only port — see ops.ts header.
+const opsServer = startOpsServer({
+  registry,
+  worldHost,
+  startedAtMs: processStartedAtMs,
+  port: server.port ?? config.port,
+});
+
 // Keep user-flagged highlight reels on disk (server/clip-pins.json).
 void ensurePinnedClipsOnDisk().then(() => {
   console.log("[jakesjam-srv] pinned clips ensured under .clips/kept/");
@@ -1321,6 +1325,11 @@ function gracefulShutdown(reason: string): void {
     server.stop();
   } catch (err) {
     console.error("[jakesjam-srv] server.stop failed:", err);
+  }
+  try {
+    opsServer?.stop();
+  } catch (err) {
+    console.error("[jakesjam-srv] opsServer.stop failed:", err);
   }
   // No await — Bun gives sockets ~5s to drain naturally after process exit
   // intent. The matchHost/world will close clients on tick teardown.

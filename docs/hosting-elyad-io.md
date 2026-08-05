@@ -57,3 +57,26 @@ The script **exits** if that file points at another tunnel id or forbidden hostn
 cloudflared tunnel list                    # only jakesjam
 curl -sS -o /dev/null -w "%{http_code}\n" https://play.elyad.io/health
 ```
+
+## Operator console (/ops) — LAN-only (2026-07-31)
+
+The ops console is **never served on the public :8088 port** (hard 404
+there, before the SPA fallback). It runs on its own listener:
+
+- **Port**: `OPS_PORT` (default **:8089**), started by `startOpsServer()`
+  in `server/src/ops.ts` alongside the game server.
+- **Reachability**: refuses non-private source addresses (RFC1918 /
+  loopback / link-local / ULA) even if the port were ever forwarded.
+  ADMIN_SECRET auth unchanged on top of that.
+- **URL from the LAN**: `http://<host-lan-ip>:8089/ops`
+- **ufw**: default INPUT is DROP — LAN devices need a one-time allow:
+  `sudo ufw allow proto tcp from 192.168.4.0/24 to any port 8089 comment 'jakesjam ops LAN'`
+  (same-host access via localhost works without it; the public tunnel
+  needs no inbound rule at all since cloudflared dials out.)
+
+Verify after any host restart:
+
+```bash
+curl -sS -o /dev/null -w "%{http_code}\n" https://play.elyad.io/ops   # 404
+curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8089/ops   # 200
+```

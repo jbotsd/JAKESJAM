@@ -1,5 +1,12 @@
 // Operator console — deep backend interface for the server owner.
 //
+// SERVED ON ITS OWN LISTENER (config.opsPort, default :8089), never on the
+// public game port — the Cloudflare tunnel and the router forward only
+// :8088, so /ops is unreachable from the internet by construction. The
+// listener additionally refuses any non-private source address, so even a
+// future port-forward mistake cannot expose it. LAN URL:
+//   http://<host-lan-ip>:8089/ops
+//
 // UI: Elm SPA at ops/console/ (build with ops/console/build.sh).
 // Auth: ADMIN_SECRET only (fails closed when unset). Accepts:
 //   • header  x-admin-secret: <secret>
@@ -14,6 +21,8 @@
 //   POST /ops/logout           clear cookie → { ok: true }
 //   GET  /ops/api/status       health + world + rooms + clips stats + env
 //   GET  /ops/api/clips        full clip inventory
+//   GET  /ops/api/clips/file/<name>   one clip, attachment disposition
+//   GET  /ops/api/clips/archive       whole inventory as a tar stream
 //   POST /ops/api/clips/pin    { filename, note? }
 //   POST /ops/api/clips/unpin  { filename }
 //   GET  /ops/api/rooms        private lobbies + match registry
@@ -27,9 +36,11 @@ import { fileURLToPath } from "node:url";
 import { constantTimeEquals } from "./auth.ts";
 import { config } from "./config.ts";
 import {
+  archiveClipsResponse,
   listClips,
   listPinRecords,
   pinClip,
+  serveClip,
   unpinClip,
 } from "./clipStore.ts";
 import { listPrivateLobbies } from "./privateLobby.ts";
@@ -270,6 +281,24 @@ export async function handleOps(
     return json({ clips, stats, pins });
   }
 
+  // Per-clip download (2026-08-02, LAN console). serveClip owns the strict
+  // filename validation (UUID + webm/mp4 only, traversal-proof) and the
+  // kept/-fallback; the only change here is attachment disposition so the
+  // browser saves instead of playing.
+  if (url.pathname.startsWith("/ops/api/clips/file/") && req.method === "GET") {
+    const filename = decodeURIComponent(url.pathname.slice("/ops/api/clips/file/".length));
+    const res = await serveClip(filename, { preferDisk: true });
+    if (!res) return json({ error: "not found" }, 404);
+    const headers = new Headers(res.headers);
+    headers.set("content-disposition", `attachment; filename="${filename}"`);
+    return new Response(res.body, { status: res.status, headers });
+  }
+
+  // Whole-inventory tar stream — the console's "Download all" button.
+  if (url.pathname === "/ops/api/clips/archive" && req.method === "GET") {
+    return archiveClipsResponse();
+  }
+
   if (url.pathname === "/ops/api/clips/pin" && req.method === "POST") {
     let body: { filename?: string; note?: string } = {};
     try {
@@ -317,6 +346,62 @@ export async function handleOps(
   }
 
   return json({ error: "not found" }, 404);
+}
+
+/** Loopback, RFC1918, link-local, or IPv6 ULA — anything plausibly LAN. */
+export function isPrivateAddress(addr: string): boolean {
+  const a = addr.startsWith("::ffff:") ? addr.slice(7) : addr;
+  if (a === "::1") return true;
+  if (a.includes(":")) {
+    const low = a.toLowerCase();
+    return low.startsWith("fe80:") || low.startsWith("fc") || low.startsWith("fd");
+  }
+  const parts = a.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return false;
+  const o1 = parts[0] ?? -1;
+  const o2 = parts[1] ?? -1;
+  return (
+    o1 === 127 ||
+    o1 === 10 ||
+    (o1 === 172 && o2 >= 16 && o2 <= 31) ||
+    (o1 === 192 && o2 === 168) ||
+    (o1 === 169 && o2 === 254)
+  );
+}
+
+/**
+ * Start the LAN-only ops listener. Failure to bind must not take down the
+ * game server — logs loudly and returns null instead (game > console).
+ */
+export function startOpsServer(deps: OpsDeps): ReturnType<typeof Bun.serve> | null {
+  try {
+    const server = Bun.serve({
+      port: config.opsPort,
+      hostname: "0.0.0.0",
+      async fetch(req, srv) {
+        const remote = srv.requestIP(req);
+        if (!remote || !isPrivateAddress(remote.address)) {
+          // Silent 404 — do not advertise the surface to non-LAN callers.
+          return new Response("not found", { status: 404 });
+        }
+        const url = new URL(req.url);
+        if (url.pathname === "/") {
+          return new Response(null, { status: 302, headers: { location: "/ops" } });
+        }
+        const res = await handleOps(req, url, deps);
+        return res ?? json({ error: "not found" }, 404);
+      },
+    });
+    console.log(`[jakesjam-srv] ops console (LAN-only) on :${server.port}/ops`);
+    return server;
+  } catch (err) {
+    console.error(
+      `[jakesjam-srv] ops listener failed to bind :${config.opsPort} — ` +
+        `console unavailable this run (game server unaffected):`,
+      err,
+    );
+    return null;
+  }
 }
 
 async function buildStatus(deps: OpsDeps) {

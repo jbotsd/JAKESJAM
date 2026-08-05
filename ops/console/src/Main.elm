@@ -892,6 +892,15 @@ viewClips model =
             [ div [ A.class "row-between" ]
                 [ h2 [] [ text "Clip inventory" ]
                 , div [ A.class "muted" ] [ text statsLine ]
+
+                -- Streams a tar of the whole clips dir (kept/ + sidecars
+                -- included) — /ops/api/clips/archive, cookie-auth'd.
+                , a
+                    [ A.class "btn-sm ok"
+                    , A.style "text-decoration" "none"
+                    , A.href "/ops/api/clips/archive"
+                    ]
+                    [ text "Download all (.tar)" ]
                 ]
             , div [ A.class "bar" ]
                 [ div
@@ -930,7 +939,13 @@ clipRow : Int -> Clip -> Html Msg
 clipRow now c =
     tr []
         [ td []
-            [ a [ A.href c.path, A.target "_blank", A.rel "noopener" ]
+            -- Ops-listener download URL, NOT c.path: /clips/* only exists
+            -- on the public :8088 server — on this console's own origin it
+            -- would 404. The ops route also forces attachment disposition.
+            [ a
+                [ A.href ("/ops/api/clips/file/" ++ c.filename)
+                , A.download c.filename
+                ]
                 [ text (shortName c.filename) ]
             ]
         , td [] [ text (fmtBytes c.sizeBytes) ]

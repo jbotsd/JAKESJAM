@@ -115,3 +115,30 @@ describe("clip pin / list API units", () => {
     expect(clips.every((c) => c.filename.includes("."))).toBe(true);
   });
 });
+
+describe("clip download routes (2026-08-02, LAN console)", () => {
+  test("per-file download is behind the auth gate (fail-closed)", async () => {
+    const req = new Request("http://localhost/ops/api/clips/file/abc123.webm");
+    const res = await handleOps(req, new URL(req.url), makeDeps());
+    expect(res).not.toBeNull();
+    expect([401, 503]).toContain(res!.status);
+  });
+
+  test("archive download is behind the auth gate (fail-closed)", async () => {
+    const req = new Request("http://localhost/ops/api/clips/archive");
+    const res = await handleOps(req, new URL(req.url), makeDeps());
+    expect(res).not.toBeNull();
+    expect([401, 503]).toContain(res!.status);
+  });
+
+  test("traversal-shaped filename can never be a 200", async () => {
+    // Even WITH auth this must die in serveClip's UUID-filename validation;
+    // without auth it dies at the gate. Either way: never a body.
+    const req = new Request(
+      "http://localhost/ops/api/clips/file/..%2F..%2Fclip-pins.json",
+    );
+    const res = await handleOps(req, new URL(req.url), makeDeps());
+    expect(res).not.toBeNull();
+    expect([401, 404, 503]).toContain(res!.status);
+  });
+});

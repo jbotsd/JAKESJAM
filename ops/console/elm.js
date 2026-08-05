@@ -4080,7 +4080,7 @@ function _Browser_application(impl)
 						(next
 							&& curr.a_ === next.a_
 							&& curr.aO === next.aO
-							&& curr.ak.a === next.ak.a
+							&& curr.aj.a === next.aj.a
 						)
 							? $elm$browser$Browser$Internal(next)
 							: $elm$browser$Browser$External(href)
@@ -5099,7 +5099,7 @@ var $elm$url$Url$Http = 0;
 var $elm$url$Url$Https = 1;
 var $elm$url$Url$Url = F6(
 	function (protocol, host, port_, path, query, fragment) {
-		return {aL: fragment, aO: host, aj: path, ak: port_, a_: protocol, a$: query};
+		return {aL: fragment, aO: host, ay: path, aj: port_, a_: protocol, a$: query};
 	});
 var $elm$core$String$contains = _String_contains;
 var $elm$core$String$length = _String_length;
@@ -5386,7 +5386,7 @@ var $author$project$Main$GotClips = function (a) {
 };
 var $author$project$Main$Clip = F9(
 	function (filename, id, ext, sizeBytes, mtimeMs, pinned, kept, path, note) {
-		return {bo: ext, p: filename, bq: id, aR: kept, aw: mtimeMs, S: note, aj: path, U: pinned, ao: sizeBytes};
+		return {bo: ext, l: filename, bq: id, aR: kept, av: mtimeMs, S: note, ay: path, U: pinned, an: sizeBytes};
 	});
 var $elm$json$Json$Decode$bool = _Json_decodeBool;
 var $elm$json$Json$Decode$field = _Json_decodeField;
@@ -5446,7 +5446,7 @@ var $author$project$Main$clipDecoder = A3(
 									$elm$json$Json$Decode$succeed($author$project$Main$Clip))))))))));
 var $author$project$Main$ClipStats = F5(
 	function (totalBytes, maxBytes, fileCount, pinnedCount, keptCount) {
-		return {O: fileCount, aS: keptCount, Q: maxBytes, V: pinnedCount, ap: totalBytes};
+		return {O: fileCount, aS: keptCount, Q: maxBytes, V: pinnedCount, ao: totalBytes};
 	});
 var $elm$json$Json$Decode$map5 = _Json_map5;
 var $author$project$Main$clipStatsDecoder = A6(
@@ -6268,7 +6268,7 @@ var $author$project$Main$GotStatus = function (a) {
 var $elm$json$Json$Decode$andThen = _Json_andThen;
 var $author$project$Main$RecentClip = F5(
 	function (filename, sizeBytes, pinned, mtimeMs, path) {
-		return {p: filename, aw: mtimeMs, aj: path, U: pinned, ao: sizeBytes};
+		return {l: filename, av: mtimeMs, ay: path, U: pinned, an: sizeBytes};
 	});
 var $author$project$Main$recentClipDecoder = A6(
 	$elm$json$Json$Decode$map5,
@@ -6318,7 +6318,7 @@ var $author$project$Main$envDecoder = A2(
 		$elm$json$Json$Decode$map8,
 		F8(
 			function (a, p, w, bots, serve, wc, wp, convex) {
-				return {ac: a, af: convex, R: '?', al: p, an: serve, ar: wc, as: wp, at: bots, au: w};
+				return {ac: a, af: convex, R: '?', ak: p, am: serve, aq: wc, ar: wp, as: bots, at: w};
 			}),
 		A2($elm$json$Json$Decode$field, 'adminSecretConfigured', $elm$json$Json$Decode$bool),
 		A2(
@@ -6401,16 +6401,16 @@ var $author$project$Main$statusDecoder = A2(
 			function (ok, region, port_, uptime, started, world, matches, matchCount) {
 				return {
 					ae: _List_Nil,
-					G: {O: 0, aS: 0, Q: 1, V: 0, ap: 0},
-					N: {ac: false, af: false, R: '?', al: $elm$core$Maybe$Nothing, an: false, ar: false, as: false, at: '0', au: $elm$core$Maybe$Nothing},
+					G: {O: 0, aS: 0, Q: 1, V: 0, ao: 0},
+					N: {ac: false, af: false, R: '?', ak: $elm$core$Maybe$Nothing, am: false, aq: false, ar: false, as: '0', at: $elm$core$Maybe$Nothing},
 					ag: matchCount,
 					ai: matches,
-					ax: ok,
-					ak: port_,
+					aw: ok,
+					aj: port_,
 					D: _List_Nil,
-					am: region,
+					al: region,
 					aC: started,
-					aq: uptime,
+					ap: uptime,
 					ab: world
 				};
 			}),
@@ -6435,7 +6435,7 @@ var $author$project$Main$fetchStatus = $elm$http$Http$get(
 	});
 var $author$project$Main$init = function (_v0) {
 	return _Utils_Tuple2(
-		{a: false, u: $elm$core$Maybe$Nothing, F: _List_Nil, m: $elm$core$Maybe$Nothing, v: $elm$core$Maybe$Nothing, T: 0, f: $author$project$Main$Booting, r: $elm$core$Maybe$Nothing, y: '', h: $elm$core$Maybe$Nothing, X: 0},
+		{a: false, u: $elm$core$Maybe$Nothing, F: _List_Nil, n: $elm$core$Maybe$Nothing, v: $elm$core$Maybe$Nothing, T: 0, f: $author$project$Main$Booting, r: $elm$core$Maybe$Nothing, y: '', h: $elm$core$Maybe$Nothing, X: 0},
 		$elm$core$Platform$Cmd$batch(
 			_List_fromArray(
 				[$author$project$Main$fetchStatus, $author$project$Main$fetchClips])));
@@ -6907,7 +6907,7 @@ var $author$project$Main$update = F2(
 							model,
 							{
 								a: false,
-								m: $elm$core$Maybe$Just(
+								n: $elm$core$Maybe$Just(
 									$author$project$Main$httpErr(err))
 							}),
 						$elm$core$Platform$Cmd$none) : _Utils_Tuple2(
@@ -7018,7 +7018,7 @@ var $author$project$Main$update = F2(
 				return _Utils_Tuple2(
 					_Utils_update(
 						model,
-						{a: true, m: $elm$core$Maybe$Nothing}),
+						{a: true, n: $elm$core$Maybe$Nothing}),
 					$elm$core$Platform$Cmd$batch(
 						_List_fromArray(
 							[$author$project$Main$fetchStatus, $author$project$Main$fetchClips])));
@@ -7039,7 +7039,7 @@ var $author$project$Main$update = F2(
 						model,
 						{
 							r: $elm$core$Maybe$Just(
-								{p: filename, S: 'Pinned from ops'})
+								{l: filename, S: 'Pinned from ops'})
 						}),
 					$elm$core$Platform$Cmd$none);
 			case 11:
@@ -7068,7 +7068,7 @@ var $author$project$Main$update = F2(
 						_Utils_update(
 							model,
 							{a: true, r: $elm$core$Maybe$Nothing}),
-						A2($author$project$Main$postPin, d.p, d.S));
+						A2($author$project$Main$postPin, d.l, d.S));
 				} else {
 					return _Utils_Tuple2(model, $elm$core$Platform$Cmd$none);
 				}
@@ -7085,7 +7085,7 @@ var $author$project$Main$update = F2(
 							model,
 							{
 								a: false,
-								m: $elm$core$Maybe$Just('Pinned.')
+								n: $elm$core$Maybe$Just('Pinned.')
 							}),
 						$elm$core$Platform$Cmd$batch(
 							_List_fromArray(
@@ -7097,7 +7097,7 @@ var $author$project$Main$update = F2(
 							model,
 							{
 								a: false,
-								m: $elm$core$Maybe$Just(
+								n: $elm$core$Maybe$Just(
 									$author$project$Main$httpErr(err))
 							}),
 						$elm$core$Platform$Cmd$none);
@@ -7116,7 +7116,7 @@ var $author$project$Main$update = F2(
 							model,
 							{
 								a: false,
-								m: $elm$core$Maybe$Just('Unpinned.')
+								n: $elm$core$Maybe$Just('Unpinned.')
 							}),
 						$elm$core$Platform$Cmd$batch(
 							_List_fromArray(
@@ -7128,7 +7128,7 @@ var $author$project$Main$update = F2(
 							model,
 							{
 								a: false,
-								m: $elm$core$Maybe$Just(
+								n: $elm$core$Maybe$Just(
 									$author$project$Main$httpErr(err))
 							}),
 						$elm$core$Platform$Cmd$none);
@@ -7137,7 +7137,7 @@ var $author$project$Main$update = F2(
 				return _Utils_Tuple2(
 					_Utils_update(
 						model,
-						{m: $elm$core$Maybe$Nothing}),
+						{n: $elm$core$Maybe$Nothing}),
 					$elm$core$Platform$Cmd$none);
 		}
 	});
@@ -7244,13 +7244,16 @@ var $author$project$Main$tabBtn = F3(
 					$elm$html$Html$text(label)
 				]));
 	});
+var $elm$html$Html$a = _VirtualDom_node('a');
 var $author$project$Main$AskPin = function (a) {
 	return {$: 10, a: a};
 };
 var $author$project$Main$AskUnpin = function (a) {
 	return {$: 15, a: a};
 };
-var $elm$html$Html$a = _VirtualDom_node('a');
+var $elm$html$Html$Attributes$download = function (fileName) {
+	return A2($elm$html$Html$Attributes$stringProperty, 'download', fileName);
+};
 var $author$project$Main$fmtAge = F2(
 	function (nowMs, mtimeMs) {
 		var s = A2($elm$core$Basics$max, 0, ((nowMs - mtimeMs) / 1000) | 0);
@@ -7266,7 +7269,6 @@ var $elm$html$Html$Attributes$href = function (url) {
 		'href',
 		_VirtualDom_noJavaScriptUri(url));
 };
-var $elm$html$Html$Attributes$rel = _VirtualDom_attribute('rel');
 var $author$project$Main$shortName = function (name) {
 	var _v0 = A2($elm$core$String$split, '.', name);
 	if (_v0.b && _v0.b.b) {
@@ -7278,7 +7280,6 @@ var $author$project$Main$shortName = function (name) {
 		return name;
 	}
 };
-var $elm$html$Html$Attributes$target = $elm$html$Html$Attributes$stringProperty('target');
 var $elm$html$Html$td = _VirtualDom_node('td');
 var $elm$html$Html$tr = _VirtualDom_node('tr');
 var $author$project$Main$clipRow = F2(
@@ -7297,14 +7298,13 @@ var $author$project$Main$clipRow = F2(
 							$elm$html$Html$a,
 							_List_fromArray(
 								[
-									$elm$html$Html$Attributes$href(c.aj),
-									$elm$html$Html$Attributes$target('_blank'),
-									$elm$html$Html$Attributes$rel('noopener')
+									$elm$html$Html$Attributes$href('/ops/api/clips/file/' + c.l),
+									$elm$html$Html$Attributes$download(c.l)
 								]),
 							_List_fromArray(
 								[
 									$elm$html$Html$text(
-									$author$project$Main$shortName(c.p))
+									$author$project$Main$shortName(c.l))
 								]))
 						])),
 					A2(
@@ -7313,7 +7313,7 @@ var $author$project$Main$clipRow = F2(
 					_List_fromArray(
 						[
 							$elm$html$Html$text(
-							$author$project$Main$fmtBytes(c.ao))
+							$author$project$Main$fmtBytes(c.an))
 						])),
 					A2(
 					$elm$html$Html$td,
@@ -7321,7 +7321,7 @@ var $author$project$Main$clipRow = F2(
 					_List_fromArray(
 						[
 							$elm$html$Html$text(
-							A2($author$project$Main$fmtAge, now, c.aw))
+							A2($author$project$Main$fmtAge, now, c.av))
 						])),
 					A2(
 					$elm$html$Html$td,
@@ -7361,7 +7361,7 @@ var $author$project$Main$clipRow = F2(
 									$elm$html$Html$Attributes$type_('button'),
 									$elm$html$Html$Attributes$class('btn-sm danger'),
 									$elm$html$Html$Events$onClick(
-									$author$project$Main$AskUnpin(c.p))
+									$author$project$Main$AskUnpin(c.l))
 								]),
 							_List_fromArray(
 								[
@@ -7373,7 +7373,7 @@ var $author$project$Main$clipRow = F2(
 									$elm$html$Html$Attributes$type_('button'),
 									$elm$html$Html$Attributes$class('btn-sm ok'),
 									$elm$html$Html$Events$onClick(
-									$author$project$Main$AskPin(c.p))
+									$author$project$Main$AskPin(c.l))
 								]),
 							_List_fromArray(
 								[
@@ -7411,7 +7411,7 @@ var $author$project$Main$viewClips = function (model) {
 		var _v1 = model.u;
 		if (!_v1.$) {
 			var s = _v1.a;
-			return $elm$core$String$fromInt(s.O) + (' files · ' + ($author$project$Main$fmtBytes(s.ap) + (' / ' + ($author$project$Main$fmtBytes(s.Q) + (' · ' + ($elm$core$String$fromInt(s.V) + ' pinned'))))));
+			return $elm$core$String$fromInt(s.O) + (' files · ' + ($author$project$Main$fmtBytes(s.ao) + (' / ' + ($author$project$Main$fmtBytes(s.Q) + (' · ' + ($elm$core$String$fromInt(s.V) + ' pinned'))))));
 		} else {
 			return '—';
 		}
@@ -7420,7 +7420,7 @@ var $author$project$Main$viewClips = function (model) {
 		var _v0 = model.u;
 		if (!_v0.$) {
 			var s = _v0.a;
-			return (s.Q <= 0) ? 0 : A2($elm$core$Basics$min, 100, (s.ap / s.Q) * 100);
+			return (s.Q <= 0) ? 0 : A2($elm$core$Basics$min, 100, (s.ao / s.Q) * 100);
 		} else {
 			return 0;
 		}
@@ -7465,6 +7465,18 @@ var $author$project$Main$viewClips = function (model) {
 								_List_fromArray(
 									[
 										$elm$html$Html$text(statsLine)
+									])),
+								A2(
+								$elm$html$Html$a,
+								_List_fromArray(
+									[
+										$elm$html$Html$Attributes$class('btn-sm ok'),
+										A2($elm$html$Html$Attributes$style, 'text-decoration', 'none'),
+										$elm$html$Html$Attributes$href('/ops/api/clips/archive')
+									]),
+								_List_fromArray(
+									[
+										$elm$html$Html$text('Download all (.tar)')
 									]))
 							])),
 						A2(
@@ -7620,12 +7632,12 @@ var $author$project$Main$prettyEnv = function (e) {
 		_List_fromArray(
 			[
 				'adminSecret: ' + $author$project$Main$boolStr(e.ac),
-				'publicUrl: ' + A2($elm$core$Maybe$withDefault, 'null', e.al),
-				'worldMap: ' + A2($elm$core$Maybe$withDefault, '(rotate)', e.au),
-				'worldBots: ' + e.at,
-				'serveClient: ' + $author$project$Main$boolStr(e.an),
-				'wasmCollision: ' + $author$project$Main$boolStr(e.ar),
-				'wasmPlayer: ' + $author$project$Main$boolStr(e.as),
+				'publicUrl: ' + A2($elm$core$Maybe$withDefault, 'null', e.ak),
+				'worldMap: ' + A2($elm$core$Maybe$withDefault, '(rotate)', e.at),
+				'worldBots: ' + e.as,
+				'serveClient: ' + $author$project$Main$boolStr(e.am),
+				'wasmCollision: ' + $author$project$Main$boolStr(e.aq),
+				'wasmPlayer: ' + $author$project$Main$boolStr(e.ar),
 				'convex: ' + $author$project$Main$boolStr(e.af),
 				'nodeEnv: ' + e.R
 			]));
@@ -7646,6 +7658,8 @@ var $author$project$Main$prettyWorld = function (w) {
 				'droppedSnaps: ' + $elm$core$String$fromInt(w.a8)
 			]));
 };
+var $elm$html$Html$Attributes$rel = _VirtualDom_attribute('rel');
+var $elm$html$Html$Attributes$target = $elm$html$Html$Attributes$stringProperty('target');
 var $author$project$Main$viewRecent = F2(
 	function (now, c) {
 		return A2(
@@ -7660,14 +7674,14 @@ var $author$project$Main$viewRecent = F2(
 					$elm$html$Html$a,
 					_List_fromArray(
 						[
-							$elm$html$Html$Attributes$href(c.aj),
+							$elm$html$Html$Attributes$href(c.ay),
 							$elm$html$Html$Attributes$target('_blank'),
 							$elm$html$Html$Attributes$rel('noopener')
 						]),
 					_List_fromArray(
 						[
 							$elm$html$Html$text(
-							$author$project$Main$shortName(c.p))
+							$author$project$Main$shortName(c.l))
 						])),
 					A2(
 					$elm$html$Html$span,
@@ -7675,7 +7689,7 @@ var $author$project$Main$viewRecent = F2(
 					_List_fromArray(
 						[
 							$elm$html$Html$text(
-							$author$project$Main$fmtBytes(c.ao)),
+							$author$project$Main$fmtBytes(c.an)),
 							c.U ? A2(
 							$elm$html$Html$span,
 							_List_fromArray(
@@ -7926,7 +7940,7 @@ var $author$project$Main$viewPinModal = function (model) {
 								]),
 							_List_fromArray(
 								[
-									$elm$html$Html$text(d.p)
+									$elm$html$Html$text(d.l)
 								])),
 							A2(
 							$elm$html$Html$label,
@@ -7991,10 +8005,10 @@ var $author$project$Main$prettyStatus = function (s) {
 		'\n',
 		_List_fromArray(
 			[
-				'ok: ' + $author$project$Main$boolStr(s.ax),
-				'region: ' + s.am,
-				'port: ' + $elm$core$String$fromInt(s.ak),
-				'uptimeSec: ' + $elm$core$String$fromInt(s.aq),
+				'ok: ' + $author$project$Main$boolStr(s.aw),
+				'region: ' + s.al,
+				'port: ' + $elm$core$String$fromInt(s.aj),
+				'uptimeSec: ' + $elm$core$String$fromInt(s.ap),
 				'startedAt: ' + s.aC,
 				'matchCount: ' + $elm$core$String$fromInt(s.ag),
 				'privateLobbies: ' + $elm$core$String$fromInt(
@@ -8214,7 +8228,7 @@ var $author$project$Main$viewStats = function (model) {
 			A2(
 				$elm$core$Basics$composeR,
 				function ($) {
-					return $.aq;
+					return $.ap;
 				},
 				$author$project$Main$fmtUptime),
 			st));
@@ -8351,7 +8365,7 @@ var $author$project$Main$viewDashboard = function (model) {
 										function () {
 											if (!st.$) {
 												var s = st.a;
-												return s.am + (' · :' + $elm$core$String$fromInt(s.ak));
+												return s.al + (' · :' + $elm$core$String$fromInt(s.aj));
 											} else {
 												return '—';
 											}
@@ -8395,7 +8409,7 @@ var $author$project$Main$viewDashboard = function (model) {
 					])),
 				$author$project$Main$viewStats(model),
 				function () {
-				var _v1 = model.m;
+				var _v1 = model.n;
 				if (!_v1.$) {
 					var f = _v1.a;
 					return A2(
