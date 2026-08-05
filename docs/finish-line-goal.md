@@ -85,12 +85,17 @@ live-tape verification (the bash's own K5-K12/I5-I13 tape passes are a
 dozens-of-iterations investment, out of scope for this build task) and F2's
 audio wiring once unblocked.
 
-**F2 — Audio wiring (blocked on Jake).** `~/Music/jakesjam-slash-audio/`
-has 34 candidates + ranked recommendations in `CANDIDATES.md`, untouched
-since the curator populated it (single batch, no picks yet). Once
-picked: wire per R1 rows 13/14's already-specified timing (whoosh at cut
-start, contact ±2t of the sim gate, kill layer +0-50ms stacked) — this
-half is pure execution, no further design needed.
+**F2 — Audio wiring (blocked on a MISSING INPUT, not on picks).**
+`~/Music/jakesjam-slash-audio/` no longer exists on this machine
+(verified 2026-08-05: `ls` fails, `~/Music/` is empty) — the
+34-candidate slate + `CANDIDATES.md` ranked recommendations this row
+used to point at are gone. The slate must be REGENERATED first — ripped
+canonical recordings via yt-dlp, per the hard never-synthesize-audio
+rule — before "picks" are even possible; only then does this row become
+blocked-on-Jake again. Once picked: wire per R1 rows 13/14's
+already-specified timing (whoosh at cut start, contact ±2t of the sim
+gate, kill layer +0-50ms stacked) — this half is pure execution, no
+further design needed.
 
 **F3 — The two "needs your live eyes" verifications** carried over from
 the loops: pool behavior under a real extended multi-round session
@@ -152,7 +157,8 @@ not anymore (both class loops declared complete). Re-run:
   already argues white is correct — this is a ratify-or-veto, not an
   open question)
 - Six Axes Phase 4 — ≥5 rounds live drafting ability cards, your verdict
-- Audio picks from the candidate slate (unlocks Track F2)
+- Audio picks (unlocks Track F2) — NOT currently askable: the candidate
+  slate is gone from disk and must be regenerated first (see F2)
 - The Z4 flip — Z3 landed 2026-07-26, ready to ask for now
 
 ## Track R — Render/perf (OPT-IN ONLY, not default scope)
@@ -220,7 +226,9 @@ precedent as convergence-goal.md.
   own sanity-check when he plays it. Open: on-camera live-tape verification
   of the render (a future wave's job, same investment class as the bash's
   own K5-K12/I5-I13 tape passes).
-- F2 audio wiring: **BLOCKED ON JAKE** (picks)
+- F2 audio wiring: **BLOCKED ON MISSING INPUT** (2026-08-05) — the
+  candidate slate at `~/Music/jakesjam-slash-audio/` no longer exists;
+  regenerate it (yt-dlp rips, never synthesized) before picks are possible
 - F3 live-eyes verification: **PARTIALLY DONE, ad hoc** — the 2026-07-27
   footage-study STUDY 3/4 cycle exercised real live-eyes verification on
   fresh tape (STUDY 4 confirmed D1/CL.E/CL.D/nameplate/watermark fixes on

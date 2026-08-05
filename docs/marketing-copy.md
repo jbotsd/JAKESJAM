@@ -23,7 +23,10 @@ loot/gacha presentation is fine to explore later, selling power never is.)
 
 ## Portal listing description
 
-Use for CrazyGames/Poki and similar submission forms.
+Banked portal-listing copy. *(CrazyGames/Poki submissions were dropped
+2026-08-01 — the SDK was removed in 10b359e; the launch strategy is the
+Fight Night email-gate funnel. Kept for any future portal or directory
+listing.)*
 
 > **JAKESJAM** is a browser-first 2D multiplayer arena shooter — fast
 > movement, punchy weapons, and round-to-round upgrade drafting turn
