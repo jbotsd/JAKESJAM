@@ -83,7 +83,8 @@ import { HudSystem, type HudChip, type HudVitals, type HudRound, type NameplateS
 import { ActionBarSystem, type ActionBarVitals } from "../ui/ActionBarSystem";
 import { RoundBanner } from "../ui/RoundBanner";
 import { DeathOverlay } from "../ui/DeathOverlay";
-import { deathWaitCountdown, draftTimerArmMs } from "../ui/phaseCountdown";
+import { draftTimerArmMs } from "../ui/phaseCountdown";
+import { deathOverlayPresentation } from "../ui/deathOverlayPresentation";
 import { ConnectionOverlay } from "../ui/ConnectionOverlay";
 import { ParticlePool } from "../systems/ParticlePool";
 import { StatusVfxController } from "../systems/StatusVfxController";
@@ -207,6 +208,13 @@ const SIM_CROUCH_HALF_HEIGHT = 19;
 // Radiant white-gold — YOU are the gnostic light (Jake's pick 2026-07-11):
 // ivory body, gold accent; maximum value-contrast on every background and
 // the same language as the soul/motif.
+/** Doors 1.4 — how long a never-spawned local must stay absent/dead before
+ *  the NEXT BELL overlay shows. Covers the one-frame roster races (world-
+ *  recycle re-hello, countdown-entry insertion) so the overlay never
+ *  flashes on a player who is about to appear; a genuinely gate-parked
+ *  spectator sees it well within a beat. */
+const PENDING_OVERLAY_GRACE_MS = 400;
+
 const LOCAL_PLAYER_FALLBACK_COLOR = 0xfff3d6;
 // Hot crimson (was soft pink — too close to both bots and warm terrain).
 const REMOTE_PLAYER_FALLBACK_COLOR = 0xff4d5e;
@@ -339,6 +347,19 @@ export class OnlineMatchScene extends Phaser.Scene {
   private deathTipLocked: string | null | undefined = undefined;
   /** When the local player died (performance.now), null while alive. */
   private localDeathAtMs: number | null = null;
+  /** Doors 1.4 — true once we've seen OUR player alive in any received
+   *  state. Until then a dead/absent local is a PENDING ENTRANT (gate-
+   *  parked spectator awaiting the countdown-entry insertion), NOT a
+   *  corpse: NEXT BELL copy, no death rite, no eliminated/soul-reclaimed
+   *  announcer. Derived locally from observed state — no server protocol.
+   *  Reset in init() and on world-recycle re-hello (the new world may park
+   *  us again). */
+  private localEverSpawned = false;
+  /** First frame we found ourselves pending (never-spawned + absent/dead).
+   *  The NEXT BELL overlay waits a short grace on this stamp so one-frame
+   *  roster races (world-recycle re-hello, countdown-entry insertion)
+   *  never flash it. Null while not pending. */
+  private pendingSinceMs: number | null = null;
   /** Round-phase memory for the FIGHT announce edge. */
   private prevRoundPhase = "";
   /** Static arena geometry (platforms, walls, floor, vignette). Drawn
@@ -545,6 +566,12 @@ export class OnlineMatchScene extends Phaser.Scene {
   init(data: OnlineMatchSceneInit) {
     this.localPlayerId = PlayerId(data.localPlayerId);
     this.sceneMode = data.mode ?? "room";
+    // Scene instances survive restarts (class-field initializers run once,
+    // at construction) — per-entry spawn-tracking state must reset here or
+    // a second entry inherits the first run's "has fought" verdict.
+    this.localEverSpawned = false;
+    this.pendingSinceMs = null;
+    this.localDeathAtMs = null;
     void this.connect(data);
   }
 
@@ -1334,23 +1361,19 @@ export class OnlineMatchScene extends Phaser.Scene {
     }
 
     // Death overlay (teach tip ≤1 + optional share when clip URL known).
-    // HELD BACK ~3s so the death rite (burst → shards → soul returning to
-    // the motif) plays unobscured — the overlay was hiding the best moment.
+    // Two variants share the surface (Doors 1.4): a real death gets the
+    // ELIMINATED treatment; a pending entrant who has never spawned gets
+    // NEXT BELL spectate framing instead — never death copy, never the
+    // eliminated/soul-reclaimed announcer.
+    // The death variant is HELD BACK ~3s so the death rite (burst → shards
+    // → soul returning to the motif) plays unobscured — the overlay was
+    // hiding the best moment.
     // Gated by !matchHasEnded (mirrors the round-banner gate right below):
     // without it, a player who dies on the match-winning point keeps
     // ticking through the ~3s death rite reveal underneath the results
     // modal that already popped up, and could flash stale on the next hello.
     if (this.deathOverlay && !this.matchHasEnded) {
       if (vitals.isDead) {
-        if (this.localDeathAtMs === null) {
-          this.localDeathAtMs = performance.now();
-          announce("eliminated");
-          // The soul reaches the seal ~2.9s in — speak as it lands.
-          this.time.delayedCall(2_900, () => {
-            if (this.localDeathAtMs !== null) announce("soul-reclaimed");
-          });
-        }
-        const riteDone = performance.now() - this.localDeathAtMs >= 3_000;
         // Phase-honest wait: one "NEXT BELL" estimate of when the player
         // actually fights again, instead of the raw round clock silently
         // re-meaning itself across phases (venue-goal Pillar 0.2).
@@ -1359,7 +1382,12 @@ export class OnlineMatchScene extends Phaser.Scene {
           deadLocal?.respawnAtTick !== undefined && state.round.suddenDeathActive !== true
             ? Math.ceil(Math.max(0, (deadLocal.respawnAtTick as number) - state.tick) / 60)
             : null;
-        const wait = deathWaitCountdown(
+        // ONE decision for copy + timer + announcer entitlement (Doors
+        // 1.4, unit-tested in deathOverlayPresentation.test.ts):
+        // never-spawned → pending-entrant NEXT BELL framing; spawned-
+        // then-dead → the classic ELIMINATED treatment.
+        const pres = deathOverlayPresentation(
+          this.localEverSpawned,
           state.round.phase,
           state.round.countdownRemainingMs,
           respawnSeconds,
@@ -1369,7 +1397,9 @@ export class OnlineMatchScene extends Phaser.Scene {
         // full-viewport blur darkens the peripheral nameplate column behind
         // it — score context otherwise has nowhere to show while dead
         // (Jake, 2026-07-14 UI pass). Recomputed every frame since another
-        // player can score while you're still waiting to respawn.
+        // player can score while you're still waiting to respawn. For a
+        // pending entrant this doubles as the spectate context: the score
+        // line IS "who is fighting down there".
         const scoreLine = Object.entries(scores)
           .sort(([aId, a], [bId, b]) => b - a || aId.localeCompare(bId))
           .map(([pid, score]) => {
@@ -1377,20 +1407,53 @@ export class OnlineMatchScene extends Phaser.Scene {
             return `${tag} ${score}`;
           })
           .join("  ·  ");
-        if (this.deathOverlay.isOpen()) {
-          this.deathOverlay.updateTimer(wait);
-          this.deathOverlay.updateScoreLine(scoreLine);
-        } else if (riteDone) {
-          if (this.deathTipLocked === undefined) {
-            this.deathTipLocked = this.computeDeathTip(state);
+        if (pres.variant === "pending-entrant") {
+          // Admitted at the gate, parked spectating, never spawned: NOT a
+          // death. No rite hold, no death tip, no share button — and the
+          // eliminated/soul-reclaimed announcer calls live EXCLUSIVELY in
+          // the eliminated branch below, so they can never fire here.
+          this.localDeathAtMs = null;
+          if (this.pendingSinceMs === null) this.pendingSinceMs = performance.now();
+          if (this.deathOverlay.isOpen()) {
+            this.deathOverlay.updateTimer(pres.wait);
+            this.deathOverlay.updateScoreLine(scoreLine);
+          } else if (performance.now() - this.pendingSinceMs >= PENDING_OVERLAY_GRACE_MS) {
+            this.deathOverlay.show(pres.wait, {
+              variant: "pending",
+              title: pres.title,
+              subtitle: pres.subtitle,
+              scoreLine,
+            });
           }
-          this.deathOverlay.show(wait, {
-            tip: this.deathTipLocked,
-            shareUrl: this.lastShareClipUrl,
-            scoreLine,
-          });
+        } else {
+          if (this.localDeathAtMs === null) {
+            this.localDeathAtMs = performance.now();
+            announce("eliminated");
+            // The soul reaches the seal ~2.9s in — speak as it lands.
+            this.time.delayedCall(2_900, () => {
+              if (this.localDeathAtMs !== null) announce("soul-reclaimed");
+            });
+          }
+          const riteDone = performance.now() - this.localDeathAtMs >= 3_000;
+          if (this.deathOverlay.isOpen()) {
+            this.deathOverlay.updateTimer(pres.wait);
+            this.deathOverlay.updateScoreLine(scoreLine);
+          } else if (riteDone) {
+            if (this.deathTipLocked === undefined) {
+              this.deathTipLocked = this.computeDeathTip(state);
+            }
+            this.deathOverlay.show(pres.wait, {
+              tip: this.deathTipLocked,
+              shareUrl: this.lastShareClipUrl,
+              scoreLine,
+            });
+          }
         }
       } else {
+        // Seen self alive: from here on a dead/absent local is a real
+        // death, never the pending-entrant wait (Doors 1.4).
+        this.localEverSpawned = true;
+        this.pendingSinceMs = null;
         this.localDeathAtMs = null;
         if (this.deathOverlay.isOpen()) {
           this.deathOverlay.hide();
@@ -1579,6 +1642,12 @@ export class OnlineMatchScene extends Phaser.Scene {
             this.matchHasEnded = false;
             this.matchResultsOverlay?.hide();
             this.setStatus("");
+            // The rebuilt world decides our roster membership afresh — if
+            // it parks us as a pending entrant, the first dead/absent
+            // frames are a WAIT, not a death (Doors 1.4). Re-derived the
+            // moment we're seen alive in the new world.
+            this.localEverSpawned = false;
+            this.pendingSinceMs = null;
           }
         },
         onEvents: (events) => this.handleSimEvents(events),
