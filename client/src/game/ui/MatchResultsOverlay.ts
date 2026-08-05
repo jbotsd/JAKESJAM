@@ -145,7 +145,11 @@ export class MatchResultsOverlay {
     }
 
     this.actionsEl.replaceChildren();
-    const rematchButton = makeButton("Rematch", PRIMARY_BUTTON_STYLE);
+    // Doors 0.7 honest-copy: this button does NOT restart a match — it
+    // re-queues you for the next cycle (worldClient.postRematchReady →
+    // worldHost.markRematchReady fast-forwards the intermission timer).
+    // Label says what it does; the onRematch identifier chain is untouched.
+    const rematchButton = makeButton("Ready for next cycle", PRIMARY_BUTTON_STYLE);
     rematchButton.addEventListener("click", () => {
       this.hide();
       handlers.onRematch();
@@ -535,6 +539,14 @@ const CARD_CHIP_STYLE: Partial<CSSStyleDeclaration> = {
 
 const ACTIONS_STYLE: Partial<CSSStyleDeclaration> = {
   display: "flex",
+  // Wrap + center: at 393px the stage's usable row (~281px inside the
+  // 40px side padding) can't fit "READY FOR NEXT CYCLE" beside "BACK TO
+  // LOBBY" (+ optional "SHARE HIGHLIGHT"). Buttons keep their intrinsic
+  // width and wrap into centered rows instead of overflowing the stage
+  // sideways — same shrink-nothing-important philosophy as clusterA-05's
+  // row fix above (only the name column ever gives up space).
+  flexWrap: "wrap",
+  justifyContent: "center",
   gap: "12px",
   marginTop: "10px",
 };
