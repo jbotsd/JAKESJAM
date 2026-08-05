@@ -304,6 +304,17 @@ app.innerHTML = `
         <button data-menu-intro type="button" class="shell-btn-quiet">Intro</button>
         <button data-menu-credits type="button" class="shell-btn-quiet">Credits</button>
       </div>
+      <!-- Community CTA: Fight Night organises on Discord (rounds get pinged
+           there), so this sits with the menu rather than as chrome. Plain
+           anchor — new tab, no JS wiring, works even if the bundle wedges. -->
+      <div class="splash-actions splash-actions--community">
+        <a
+          class="shell-btn-discord"
+          href="https://discord.gg/XrRgTsXWzJ"
+          target="_blank"
+          rel="noopener"
+        >◆ DISCORD — FIGHT NIGHT HQ</a>
+      </div>
       <!-- Player record (replaced the world status badge — Jake,
            2026-07-16: "remove this add player stats"). Rendered from
            shell/playerStats.ts on load + every return home. -->

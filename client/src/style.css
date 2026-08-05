@@ -1081,6 +1081,39 @@ button.btn-danger:hover:not(:disabled) {
   margin-top: 2px;
 }
 
+.splash-actions--community {
+  display: flex;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+/* Discord CTA: one weight tier above .shell-btn-quiet (it leaves the site,
+   so it must read as a distinct destination) but well below the Lobby
+   primary. Blurple sits inside the shell's existing blue-violet gradient
+   family, so no new hue is introduced. 44px touch minimum per C5. */
+.shell-btn-discord {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 4px 18px;
+  border: 1px solid rgba(88, 101, 242, 0.45);
+  clip-path: var(--chamfer-sm);
+  background: rgba(88, 101, 242, 0.1);
+  color: rgba(199, 206, 252, 0.85);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-decoration: none;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.shell-btn-discord:hover {
+  border-color: rgba(88, 101, 242, 0.9);
+  background: rgba(88, 101, 242, 0.2);
+  color: #e4e7ff;
+}
+
 /* Named .shell-btn-quiet, NOT .shell-btn-ghost — that name was already taken
    (pause menu's bordered/dimmed variant, line ~1280) and means something
    different there (Secondary + faint border, not no-border/no-fill). Reusing
@@ -1798,6 +1831,71 @@ button.btn-danger:hover:not(:disabled) {
 
 .email-gate-skip:hover {
   color: rgba(215, 221, 228, 0.6);
+}
+
+/* Post-signup Discord strip (shell/emailGate.ts showDiscordToast). Fixed
+   above everything including the gate's own z-60 so it survives the gate's
+   removal frame; bottom-centred, self-dismissing, never blocks input to
+   the splash behind it beyond its own footprint. */
+.discord-toast {
+  position: fixed;
+  z-index: 70;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  /* Centred via inset+auto margins, NOT translateX(-50%): a transform here
+     gets clobbered on wide viewports (verified in QA screenshots), and
+     margin-based centring has no such interaction. */
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 10px 14px;
+  border: 1px solid rgba(88, 101, 242, 0.45);
+  clip-path: var(--chamfer-sm);
+  background: rgba(11, 15, 24, 0.96);
+  color: rgba(215, 221, 228, 0.85);
+  font-size: 0.82rem;
+}
+
+.discord-toast-copy {
+  min-width: 0;
+}
+
+.discord-toast-link {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border: 1px solid rgba(88, 101, 242, 0.6);
+  clip-path: var(--chamfer-sm);
+  background: rgba(88, 101, 242, 0.16);
+  color: #e4e7ff;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.discord-toast-link:hover {
+  background: rgba(88, 101, 242, 0.3);
+}
+
+.discord-toast-close {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: 0;
+  clip-path: none;
+  background: none;
+  color: rgba(215, 221, 228, 0.4);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.discord-toast-close::before,
+.discord-toast-close::after { content: none; }
+
+.discord-toast-close:hover {
+  color: rgba(215, 221, 228, 0.8);
 }
 
 /* ── Splash background loop (beat-cut gameplay montage, muted) ─────────── */

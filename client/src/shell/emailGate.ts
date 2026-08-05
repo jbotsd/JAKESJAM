@@ -26,6 +26,9 @@ const SESSION_SKIP_KEY = "jakesjam.gateSkip";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Permanent invite to #welcome on the JAKESJAM x INTREPID DEV server.
+const DISCORD_INVITE_URL = "https://discord.gg/XrRgTsXWzJ";
+
 function shouldSkip(): boolean {
   try {
     const params = new URLSearchParams(window.location.search);
@@ -38,6 +41,26 @@ function shouldSkip(): boolean {
     return true;
   }
   return false;
+}
+
+// Post-submit Discord CTA. Deliberately a TOAST, not an interstitial: the
+// gate's whole contract is "you're playing in about eight seconds", so the
+// ask comes AFTER the conversion, on a non-blocking strip that dismisses
+// itself. Shown only to submitters — skippers haven't committed to Fight
+// Night yet and get the splash's own Discord button instead.
+function showDiscordToast(): void {
+  const toast = document.createElement("div");
+  toast.className = "discord-toast";
+  toast.setAttribute("role", "status");
+  toast.innerHTML = `
+    <span class="discord-toast-copy">✓ You're on the list — Fight Night lands Friday.</span>
+    <a class="discord-toast-link" href="${DISCORD_INVITE_URL}" target="_blank" rel="noopener">Join the Discord</a>
+    <button type="button" class="discord-toast-close" aria-label="Dismiss">×</button>
+  `;
+  const remove = () => toast.remove();
+  toast.querySelector(".discord-toast-close")?.addEventListener("click", remove);
+  window.setTimeout(remove, 14_000);
+  document.body.appendChild(toast);
 }
 
 function submitSignup(email: string): void {
@@ -106,6 +129,7 @@ export function installEmailGate(): void {
     }
     submitSignup(email);
     close();
+    showDiscordToast();
   });
 
   skip.addEventListener("click", () => {
