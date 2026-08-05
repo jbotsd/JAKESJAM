@@ -23,6 +23,7 @@ import {
   postRematchReady,
   sanitizePlayerName,
   sanitizeCharacterId,
+  takeArenaPreconnect,
   InputBit,
   type NetStats,
 } from "../../net";
@@ -1605,9 +1606,17 @@ export class OnlineMatchScene extends Phaser.Scene {
 
   private async connect(data: OnlineMatchSceneInit) {
     try {
-      const wsUrl = await this.resolveWsUrl(data);
+      // The admission race (open-doors 1.3): a venue player who queued at
+      // the bell pre-opened this exact socket while still standing in the
+      // lobby (HangoutScene → arenaPreconnect). Adopt it — the server
+      // already inserted them at the countdown edge; opening a FRESH
+      // socket here is the handshake race this machinery kills. Null when
+      // no usable pre-open exists (direct joins, private rooms, or the
+      // warm socket died mid-handoff) → the ordinary fresh-connect path.
+      const pre = data.mode === "world" ? takeArenaPreconnect(data.localPlayerId) : null;
+      const wsUrl = pre ? pre.wsUrl : await this.resolveWsUrl(data);
       this.setStatus("Opening WebSocket...");
-      const transport = new WsTransport({ url: wsUrl });
+      const transport = pre ? pre.transport : new WsTransport({ url: wsUrl });
       this.loop = new ClientLoop({
         transport,
         matchId: data.matchId ?? "world",

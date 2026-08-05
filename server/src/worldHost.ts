@@ -138,6 +138,23 @@ export class WorldHost {
    *  legacy, direct connects never set this and never see any behavior
    *  change). */
   getEntrantTeamId?: (playerId: PlayerId) => string | undefined;
+  /** Pre-open hold (open-doors 1.3, the admission race) — set by VenueHost
+   *  after construction, same late-binding pattern as getEntrantCards.
+   *  True = this player's arena connection is a PRE-OPENED socket (they are
+   *  standing in the venue lobby, queued at the bell, NOT yet admitted):
+   *  keep it parked as a spectator through bell drains AND match-complete
+   *  recycles — the venue's admission (not mere connectedness) is what
+   *  turns it into a combatant. Undefined = every pending entrant drains
+   *  at the bell exactly as before (tests, legacy, direct connects). */
+  holdEntrant?: (playerId: PlayerId) => boolean;
+  /** Admission ticket (open-doors 1.3) — set by VenueHost after
+   *  construction. True = the venue admitted this player at a recent bell
+   *  (TTL'd venue-side). A socket that arrives AFTER the countdown already
+   *  ended (cold cache, slow phone — the fresh TCP+WS handshake lost the
+   *  ~3 s race) still inserts immediately instead of spectating the full
+   *  round it was admitted for. Undefined = the bell gate is absolute
+   *  (legacy behavior, byte-for-byte). */
+  admittedRecently?: (playerId: PlayerId) => boolean;
   /** Elastic-bot floor (S2.E): bot count adjusts toward
    *  `max(0, botFloor - humansFighting)` at bell edges ONLY, capped at 6.
    *  0 (default) disables elasticity — the legacy fixed `bots` count rules. */
@@ -243,6 +260,22 @@ export class WorldHost {
         // Forced package harness only. This still creates a normal player in
         // the normal MatchHost; it bypasses admission cadence, not authority.
         this.insertEntrant(playerId, chosenName, ws);
+      } else if (this.admittedRecently?.(playerId)) {
+        // The admission race (open-doors 1.3): the venue admitted this
+        // player at a recent bell, but their fresh arena socket lost the
+        // ~3 s countdown window (cold cache, slow phone, slow scene
+        // handoff). Honoring the admission beats honoring the gate — they
+        // were admitted AT the bell; only their handshake was late. Insert
+        // the moment the socket lands instead of parking them as a
+        // spectator for the round they were admitted to. The bell gate is
+        // untouched for everyone without a venue admission ticket.
+        this.insertEntrant(playerId, chosenName, ws);
+        // Same-edge elastic-bot adjustment iff we're still inside the
+        // countdown — the in-time handoff previously reached insertion via
+        // the drain (which adjusts at the edge); a genuinely LATE insert
+        // must not reshape bots mid-fight (they reconcile at the next
+        // bell, per adjustElasticBots' own edge-only law).
+        if (this.host.summary().phase === "countdown") this.adjustElasticBots();
       } else {
         // Production: countdown is the only insertion edge (S2.D.4).
         this.pendingEntrants.set(playerId, chosenName);
@@ -264,12 +297,36 @@ export class WorldHost {
    */
   private drainPendingEntrants(): void {
     if (!this.host) return;
+    // Pre-opened sockets stay parked through the drain unless the venue
+    // admitted their player at this bell (open-doors 1.3): the connection
+    // being open is a latency optimization, not a queue commitment — a
+    // player who queued, pre-opened, then stepped OFF the bell totem must
+    // not be yanked into the arena just because their socket is warm.
+    // With no venue attached (holdEntrant unset) nothing is ever held —
+    // the legacy drain, byte-for-byte.
+    const held: Array<[PlayerId, string | undefined]> = [];
     for (const [playerId, chosenName] of this.pendingEntrants) {
       const ws = this.sockets.get(playerId);
       if (!ws || ws.readyState !== 1) continue;
+      if (this.holdEntrant?.(playerId)) {
+        held.push([playerId, chosenName]);
+        continue;
+      }
       this.insertEntrant(playerId, chosenName, ws);
+      // Fresh hello for the venue-admitted pre-open (open-doors 1.3): the
+      // client held this socket un-consumed while queued, so the roster it
+      // captured at pre-open time is stale. Re-attaching is the existing
+      // reconnect/recycle machinery (same ws → no bye, watermark reset is
+      // harmless pre-input) and hands the adopting client a current
+      // roster. Gated on the admission ticket so the legacy parked-
+      // spectator drain (live ClientLoop, tracked the roster itself) stays
+      // byte-for-byte unchanged.
+      if (this.admittedRecently?.(playerId)) this.host.attachClient(ws);
     }
     this.pendingEntrants.clear();
+    for (const [playerId, chosenName] of held) {
+      this.pendingEntrants.set(playerId, chosenName);
+    }
     this.adjustElasticBots();
   }
 
@@ -477,10 +534,17 @@ export class WorldHost {
       // status frames / the bell drain never silently detach after a
       // cycle end (venue-sprint2-goal S2.B/S2.D).
       onRoundPhaseChange: (prev, next) => {
-        // The bell rings: entering countdown is THE entry edge — admit
-        // everyone the gate parked during the last fight (S2.D).
-        if (next === "countdown") this.drainPendingEntrants();
+        // The bell rings: entering countdown is THE entry edge. The venue
+        // tap runs FIRST (open-doors 1.3 flip — was drain-then-tap):
+        // VenueHost's admission banks cards, duo teams AND admission
+        // tickets on this call, so the drain below can insert pre-opened
+        // queued sockets with everything the bell granted them (a duo
+        // pre-open drained before its teamId existed would spawn
+        // teamless). With no venue attached the tap is undefined and the
+        // edge behaves exactly as before.
         this.onRoundPhaseChange?.(prev, next);
+        // Admit everyone the gate parked during the last fight (S2.D).
+        if (next === "countdown") this.drainPendingEntrants();
       },
     });
   }
@@ -582,14 +646,29 @@ export class WorldHost {
     // (buildHost's own bot construction, not adjustElasticBots — see its
     // doc); they pick up the correct team pairing at the next round-
     // boundary bell within the new cycle.
-    const spawns = [...this.sockets.entries()].map(([pid, ws]) => {
-      const teamId = old.rosterInfo(PlayerId(pid))?.teamId;
-      return {
-        ...this.spawnFor(pid, (ws.data as { name?: string }).name, characterOf(ws)),
-        ...(teamId ? { teamId } : {}),
-      };
-    });
+    //
+    // EXCEPT venue-held pre-opens (open-doors 1.3): a socket the venue is
+    // holding (its player is standing in the lobby without an admission)
+    // must not be force-spawned by a match rollover any more than by a
+    // bell — it re-parks as a pending spectator of the fresh cycle and
+    // keeps waiting for its own bell. attachClient below still re-hellos
+    // it, same as every surviving socket.
+    const holdBack = [...this.sockets.entries()].filter(
+      ([pid]) => this.holdEntrant?.(PlayerId(pid)) === true,
+    );
+    const spawns = [...this.sockets.entries()]
+      .filter(([pid]) => !holdBack.some(([heldPid]) => heldPid === pid))
+      .map(([pid, ws]) => {
+        const teamId = old.rosterInfo(PlayerId(pid))?.teamId;
+        return {
+          ...this.spawnFor(pid, (ws.data as { name?: string }).name, characterOf(ws)),
+          ...(teamId ? { teamId } : {}),
+        };
+      });
     this.pendingEntrants.clear();
+    for (const [pid, ws] of holdBack) {
+      this.pendingEntrants.set(pid, (ws.data as { name?: string }).name);
+    }
     this.host = this.buildHost(spawns);
     old.dispose();
     for (const ws of this.sockets.values()) {
