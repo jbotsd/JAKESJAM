@@ -56,12 +56,22 @@
  *  teamId (class-overhaul-workboard.md chunk 1.1) deliberately has NO bit
  *  here — same treatment as id/characterId (also bit-less; unlike weaponId,
  *  which DOES carry a bit below since a weapon can actually swap mid-match):
- *  teamId is set once at spawn and never mutated afterward, so there's
- *  never an "update" to diff. It reaches a
- *  recipient exactly once, in full, via whichever channel first hands them
- *  the entity (FullSnapshot's whole-WorldState spread, or this file's own
- *  `added` collection-delta path, which copies the entire entity object
- *  rather than a bit-selected patch).
+ *  these normally reach a recipient once, in full, via whichever channel
+ *  first hands them the entity (FullSnapshot's whole-WorldState spread, or
+ *  this file's own `added` collection-delta path, which copies the entire
+ *  entity object rather than a bit-selected patch).
+ *
+ *  2026-07-31 — the original "set once at spawn and never mutated
+ *  afterward" assumption is DEAD: the venue station live-swaps
+ *  characterId mid-session (MatchHost.setPlayerCharacter), which made the
+ *  swap invisible to every already-connected client (their prediction
+ *  kept firing the OLD chassis's verb — the "shooting projectiles as
+ *  Kindled" report). The contract is now enforced structurally instead:
+ *  diffCollection takes an `identityChanged` predicate and escalates an
+ *  entity whose bit-less identity fields changed into `added` (whole-
+ *  entity replacement on the decoder side). If another bit-less field
+ *  ever gains a mutation path, add it to the players predicate in
+ *  encodeDelta below — do NOT hunt for a delta bit (the mask is full).
  *
  * NOTE: For simplicity, since PlayerEntity has ~30 optional/frequent fields,
  * we use a two-number bitmask pair (lo: bits 0-30, hi: bits 0-7) rather than
@@ -413,6 +423,14 @@ function diffCollection<K extends string | number, V>(
   // not a nested { patch } shape — see e.g. diffPlayer/diffProjectile.
   // Cast to EntityUpdate<V> at the assignment site below.
   differ: (p: V, n: V) => Record<string, unknown> | null,
+  // Identity escalation (2026-07-31): when a BIT-LESS field genuinely
+  // changes mid-session (characterId's venue-station live swap broke the
+  // "set once at spawn" assumption the bit budget was built on), no update
+  // patch can carry it — escalate the whole entity through `added`, which
+  // the decoder already applies as whole-entity replacement (`out[k] = v`
+  // in applyCollectionDelta). Self-healing by construction: no mutation
+  // site has to remember the wire exists.
+  identityChanged?: (p: V, n: V) => boolean,
 ): CollectionDelta<K, V> {
   const delta = emptyDelta<K, V>();
 
@@ -420,7 +438,7 @@ function diffCollection<K extends string | number, V>(
   const nextKeys = new Set(Object.keys(next) as K[]);
 
   for (const k of nextKeys) {
-    if (!prevKeys.has(k)) {
+    if (!prevKeys.has(k) || identityChanged?.(prev[k]!, next[k]!)) {
       (delta.added as Record<K, V>)[k] = next[k]!;
     } else {
       const result = differ(prev[k]!, next[k]!);
@@ -453,11 +471,19 @@ export function encodeDelta(prev: WorldState, next: WorldState): DeltaPayload {
     round: next.round,
     chaosModifierIds: next.chaosModifierIds,
     fireHazardTimerMs: next.fireHazardTimerMs,
-    players: diffCollection(prev.players, next.players, (p, n) => {
-      const result = diffPlayer(p, n);
-      if (!result) return null;
-      return { bitsLo: result.bitsLo, bitsHi: result.bitsHi, ...result.patch };
-    }) as CollectionDelta<PlayerId, PlayerEntity>,
+    players: diffCollection(
+      prev.players,
+      next.players,
+      (p, n) => {
+        const result = diffPlayer(p, n);
+        if (!result) return null;
+        return { bitsLo: result.bitsLo, bitsHi: result.bitsHi, ...result.patch };
+      },
+      // The bit-less player identity fields (see this file's header). A
+      // mid-session change (venue-station class swap) rides `added` as a
+      // whole-entity replacement — no delta bit exists or is needed.
+      (p, n) => p.characterId !== n.characterId || p.teamId !== n.teamId,
+    ) as CollectionDelta<PlayerId, PlayerEntity>,
     projectiles: diffCollection(prev.projectiles, next.projectiles, (p, n) => {
       const result = diffProjectile(p, n);
       if (!result) return null;

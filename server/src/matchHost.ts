@@ -750,6 +750,13 @@ export class MatchHost {
         },
       },
     };
+    // Wire visibility of this in-place swap: characterId is bit-less in
+    // the delta encoding, so no update patch can ever carry it — the delta
+    // layer itself escalates an identity-changed entity into `added`
+    // (whole-entity replacement on the decoder) on the next broadcast. See
+    // encodeDelta's `identityChanged` predicate in snapshotDelta.ts
+    // (2026-07-31, "shooting projectiles as Kindled" report) — nothing to
+    // do here.
     // Mirror the roster bookkeeping too (addPlayer's own precedent) — the
     // per-tick WorldState mutation above is the source of truth every
     // renderer/consumer that reads live state already sees, but
