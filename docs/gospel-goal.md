@@ -180,6 +180,29 @@ position (1.2), bell taper (1.5), announcer (4.3), board persistence.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-05 (e) · **Wave 2 merged — E1 COMPLETE, Doors 1.3/1.4/1.5a
+  live.** Six lanes, one smoke.zig EOF-append conflict (resolved
+  base+both-tails), full gates green post-merge: zig 142/142, client
+  1949/0 (128k asserts), server 349/0 both authority modes, typechecks
+  clean. Landed: admission tickets + pre-open hold (1.3 — 5/8 new tests
+  verified-failing pre-fix), pending-entrant overlay ("YOU'RE IN"/NEXT
+  BELL, never ELIMINATED — real sites were ~1198/1343, doc refs were
+  stale) (1.4), lobby touch combat + persistent NEXT BELL countdown
+  (1.5a; taper untouched = Decision 2), classModifiers through the
+  codegen + true merge semantics + class starter bases (stopgap
+  RETIRED), Paper Doubles + real next_entity_id through the bridge,
+  hangout flag in step_world (pin LIFTED, both hosts). **First live
+  boot caught what every suite missed:** the lobby's trainingDummy
+  wasn't in the codec enum → per-tick encode throw + TS fallback;
+  fixed additive both sides + round-trip gate (05dfa0e); live log clean
+  since. Host restarted twice (bot-only), dist + sim.wasm live.
+  NEW E-items from the wave: world.zig homing-at-integration passes
+  empty player arrays (homing never turns under wasm — reachable now
+  via priest tendrils); hangout dummy melee/edge-arc alternates
+  unported (per-swing dedupe blocker); zero-damage cosmetic
+  hit-confirm events dropped on wasm hangout path. E2 flip is now
+  prerequisite-free: next = headless bot soak under wasm authority,
+  then flip with kill-switch.
 - 2026-08-05 (d) · **Track P: 2026-07-31 replay STUDIED** (first of the
   footage queue) — 3 windows rendered via the host's own headless
   pipeline, motion-analyzed, full-res verified. Findings in

@@ -185,7 +185,12 @@ precedent as convergence-goal.md.
   all 9 classModifiers-codegen-gap cards now cross (8 via a generalized
   `patchClassModifierGapFields` stopgap in fireConfigShared.ts, Stolen
   Fangs' leech already had one — parity in
-  classModifierGapFieldsParity.test.ts); hitscan's shooter-side amp chain +
+  classModifierGapFieldsParity.test.ts) — **UPDATE 2026-08-05
+  (gospel-goal Track E1, merged 9f73e17): the stopgap era is OVER —
+  classModifiers + class starter bases + TS's true merge semantics now
+  cross via the Zig codegen itself and both patch functions are
+  retired; the parity gate walks all 9 cards x 4 classes with no patch
+  active, plus all 104 cards x 4 classes in weaponBuildParity**; hitscan's shooter-side amp chain +
   Ghost Guard evasion and mirror-shield retrace are now ported (parity in
   hitscanZ5ScopeCutsParity.test.ts) and impact-AOE routing is ported for
   the player-hit case. Follow-up pass (2026-07-28) closed decoy/destructible

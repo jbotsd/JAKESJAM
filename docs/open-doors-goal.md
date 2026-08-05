@@ -135,16 +135,38 @@ tell you "ELIMINATED" before you ever spawned.
       Fight Night funnel keeps its ask, aimed at someone who now cares).
       "Maybe later" becomes localStorage with a cooldown, not per-tab.
       ⚠ DECISION 1 — needs Jake's sign-off before build.
-- [ ] 1.3 **Fix the admission race.** Pre-open the arena socket while queued
+- [x] 1.3 **Fix the admission race.** DONE 2026-08-05 (lane
+      track-d/admission-race, merged 7e5639c) — server-authoritative
+      admission tickets (30 s TTL, late-arriving sockets insert at ANY
+      phase instead of parking) + client pre-open hold (spectator-grade
+      socket while queued, upgraded at the countdown edge); venue tap
+      reordered before the pending drain so duo teams/cards exist at
+      insertion. 8 new server tests, 5 verified-failing pre-fix; bare
+      WorldHost byte-identical (legacy pins green). Original item: Pre-open the arena socket while queued
       (spectator-grade), so `venue-admitted` → insertion never loses the 3 s
       countdown window (`venueHost.ts:353-355`, `worldHost.ts:241-253`).
       Acceptance: an admitted player is ALWAYS inserted at the bell they were
       admitted for, on a cold cache, on a phone.
-- [ ] 1.4 **A never-spawned player is never told they died.** Pending-entrant
+- [x] 1.4 **A never-spawned player is never told they died.** DONE
+      2026-08-05 (lane track-d/pending-entrant, merged baa2538) — real
+      bug sites were OnlineMatchScene ~1198 (isDead read an absent
+      roster entry as a corpse) + the death block ~1343 (this doc's line
+      refs were stale); new tested deathOverlayPresentation module
+      routes never-spawned to a pending variant ("YOU'RE IN" / bout in
+      progress / NEXT BELL wait), no eliminated/soul-reclaimed announcer
+      keys, seal hidden. Original item: Pending-entrant
       state gets its own overlay copy (NEXT BELL + spectate framing), never
       "ELIMINATED", never the eliminated/soul-reclaimed announcer calls
       (`OnlineMatchScene.ts:1118,1264-1313`).
-- [ ] 1.5 **Make the bell wait survivable:** touch combat in the lobby
+- [x] 1.5 **Make the bell wait survivable** (except the taper —
+      Decision 2, untouched): DONE 2026-08-05 (lane track-d/bell-wait,
+      merged b2f151b) — venue touch mounts full combat controls (mask
+      dropped, dummies hittable on phones; aim-assist deliberately NOT
+      mirrored — it would steer off PvP-immune-lobby dummies), and a
+      persistent top-center NEXT BELL countdown from second zero
+      (honest "--:--" until first status frame, ~ on upper bounds).
+      Flagged pre-existing gap: venue KEYBOARD lacks Emission/dash
+      binds that touch now exposes. Original item: touch combat in the lobby
       (remove the walk-only mask, `HangoutScene.ts:1256-1259` — dummies are
       unhittable on the platform with the shortest attention span), and a
       visible next-bell countdown from second zero. Consider a round-cap
