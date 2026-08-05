@@ -79,7 +79,12 @@ result but does not gate it.
       world (2.7 MB) and venue (3.9 MB) music at `main.ts:1257,1277,1288` plus
       the 4 MB splash video = ~13.3 MB before any gameplay. Load venue/world
       tracks on surface entry; `preload="metadata"` + poster for the video.
-- [ ] 0.5 **Splash CTA above the fold at 393×852.** Open since mobile wave 1
+- [x] 0.5 **Splash CTA above the fold at 393×852.** DONE 2026-08-05
+      (e35112e) — the 4-viewport pass showed 393×852 was ALREADY healthy
+      (Lobby-button CTA promotion fixed it); the real fail was short
+      desktop: 1280×700 clipped LOBBY + the button row at the fold. New
+      height-scoped media tier fixes it; all four viewports verified by
+      screenshot. Original item: Open since mobile wave 1
       (`docs/mobile-experience.md:199-205`); the uncommitted Discord row
       pushes it further down. Re-verify all four canonical viewports.
 - [ ] 0.6 **Doc-drift purge:** finish-line F2 note (the 34-candidate slate at
@@ -93,7 +98,11 @@ result but does not gate it.
       ("READY FOR NEXT CYCLE"); clip-recording disclosure line in the first
       match (default-on upload is only disclosed deep in Settings —
       `clipConsent.ts:1-4`).
-- [ ] 0.8 **Tree hygiene:** delete root `.clips/` stub files, empty
+- [x] 0.8 **Tree hygiene:** DONE 2026-08-05 — all targets verified then
+      deleted (root .clips incl. its kept/ of 5-byte stubs, empty
+      .clips-host, 9 obs .bak, __pycache__, BOTH splash-theme.m4a.bak
+      copies — the public/ one re-copied into dist every build — and the
+      83 MB portal artifacts). All untracked; no commit. Original item: delete root `.clips/` stub files, empty
       `server/.clips-host/`, `stream-kit/obs/*.bak-*` ×9, `__pycache__/`,
       `splash-theme.m4a.bak` in dist, and the orphaned 83 MB of portal
       artifacts (`dist-portal/`, `jakesjam-portal-build.zip`) now that the
