@@ -36,6 +36,16 @@ export type DeathOverlayShowOpts = {
    *  format/order as RoundBanner's score line, so the two screens read as
    *  one system. Omit to hide the row entirely (e.g. solo practice). */
   scoreLine?: string | null;
+  /** One-shot copy override for THIS show() only (Doors 1.4: the
+   *  pending-entrant NEXT BELL framing reuses this surface). Absent fields
+   *  fall back to the constructor copy on every show(), so a pending show
+   *  can never leak its copy into a later real death. */
+  title?: string;
+  subtitle?: string;
+  /** "pending" drops the death-coded treatment — extinguished-vessel seal
+   *  hidden, title in the score-line cyan instead of kill-rose — because
+   *  this player hasn't died (or even fought yet). Default "death". */
+  variant?: "death" | "pending";
 };
 
 /** What the big number means right now — label + whether it's an upper-bound
@@ -50,11 +60,16 @@ export type DeathTimer = {
 export class DeathOverlay {
   private root: HTMLDivElement;
   private stage: HTMLDivElement;
+  private sealEl: HTMLDivElement;
+  private titleEl: HTMLDivElement;
+  private subEl: HTMLDivElement;
   private timerEl: HTMLSpanElement;
   private timerLabelEl: HTMLDivElement;
   private tipEl: HTMLDivElement;
   private scoreEl: HTMLDivElement;
   private shareBtn: HTMLButtonElement;
+  private readonly defaultTitle: string;
+  private readonly defaultSubtitle: string;
   private destroyed = false;
 
   /**
@@ -74,6 +89,8 @@ export class DeathOverlay {
   // the other (Jake, mid-playtest: "why does that happen its not even
   // clear").
   constructor(title = "ELIMINATED", subtitle = "Watch the arena — you're going back in") {
+    this.defaultTitle = title;
+    this.defaultSubtitle = subtitle;
     this.root = document.createElement("div");
     this.root.dataset.deathOverlay = "true";
     Object.assign(this.root.style, ROOT_STYLE);
@@ -89,14 +106,17 @@ export class DeathOverlay {
     const sealCore = document.createElement("div");
     Object.assign(sealCore.style, SEAL_CORE_STYLE);
     seal.appendChild(sealCore);
+    this.sealEl = seal;
 
     const titleEl = document.createElement("div");
     titleEl.textContent = title;
     Object.assign(titleEl.style, TITLE_STYLE);
+    this.titleEl = titleEl;
 
     const sub = document.createElement("div");
     sub.textContent = subtitle;
     Object.assign(sub.style, SUB_STYLE);
+    this.subEl = sub;
 
     this.timerLabelEl = document.createElement("div");
     Object.assign(this.timerLabelEl.style, TIMER_LABEL_STYLE);
@@ -130,6 +150,17 @@ export class DeathOverlay {
 
   show(timer: number | DeathTimer, opts: DeathOverlayShowOpts = {}): void {
     if (this.destroyed) return;
+    // Copy + variant treatment re-resolved on EVERY show — an override is
+    // one-shot by construction (Doors 1.4: the pending-entrant show must
+    // never bleed into the next real death, and vice versa).
+    this.titleEl.textContent = opts.title ?? this.defaultTitle;
+    this.subEl.textContent = opts.subtitle ?? this.defaultSubtitle;
+    const pending = opts.variant === "pending";
+    // Nothing died: no extinguished-vessel seal, and the title borrows the
+    // score line's cyan (SCORE_STYLE) instead of the kill-rose.
+    this.sealEl.style.display = pending ? "none" : "flex";
+    this.titleEl.style.color = pending ? PENDING_TITLE_COLOR : TITLE_COLOR;
+    this.titleEl.style.textShadow = pending ? PENDING_TITLE_GLOW : TITLE_GLOW;
     this.applyTimer(timer);
     const tip = opts.tip?.trim() || "";
     this.tipEl.textContent = tip;
@@ -262,13 +293,20 @@ const SEAL_CORE_STYLE: Partial<CSSStyleDeclaration> = {
   boxShadow: "0 0 10px rgba(251, 113, 133, 0.7)",
 };
 
+const TITLE_COLOR = "#fb7185";
+const TITLE_GLOW = "0 0 14px rgba(251, 113, 133, 0.45)";
+/** Pending-entrant variant: score-line cyan (SCORE_STYLE below) — venue
+ *  information voice, not the kill-rose death voice. */
+const PENDING_TITLE_COLOR = "#8ff8ff";
+const PENDING_TITLE_GLOW = "0 0 14px rgba(143, 248, 255, 0.30)";
+
 const TITLE_STYLE: Partial<CSSStyleDeclaration> = {
   fontFamily: "'Space Grotesk', Inter, Arial, sans-serif",
   fontSize: "26px",
   fontWeight: "900",
   letterSpacing: "0.2em",
-  color: "#fb7185",
-  textShadow: "0 0 14px rgba(251, 113, 133, 0.45)",
+  color: TITLE_COLOR,
+  textShadow: TITLE_GLOW,
 };
 
 const SUB_STYLE: Partial<CSSStyleDeclaration> = {
