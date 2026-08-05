@@ -3,7 +3,7 @@
 *The single answer to "what is this game right now and what needs
 finishing." Updated in the same commit as the change that dates it —
 if a claim here is stale, fixing it is part of the offending commit's
-cleanup, not a separate chore. Last touched: 2026-07-23.*
+cleanup, not a separate chore. Last touched: 2026-08-05.*
 
 ## What is LIVE (play.elyad.io)
 
@@ -37,6 +37,10 @@ cleanup, not a separate chore. Last touched: 2026-07-23.*
 
 ## The active goal docs (in priority order)
 
+*(2026-08-05: the live orchestration doc is now **gospel-goal.md**, with
+**open-doors-goal.md** as its Track D detail — the list below is the
+2026-07-23 snapshot, kept for the acceptance criteria it points at.)*
+
 1. **convergence-goal.md** — the one-big-/goal orchestration contract
    (2026-07-23): Zig-first suite + cohesion P2/P3/P4 as parallel tracks,
    built for ultracode workflow fan-out. Its Status block is the tracker
@@ -49,10 +53,11 @@ cleanup, not a separate chore. Last touched: 2026-07-23.*
 
 ## What needs finishing (live pointer)
 
-See **cohesion-goal.md § Status** — that block is maintained
-commit-by-commit. Standing AWAITING-JAKE rows: P1.7 chassis feel-check,
-P2.5 voice-pass sign-off, Syzygist color-slot call, Six Axes Phase 4
-playtest.
+See **gospel-goal.md § Status** (and open-doors-goal.md's STATUS for
+Track D) — those blocks are maintained commit-by-commit; cohesion-goal's
+tracks closed with convergence-goal. Standing AWAITING-JAKE rows: P1.7
+chassis feel-check, P2.5 voice-pass sign-off, Syzygist color-slot call,
+Six Axes Phase 4 playtest.
 
 ## Parked / deferred (deliberate, not forgotten)
 
@@ -60,8 +65,12 @@ playtest.
 - Duos queue as Syzygist's peak (classes-goal.md) — venue ships FFA today.
 - Wasm world-step parity for the six-axes/chassis TS-side folds (recorded
   beside the existing B2 gap).
-- Poki compatibility work — email gate stays; CrazyGames first
-  (feedback memory: ship now, let Poki review be the signal).
+- Web portals — **DROPPED, not parked** (2026-08-01 decision): the
+  CrazyGames SDK integration was deleted from the client (10b359e,
+  2026-08-05) and no Poki submission will follow. The launch strategy is
+  the **Fight Night email-gate funnel** (open-doors-goal.md; outreach
+  material banked in `marketing/`, on hold by Jake's order). The email
+  gate stays.
 
 ## Where history lives
 
