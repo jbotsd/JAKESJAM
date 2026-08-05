@@ -1169,18 +1169,27 @@ export class HangoutScene extends Phaser.Scene {
     // Duos-queue hint (classes-goal.md "Venue integration") — a persistent
     // corner label, not a modal: the toggle is meant to be set once before
     // ever walking to the bell, not negotiated in a dialog each visit.
-    if (!this.duoHintText) {
-      this.duoHintText = this.add
-        .text(20, duoHintY, "", {
-          color: "#9aa5b1",
-          fontFamily: "'Space Mono', 'Courier New', monospace",
-          fontSize: "13px",
-        })
-        .setScrollFactor(0)
-        .setDepth(1000);
+    // Doors 0.7 honest-copy: [T] is a keyboard affordance — touch-primary
+    // players have no T to press, so advertising it there is a dishonest
+    // hint. Hide rather than skip-create (isTouchPrimary() re-reads on
+    // genuine orientation/resize signals); desktop behavior is unchanged.
+    if (isTouchPrimary()) {
+      this.duoHintText?.setVisible(false);
+    } else {
+      if (!this.duoHintText) {
+        this.duoHintText = this.add
+          .text(20, duoHintY, "", {
+            color: "#9aa5b1",
+            fontFamily: "'Space Mono', 'Courier New', monospace",
+            fontSize: "13px",
+          })
+          .setScrollFactor(0)
+          .setDepth(1000);
+      }
+      this.duoHintText.setVisible(true);
+      this.duoHintText.setPosition(20, duoHintY);
+      this.duoHintText.setText(`[T] DUO QUEUE: ${this.duoIntentLocal ? "ON" : "OFF"}`);
     }
-    this.duoHintText.setPosition(20, duoHintY);
-    this.duoHintText.setText(`[T] DUO QUEUE: ${this.duoIntentLocal ? "ON" : "OFF"}`);
   }
 
   // ---------------- Update ----------------
