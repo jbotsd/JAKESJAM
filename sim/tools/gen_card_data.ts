@@ -14,7 +14,8 @@
 // logic lives here or in weapon_build.zig as of this pass).
 
 import { crystalRoundsCards } from "../../client/src/sim/data/cards.ts";
-import { starterWeapon } from "../../client/src/sim/data/weapons.ts";
+import { starterWeapon, baseWeaponForClass } from "../../client/src/sim/data/weapons.ts";
+import type { ClassId, WeaponCardModifier } from "../../client/src/sim/data/cardTypes.ts";
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -154,7 +155,22 @@ function visibleSignatureBump(
 // modifier to bump).
 function cardModLiteral(card: (typeof crystalRoundsCards)[number]): string {
   if (!card.modifier) return ".{}";
-  const mod = card.modifier;
+  return modLiteral(card, card.modifier);
+}
+
+// Emit ONE CardMod literal for an arbitrary effective modifier — either the
+// card's class-blind `modifier` (cardModLiteral above) or one of its
+// `classModifiers` per-class overrides (classModsLiteral below). The
+// visible-signature bump machinery runs against the SAME modifier the TS
+// runtime would hand `applyCard` for that resolution (weaponBuild.ts:
+// `ensureVisibleCardSignature(build, card, modifier)` receives the
+// EFFECTIVE modifier, so a low-signature override like stolen-fangs'
+// priest `{ leechFraction: 0.08 }` gets the cosmetic bump even though the
+// class-blind modifier wouldn't).
+function modLiteral(
+  card: (typeof crystalRoundsCards)[number],
+  mod: WeaponCardModifier,
+): string {
   const p = mod.projectile;
   const bump = visibleSignatureBump(card, mod);
   const parts: string[] = [];
@@ -168,6 +184,12 @@ function cardModLiteral(card: (typeof crystalRoundsCards)[number]): string {
   add("spread_radians_add", f(mod.spreadRadiansAdd, 0), "0.0");
   add("spread_radians_set", optF(mod.spreadRadians), "null");
   add("max_health_add", f(mod.maxHealthAdd, 0), "0.0");
+  // Passive Tithe leech (Track E1 classModifiers port) — mirrors applyCard's
+  // `leechFraction` max-fold (weaponBuild.ts:361) + clampBuild's
+  // `roundTo(clamp(0, 0.5), 3)` tail. Only stolen-fangs' priest override
+  // sets it today, but it's a first-class CardMod field so any future card
+  // (class-blind or class-gated) crosses without a host-side patch.
+  add("leech_fraction", f(mod.leechFraction, 0), "0.0");
   add("move_speed_mul", f(mod.moveSpeedMultiplier, 1), "1.0");
   add("parry_cover_mul", f(mod.parryCoverMultiplier, 1), "1.0");
   add("parry_cooldown_mul", f(mod.parryCooldownMultiplier, 1), "1.0");
@@ -188,18 +210,26 @@ function cardModLiteral(card: (typeof crystalRoundsCards)[number]): string {
   add("proj_split_add", f(mod.projectileSplitAdd, 0), "0.0");
   add("proj_homing_add", f(mod.projectileHomingStrengthAdd, 0), "0.0");
   if (p || bump) {
-    // sizeMultiplier/speedMultiplier/shape fold in ensureVisibleCardSignature's
-    // cosmetic bump (see visibleSignatureBump above) — a card with no visible
-    // signature of its own still needs to read as "something changed" in the
-    // arena, matching the TS runtime path exactly.
-    const sizeMul = (p?.sizeMultiplier ?? 1) * (bump?.sizeMultiplier ?? 1);
-    const speedMul = (p?.speedMultiplier ?? 1) * (bump?.speedMultiplier ?? 1);
-    const shape = p?.shape ?? bump?.shape;
-    add("proj_speed_mul", f(speedMul, 1), "1.0");
-    add("proj_size_mul", f(sizeMul, 1), "1.0");
+    // ensureVisibleCardSignature's cosmetic bump (see visibleSignatureBump
+    // above) crosses on its OWN channel now (proj_*_bump), no longer folded
+    // into proj_size_mul/proj_speed_mul/proj_shape: TS composes the REAL
+    // projectile multipliers via `orthogonalScale` (mixed grow/shrink =
+    // log-blend, not product) and the bump via PLAIN multiplication
+    // (weaponBuild.ts:426-433), and the shape bump is a DIRECT overwrite
+    // (`build.projectile.shape = icon`) where the real p.shape goes through
+    // `preferShape`. One baked product literal can't honor both algebras
+    // once the running value isn't 1 (multi-card hands; paladin's 1.15
+    // base size) — Track E1's true-merge-semantics port needs them split.
+    // Exactly one channel is ever live per card: a card with a set shape or
+    // a non-1 sizeMultiplier HAS a visible signature, so its bump is null.
+    add("proj_speed_mul", f(p?.speedMultiplier, 1), "1.0");
+    add("proj_size_mul", f(p?.sizeMultiplier, 1), "1.0");
+    add("proj_speed_bump", f(bump?.speedMultiplier, 1), "1.0");
+    add("proj_size_bump", f(bump?.sizeMultiplier, 1), "1.0");
+    add("proj_shape_bump", optI(idx(SHAPE, bump?.shape)), "null");
     add("proj_recoil_mul", f(p?.recoilMultiplier, 1), "1.0");
     add("proj_lifetime_mul", f(p?.lifetimeMultiplier, 1), "1.0");
-    add("proj_shape", optI(idx(SHAPE, shape)), "null");
+    add("proj_shape", optI(idx(SHAPE, p?.shape)), "null");
     add("proj_element", optI(idx(ELEMENT, p?.element)), "null");
     add("proj_pathing", optI(idx(PATHING, p?.pathing)), "null");
     add("proj_impact", optI(idx(IMPACT, p?.impact)), "null");
@@ -261,12 +291,82 @@ function cardMetaLiteral(card: (typeof crystalRoundsCards)[number]): string {
   return `.{ ${parts.join(", ")} }`;
 }
 
-function cardLiteral(card: (typeof crystalRoundsCards)[number]): string {
-  return `    .{ .id = "${card.id}", .mod = ${cardModLiteral(card)}, .meta = ${cardMetaLiteral(card)} },`;
+// classModifiers (cardTypes.ts:455 — "REPLACES `modifier` wholesale" for a
+// class with an authored entry; absent classes fall back to the class-blind
+// `modifier`, mirroring weaponBuild.ts's `effectiveCardModifier` exactly).
+// Track E1 (gospel-goal.md): this is the codegen port that retires
+// fireConfigShared.ts's `patchClassModifierGapFields` stopgap — each
+// authored override becomes a full CardMod literal of its own, run through
+// the SAME modLiteral pipeline (visible-signature bump included) as the
+// class-blind modifier.
+function classModsLiteral(card: (typeof crystalRoundsCards)[number]): string | null {
+  const cm = card.classModifiers;
+  if (!cm) return null;
+  const parts: string[] = [];
+  for (const cls of Object.keys(cm)) {
+    assertKnown(CLASS_ID, cls, "classModifiers class", card.id);
+  }
+  // Emit in CLASS_ID declaration order (stable output regardless of the
+  // authored object-key order in cards.ts).
+  for (const cls of CLASS_ID) {
+    const override = cm[cls as ClassId];
+    if (!override) continue;
+    parts.push(`.${zigIdent(cls)} = ${modLiteral(card, override)}`);
+  }
+  return parts.length ? `.{ ${parts.join(", ")} }` : null;
 }
 
-const sw = starterWeapon;
-const swp = sw.projectile;
+function cardLiteral(card: (typeof crystalRoundsCards)[number]): string {
+  const cm = classModsLiteral(card);
+  const cmPart = cm ? `, .class_mods = ${cm}` : "";
+  return `    .{ .id = "${card.id}", .mod = ${cardModLiteral(card)}, .meta = ${cardMetaLiteral(card)}${cmPart} },`;
+}
+
+// One BaseWeapon literal (weapons.ts WeaponDefinition → the sim-relevant
+// subset — the exact field set the old class-blind `StarterBase` carried).
+// Used for `starter_base` AND the per-class starter overrides (Track E1:
+// priest's tendril rework + paladin's heavy bolt cross to Zig now, closing
+// the "per-class starter STAT overrides remain an unported, recorded gap"
+// note weapon_build.zig's base_delivery seed carried).
+function baseLiteral(w: typeof starterWeapon): string {
+  const wp = w.projectile;
+  return `.{
+    .delivery = ${idx(DELIVERY, w.delivery)},
+    .damage = ${f(w.damage, 0)},
+    .fire_rate = ${f(w.fireRate, 0)},
+    .projectile_speed = ${f(w.projectileSpeed, 0)},
+    .projectile_lifetime_seconds = ${f(w.projectileLifetimeSeconds, 0)},
+    .spread_radians = ${f(w.spreadRadians, 0)},
+    .recoil_impulse = ${f(w.recoilImpulse, 0)},
+    .p_shape = ${idx(SHAPE, wp.shape)},
+    .p_count = ${f(wp.count, 0)},
+    .p_range_px = ${f(wp.rangePx, 0)},
+    .p_speed_mul = ${f(wp.speedMultiplier, 1)},
+    .p_size_mul = ${f(wp.sizeMultiplier, 1)},
+    .p_recoil_mul = ${f(wp.recoilMultiplier, 1)},
+    .p_pathing = ${idx(PATHING, wp.pathing)},
+    .p_element = ${idx(ELEMENT, wp.element)},
+    .p_impact = ${idx(IMPACT, wp.impact)},
+    .p_lifetime_mul = ${f(wp.lifetimeMultiplier, 1)},
+    .p_gravity_scale = ${f(wp.gravityScale, 0)},
+    .p_homing_strength = ${f(wp.homingStrength, 0)},
+    .p_acceleration_mul = ${f(wp.accelerationMultiplier, 0)},
+    .p_bounces = ${f(wp.bounces, 0)},
+    .p_impact_radius = ${f(wp.impactRadiusPx, 0)},
+    .p_pierce_count = ${f(wp.pierceCount, 0)},
+    .p_split_count = ${f(wp.splitCount, 0)},
+    .p_slow_mul = ${f(wp.slowMultiplier, 1)},
+}`;
+}
+
+// Object IDENTITY with starterWeapon (not stat equality) decides null —
+// mirroring weapons.ts's CLASS_BASE_WEAPON fallback exactly
+// (classExpression.test.ts asserts wizard/ninja share the OBJECT).
+const classBaseRows = CLASS_ID.map((cls) => {
+  const w = baseWeaponForClass(cls as ClassId);
+  if (w === starterWeapon) return `    null, // ${cls}: shares starter_base`;
+  return `    ${baseLiteral(w).split("\n").join("\n    ")}, // ${cls}`;
+}).join("\n");
 // Every card gets an entry now — not just the ones with a `modifier`. The
 // 45 pure-ability cards (no modifier) still need a CardMeta (classId/
 // unique/maxStacks/rarity/active) to be reachable from Zig; their CardMod
@@ -291,6 +391,12 @@ pub const CardMod = struct {
     spread_radians_add: f64 = 0,
     spread_radians_set: ?f64 = null,
     max_health_add: f64 = 0,
+    /// Passive Tithe leech (weaponBuild.ts applyCard:361 max-fold; clamped
+    /// + rounded to 3dp in clampBuild). Crosses to
+    /// ResolvedFireConfig.leech_fraction via weapon_build.zig — the field
+    /// the host-side patchLeechFraction stopgap used to write (retired,
+    /// Track E1 classModifiers port).
+    leech_fraction: f64 = 0,
     move_speed_mul: f64 = 1,
     parry_cover_mul: f64 = 1,
     parry_cooldown_mul: f64 = 1,
@@ -312,6 +418,17 @@ pub const CardMod = struct {
     proj_homing_add: f64 = 0,
     proj_speed_mul: f64 = 1,
     proj_size_mul: f64 = 1,
+    /// ensureVisibleCardSignature's cosmetic factors (weaponBuild.ts:426-433)
+    /// — PLAIN-multiplied in TS, unlike proj_speed_mul/proj_size_mul's
+    /// orthogonalScale fold, so they cross on their own channel. Exactly one
+    /// of (real multiplier, bump) is ever non-default per card — a non-1
+    /// real multiplier IS a visible signature, which suppresses the bump.
+    proj_speed_bump: f64 = 1,
+    proj_size_bump: f64 = 1,
+    /// The bump's icon-shape overwrite — a DIRECT set in TS
+    /// (\`build.projectile.shape = icon\`), unlike proj_shape's preferShape
+    /// merge. Same one-channel-per-card exclusivity as the factors above.
+    proj_shape_bump: ?u8 = null,
     proj_recoil_mul: f64 = 1,
     proj_lifetime_mul: f64 = 1,
     proj_shape: ?u8 = null,
@@ -437,36 +554,100 @@ pub const CardMeta = struct {
     active: ?CardActive = null,
 };
 
-pub const CardEntry = struct { id: []const u8, mod: CardMod, meta: CardMeta };
+/// Per-class CardMod overrides (cardTypes.ts's \`classModifiers\` — Track E1
+/// classModifiers port). Semantics mirror weaponBuild.ts's
+/// \`effectiveCardModifier\` EXACTLY: an authored entry REPLACES the
+/// class-blind \`CardEntry.mod\` WHOLESALE for that class; a class with no
+/// entry falls back to \`mod\` — total and silent-by-design, never a merge
+/// and never another class's reading. Each override literal ran through the
+/// same codegen pipeline as \`mod\` (visible-signature bump included), so
+/// resolving with it is byte-equivalent to TS resolving the same override.
+pub const ClassMods = struct {
+${CLASS_ID.map((v) => `    ${zigIdent(v)}: ?CardMod = null,`).join("\n")}
 
-/// Starter-pistol base (the only weapon) — mirrors weapons.ts.
-pub const StarterBase = struct {
-    pub const delivery: u8 = ${idx(DELIVERY, sw.delivery)};
-    pub const damage: f64 = ${f(sw.damage, 0)};
-    pub const fire_rate: f64 = ${f(sw.fireRate, 0)};
-    pub const projectile_speed: f64 = ${f(sw.projectileSpeed, 0)};
-    pub const projectile_lifetime_seconds: f64 = ${f(sw.projectileLifetimeSeconds, 0)};
-    pub const spread_radians: f64 = ${f(sw.spreadRadians, 0)};
-    pub const recoil_impulse: f64 = ${f(sw.recoilImpulse, 0)};
-    pub const p_shape: u8 = ${idx(SHAPE, swp.shape)};
-    pub const p_count: f64 = ${f(swp.count, 0)};
-    pub const p_range_px: f64 = ${f(swp.rangePx, 0)};
-    pub const p_speed_mul: f64 = ${f(swp.speedMultiplier, 1)};
-    pub const p_size_mul: f64 = ${f(swp.sizeMultiplier, 1)};
-    pub const p_recoil_mul: f64 = ${f(swp.recoilMultiplier, 1)};
-    pub const p_pathing: u8 = ${idx(PATHING, swp.pathing)};
-    pub const p_element: u8 = ${idx(ELEMENT, swp.element)};
-    pub const p_impact: u8 = ${idx(IMPACT, swp.impact)};
-    pub const p_lifetime_mul: f64 = ${f(swp.lifetimeMultiplier, 1)};
-    pub const p_gravity_scale: f64 = ${f(swp.gravityScale, 0)};
-    pub const p_homing_strength: f64 = ${f(swp.homingStrength, 0)};
-    pub const p_acceleration_mul: f64 = ${f(swp.accelerationMultiplier, 0)};
-    pub const p_bounces: f64 = ${f(swp.bounces, 0)};
-    pub const p_impact_radius: f64 = ${f(swp.impactRadiusPx, 0)};
-    pub const p_pierce_count: f64 = ${f(swp.pierceCount, 0)};
-    pub const p_split_count: f64 = ${f(swp.splitCount, 0)};
-    pub const p_slow_mul: f64 = ${f(swp.slowMultiplier, 1)};
+    pub fn forClass(self: *const ClassMods, class_id: ClassId) ?CardMod {
+        return switch (class_id) {
+${CLASS_ID.map((v) => `            .${zigIdent(v)} => self.${zigIdent(v)},`).join("\n")}
+        };
+    }
 };
+
+pub const CardEntry = struct {
+    id: []const u8,
+    mod: CardMod,
+    meta: CardMeta,
+    /// Per-class wholesale overrides of \`mod\` — see ClassMods. All-null for
+    /// every card without an authored \`classModifiers\` in cards.ts.
+    class_mods: ClassMods = .{},
+};
+
+/// weaponBuild.ts \`effectiveCardModifier\`: the modifier THIS class resolves
+/// the card with — the class's wholesale override when authored, else the
+/// class-blind \`mod\`. \`class_id == null\` = class-blind resolution,
+/// byte-identical to the pre-class-era behavior.
+pub fn effectiveCardMod(entry: *const CardEntry, class_id: ?ClassId) CardMod {
+    if (class_id) |c| {
+        if (entry.class_mods.forClass(c)) |m| return m;
+    }
+    return entry.mod;
+}
+
+/// One class's starter-weapon base stats (weapons.ts WeaponDefinition,
+/// sim-relevant subset — the exact field set the old class-blind
+/// \`StarterBase\` struct-of-consts carried, now a value type so the
+/// class-gated starter weapons cross too).
+pub const BaseWeapon = struct {
+    delivery: u8,
+    damage: f64,
+    fire_rate: f64,
+    projectile_speed: f64,
+    projectile_lifetime_seconds: f64,
+    spread_radians: f64,
+    recoil_impulse: f64,
+    p_shape: u8,
+    p_count: f64,
+    p_range_px: f64,
+    p_speed_mul: f64,
+    p_size_mul: f64,
+    p_recoil_mul: f64,
+    p_pathing: u8,
+    p_element: u8,
+    p_impact: u8,
+    p_lifetime_mul: f64,
+    p_gravity_scale: f64,
+    p_homing_strength: f64,
+    p_acceleration_mul: f64,
+    p_bounces: f64,
+    p_impact_radius: f64,
+    p_pierce_count: f64,
+    p_split_count: f64,
+    p_slow_mul: f64,
+};
+
+/// weapons.ts \`starterWeapon\` — the wizard/ninja/class-blind base.
+pub const starter_base: BaseWeapon = ${baseLiteral(starterWeapon)};
+
+/// weapons.ts CLASS_BASE_WEAPON (via \`baseWeaponForClass\`): full per-class
+/// starter-STAT overrides, indexed by @intFromEnum(ClassId). null = the
+/// class shares \`starter_base\` (wizard/ninja — deliberately the SAME
+/// object in TS; classExpression.test.ts asserts object identity). Track
+/// E1 classModifiers port: closes the "per-class starter STAT overrides
+/// remain an unported, recorded gap" residual — priest's homing-tendril
+/// rework and paladin's heavier bolt now resolve in-sim, delivery seed
+/// included (the old \`base_delivery\` class switch in weapon_build.zig is
+/// subsumed by these literals' own \`.delivery\`).
+pub const class_bases = [${CLASS_ID.length}]?BaseWeapon{
+${classBaseRows}
+};
+
+/// weapons.ts \`baseWeaponForClass\`: the class's authored starter override,
+/// else the shared \`starter_base\` (null / no entry = class-blind).
+pub fn baseWeaponForClass(class_id: ?ClassId) BaseWeapon {
+    if (class_id) |c| {
+        if (class_bases[@intFromEnum(c)]) |b| return b;
+    }
+    return starter_base;
+}
 
 pub const cards = [_]CardEntry{
 ${rows}
@@ -492,6 +673,7 @@ const std = @import("std");
 writeFileSync(resolve(import.meta.dir, "../src/data/cards_gen.zig"), out);
 const withMod = crystalRoundsCards.filter((c) => c.modifier).length;
 const withActive = crystalRoundsCards.filter((c) => c.active).length;
+const withClassMods = crystalRoundsCards.filter((c) => c.classModifiers).length;
 console.log(
-  `cards_gen.zig: ${crystalRoundsCards.length} cards (${withMod} with modifier, ${withActive} with active)`,
+  `cards_gen.zig: ${crystalRoundsCards.length} cards (${withMod} with modifier, ${withActive} with active, ${withClassMods} with classModifiers)`,
 );

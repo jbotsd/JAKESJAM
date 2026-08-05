@@ -10,6 +10,12 @@ pub const CardMod = struct {
     spread_radians_add: f64 = 0,
     spread_radians_set: ?f64 = null,
     max_health_add: f64 = 0,
+    /// Passive Tithe leech (weaponBuild.ts applyCard:361 max-fold; clamped
+    /// + rounded to 3dp in clampBuild). Crosses to
+    /// ResolvedFireConfig.leech_fraction via weapon_build.zig — the field
+    /// the host-side patchLeechFraction stopgap used to write (retired,
+    /// Track E1 classModifiers port).
+    leech_fraction: f64 = 0,
     move_speed_mul: f64 = 1,
     parry_cover_mul: f64 = 1,
     parry_cooldown_mul: f64 = 1,
@@ -31,6 +37,17 @@ pub const CardMod = struct {
     proj_homing_add: f64 = 0,
     proj_speed_mul: f64 = 1,
     proj_size_mul: f64 = 1,
+    /// ensureVisibleCardSignature's cosmetic factors (weaponBuild.ts:426-433)
+    /// — PLAIN-multiplied in TS, unlike proj_speed_mul/proj_size_mul's
+    /// orthogonalScale fold, so they cross on their own channel. Exactly one
+    /// of (real multiplier, bump) is ever non-default per card — a non-1
+    /// real multiplier IS a visible signature, which suppresses the bump.
+    proj_speed_bump: f64 = 1,
+    proj_size_bump: f64 = 1,
+    /// The bump's icon-shape overwrite — a DIRECT set in TS
+    /// (`build.projectile.shape = icon`), unlike proj_shape's preferShape
+    /// merge. Same one-channel-per-card exclusivity as the factors above.
+    proj_shape_bump: ?u8 = null,
     proj_recoil_mul: f64 = 1,
     proj_lifetime_mul: f64 = 1,
     proj_shape: ?u8 = null,
@@ -207,36 +224,187 @@ pub const CardMeta = struct {
     active: ?CardActive = null,
 };
 
-pub const CardEntry = struct { id: []const u8, mod: CardMod, meta: CardMeta };
+/// Per-class CardMod overrides (cardTypes.ts's `classModifiers` — Track E1
+/// classModifiers port). Semantics mirror weaponBuild.ts's
+/// `effectiveCardModifier` EXACTLY: an authored entry REPLACES the
+/// class-blind `CardEntry.mod` WHOLESALE for that class; a class with no
+/// entry falls back to `mod` — total and silent-by-design, never a merge
+/// and never another class's reading. Each override literal ran through the
+/// same codegen pipeline as `mod` (visible-signature bump included), so
+/// resolving with it is byte-equivalent to TS resolving the same override.
+pub const ClassMods = struct {
+    wizard: ?CardMod = null,
+    ninja: ?CardMod = null,
+    paladin: ?CardMod = null,
+    priest: ?CardMod = null,
 
-/// Starter-pistol base (the only weapon) — mirrors weapons.ts.
-pub const StarterBase = struct {
-    pub const delivery: u8 = 1;
-    pub const damage: f64 = 12.0;
-    pub const fire_rate: f64 = 4.0;
-    pub const projectile_speed: f64 = 650.0;
-    pub const projectile_lifetime_seconds: f64 = 1.2;
-    pub const spread_radians: f64 = 0.03;
-    pub const recoil_impulse: f64 = 95.0;
-    pub const p_shape: u8 = 3;
-    pub const p_count: f64 = 1.0;
-    pub const p_range_px: f64 = 720.0;
-    pub const p_speed_mul: f64 = 1.0;
-    pub const p_size_mul: f64 = 1.0;
-    pub const p_recoil_mul: f64 = 1.0;
-    pub const p_pathing: u8 = 0;
-    pub const p_element: u8 = 0;
-    pub const p_impact: u8 = 0;
-    pub const p_lifetime_mul: f64 = 1.0;
-    pub const p_gravity_scale: f64 = 0.0;
-    pub const p_homing_strength: f64 = 0.0;
-    pub const p_acceleration_mul: f64 = 0.0;
-    pub const p_bounces: f64 = 0.0;
-    pub const p_impact_radius: f64 = 0.0;
-    pub const p_pierce_count: f64 = 0.0;
-    pub const p_split_count: f64 = 0.0;
-    pub const p_slow_mul: f64 = 1.0;
+    pub fn forClass(self: *const ClassMods, class_id: ClassId) ?CardMod {
+        return switch (class_id) {
+            .wizard => self.wizard,
+            .ninja => self.ninja,
+            .paladin => self.paladin,
+            .priest => self.priest,
+        };
+    }
 };
+
+pub const CardEntry = struct {
+    id: []const u8,
+    mod: CardMod,
+    meta: CardMeta,
+    /// Per-class wholesale overrides of `mod` — see ClassMods. All-null for
+    /// every card without an authored `classModifiers` in cards.ts.
+    class_mods: ClassMods = .{},
+};
+
+/// weaponBuild.ts `effectiveCardModifier`: the modifier THIS class resolves
+/// the card with — the class's wholesale override when authored, else the
+/// class-blind `mod`. `class_id == null` = class-blind resolution,
+/// byte-identical to the pre-class-era behavior.
+pub fn effectiveCardMod(entry: *const CardEntry, class_id: ?ClassId) CardMod {
+    if (class_id) |c| {
+        if (entry.class_mods.forClass(c)) |m| return m;
+    }
+    return entry.mod;
+}
+
+/// One class's starter-weapon base stats (weapons.ts WeaponDefinition,
+/// sim-relevant subset — the exact field set the old class-blind
+/// `StarterBase` struct-of-consts carried, now a value type so the
+/// class-gated starter weapons cross too).
+pub const BaseWeapon = struct {
+    delivery: u8,
+    damage: f64,
+    fire_rate: f64,
+    projectile_speed: f64,
+    projectile_lifetime_seconds: f64,
+    spread_radians: f64,
+    recoil_impulse: f64,
+    p_shape: u8,
+    p_count: f64,
+    p_range_px: f64,
+    p_speed_mul: f64,
+    p_size_mul: f64,
+    p_recoil_mul: f64,
+    p_pathing: u8,
+    p_element: u8,
+    p_impact: u8,
+    p_lifetime_mul: f64,
+    p_gravity_scale: f64,
+    p_homing_strength: f64,
+    p_acceleration_mul: f64,
+    p_bounces: f64,
+    p_impact_radius: f64,
+    p_pierce_count: f64,
+    p_split_count: f64,
+    p_slow_mul: f64,
+};
+
+/// weapons.ts `starterWeapon` — the wizard/ninja/class-blind base.
+pub const starter_base: BaseWeapon = .{
+    .delivery = 1,
+    .damage = 12.0,
+    .fire_rate = 4.0,
+    .projectile_speed = 650.0,
+    .projectile_lifetime_seconds = 1.2,
+    .spread_radians = 0.03,
+    .recoil_impulse = 95.0,
+    .p_shape = 3,
+    .p_count = 1.0,
+    .p_range_px = 720.0,
+    .p_speed_mul = 1.0,
+    .p_size_mul = 1.0,
+    .p_recoil_mul = 1.0,
+    .p_pathing = 0,
+    .p_element = 0,
+    .p_impact = 0,
+    .p_lifetime_mul = 1.0,
+    .p_gravity_scale = 0.0,
+    .p_homing_strength = 0.0,
+    .p_acceleration_mul = 0.0,
+    .p_bounces = 0.0,
+    .p_impact_radius = 0.0,
+    .p_pierce_count = 0.0,
+    .p_split_count = 0.0,
+    .p_slow_mul = 1.0,
+};
+
+/// weapons.ts CLASS_BASE_WEAPON (via `baseWeaponForClass`): full per-class
+/// starter-STAT overrides, indexed by @intFromEnum(ClassId). null = the
+/// class shares `starter_base` (wizard/ninja — deliberately the SAME
+/// object in TS; classExpression.test.ts asserts object identity). Track
+/// E1 classModifiers port: closes the "per-class starter STAT overrides
+/// remain an unported, recorded gap" residual — priest's homing-tendril
+/// rework and paladin's heavier bolt now resolve in-sim, delivery seed
+/// included (the old `base_delivery` class switch in weapon_build.zig is
+/// subsumed by these literals' own `.delivery`).
+pub const class_bases = [4]?BaseWeapon{
+    null, // wizard: shares starter_base
+    null, // ninja: shares starter_base
+    .{
+        .delivery = 0,
+        .damage = 15.0,
+        .fire_rate = 3.0,
+        .projectile_speed = 520.0,
+        .projectile_lifetime_seconds = 1.2,
+        .spread_radians = 0.03,
+        .recoil_impulse = 95.0,
+        .p_shape = 3,
+        .p_count = 1.0,
+        .p_range_px = 720.0,
+        .p_speed_mul = 1.0,
+        .p_size_mul = 1.15,
+        .p_recoil_mul = 1.0,
+        .p_pathing = 0,
+        .p_element = 0,
+        .p_impact = 0,
+        .p_lifetime_mul = 1.0,
+        .p_gravity_scale = 0.0,
+        .p_homing_strength = 0.0,
+        .p_acceleration_mul = 0.0,
+        .p_bounces = 0.0,
+        .p_impact_radius = 0.0,
+        .p_pierce_count = 0.0,
+        .p_split_count = 0.0,
+        .p_slow_mul = 1.0,
+    }, // paladin
+    .{
+        .delivery = 0,
+        .damage = 2.5,
+        .fire_rate = 4.0,
+        .projectile_speed = 305.0,
+        .projectile_lifetime_seconds = 2.75,
+        .spread_radians = 0.45,
+        .recoil_impulse = 95.0,
+        .p_shape = 3,
+        .p_count = 3.0,
+        .p_range_px = 720.0,
+        .p_speed_mul = 1.0,
+        .p_size_mul = 1.0,
+        .p_recoil_mul = 1.0,
+        .p_pathing = 4,
+        .p_element = 2,
+        .p_impact = 0,
+        .p_lifetime_mul = 1.0,
+        .p_gravity_scale = 0.0,
+        .p_homing_strength = 5.0,
+        .p_acceleration_mul = 0.0,
+        .p_bounces = 0.0,
+        .p_impact_radius = 0.0,
+        .p_pierce_count = 0.0,
+        .p_split_count = 0.0,
+        .p_slow_mul = 1.0,
+    }, // priest
+};
+
+/// weapons.ts `baseWeaponForClass`: the class's authored starter override,
+/// else the shared `starter_base` (null / no entry = class-blind).
+pub fn baseWeaponForClass(class_id: ?ClassId) BaseWeapon {
+    if (class_id) |c| {
+        if (class_bases[@intFromEnum(c)]) |b| return b;
+    }
+    return starter_base;
+}
 
 pub const cards = [_]CardEntry{
     .{ .id = "raycast-prism", .mod = .{ .damage_mul = 0.9, .recoil_mul = 0.8, .delivery = 1, .proj_range_px_set = 880.0, .proj_impact_radius_set = 12.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .delivery = true } } },
@@ -251,7 +419,7 @@ pub const cards = [_]CardEntry{
     .{ .id = "shard-bloom", .mod = .{ .damage_mul = 0.62, .fire_rate_mul = 0.82, .recoil_mul = 1.24, .spread_radians_add = 0.6632251157578452, .delivery = 0, .proj_count_add = 5.0, .proj_size_mul = 0.78, .proj_range_px_set = 390.0 }, .meta = .{ .max_stacks = 2, .rarity = .rare, .buckets = .{ .quantity = true } } },
     .{ .id = "arc-shards", .mod = .{ .projectile_speed_mul = 0.86, .delivery = 0, .proj_pathing = 1, .proj_gravity_scale_set = 560.0 }, .meta = .{ .rarity = .common, .buckets = .{ .trajectory = true } } },
     .{ .id = "deadfall-mortar", .mod = .{ .fire_rate_mul = 0.8, .projectile_speed_mul = 0.6, .delivery = 0, .proj_size_mul = 1.15, .proj_pathing = 1, .proj_impact = 1, .proj_gravity_scale_set = 2100.0, .proj_impact_radius_set = 82.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .trajectory = true, .impact = true } } },
-    .{ .id = "seeker-facets", .mod = .{ .projectile_speed_mul = 0.82, .delivery = 0, .proj_homing_add = 1.2, .proj_pathing = 4, .proj_homing_strength_set = 4.4 }, .meta = .{ .max_stacks = 4, .rarity = .rare, .buckets = .{ .trajectory = true } } },
+    .{ .id = "seeker-facets", .mod = .{ .projectile_speed_mul = 0.82, .delivery = 0, .proj_homing_add = 1.2, .proj_pathing = 4, .proj_homing_strength_set = 4.4 }, .meta = .{ .max_stacks = 4, .rarity = .rare, .buckets = .{ .trajectory = true } }, .class_mods = .{ .wizard = .{ .damage_mul = 0.9, .projectile_speed_mul = 0.82, .delivery = 0, .proj_homing_add = 1.2, .proj_pathing = 4, .proj_homing_strength_set = 4.4 }, .paladin = .{ .proj_pathing = 0, .proj_homing_strength_set = 0.0 }, .priest = .{ .projectile_speed_mul = 0.9, .delivery = 0, .proj_homing_add = 1.2, .proj_pathing = 4, .proj_homing_strength_set = 4.4 } } },
     .{ .id = "micro-seekers", .mod = .{ .damage_mul = 0.78, .projectile_speed_mul = 0.9, .spread_radians_add = 0.2792526803190927, .delivery = 0, .proj_count_add = 2.0, .proj_homing_add = 0.9, .proj_size_mul = 0.74, .proj_pathing = 4, .proj_homing_strength_set = 3.2 }, .meta = .{ .max_stacks = 5, .rarity = .uncommon, .buckets = .{ .trajectory = true, .quantity = true } } },
     .{ .id = "bouncy-prism", .mod = .{ .delivery = 0, .proj_bounce_add = 4.0, .proj_pathing = 2 }, .meta = .{ .max_stacks = 4, .rarity = .uncommon, .buckets = .{ .trajectory = true } } },
     .{ .id = "extra-bounce", .mod = .{ .delivery = 0, .proj_bounce_add = 1.0, .proj_pathing = 2 }, .meta = .{ .max_stacks = 8, .rarity = .common, .buckets = .{ .trajectory = true } } },
@@ -264,13 +432,13 @@ pub const cards = [_]CardEntry{
     .{ .id = "one-more-shard", .mod = .{ .damage_mul = 0.94, .spread_radians_add = 0.12217304763960307, .proj_count_add = 1.0 }, .meta = .{ .max_stacks = 8, .rarity = .common, .buckets = .{ .quantity = true } } },
     .{ .id = "wide-barrage", .mod = .{ .damage_mul = 0.7, .fire_rate_mul = 0.94, .recoil_mul = 1.12, .spread_radians_add = 0.767944870877505, .proj_count_add = 3.0, .proj_size_mul = 0.82 }, .meta = .{ .max_stacks = 5, .rarity = .uncommon, .buckets = .{ .quantity = true } } },
     .{ .id = "orbiting-satellites", .mod = .{ .fire_rate_mul = 1.12 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .quantity = true } } },
-    .{ .id = "cluster-bomb", .mod = .{ .fire_rate_mul = 0.72, .proj_split_add = 6.0, .proj_size_mul = 1.12 }, .meta = .{ .max_stacks = 3, .rarity = .rare, .buckets = .{ .quantity = true } } },
+    .{ .id = "cluster-bomb", .mod = .{ .fire_rate_mul = 0.72, .proj_split_add = 6.0, .proj_size_mul = 1.12 }, .meta = .{ .max_stacks = 3, .rarity = .rare, .buckets = .{ .quantity = true } }, .class_mods = .{ .wizard = .{ .fire_rate_mul = 0.72, .proj_split_add = 3.0, .proj_size_mul = 1.12 }, .paladin = .{ .fire_rate_mul = 0.72, .proj_split_add = 2.0, .proj_size_mul = 1.35 } } },
     .{ .id = "explosive-facet", .mod = .{ .damage_mul = 0.92, .proj_impact = 1, .proj_impact_radius_set = 64.0 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .impact = true } } },
     .{ .id = "sticky-shards", .mod = .{ .projectile_speed_mul = 0.8, .proj_impact = 2, .proj_impact_radius_set = 48.0 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .impact = true } } },
     .{ .id = "pierce-chain", .mod = .{ .proj_impact = 3, .proj_pierce_count_set = 3.0, .proj_split_count_set = 2.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .impact = true } } },
-    .{ .id = "slow-field", .mod = .{ .damage_mul = 0.86, .proj_impact = 4, .proj_impact_radius_set = 70.0, .proj_slow_mul_set = 0.58 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .impact = true } } },
-    .{ .id = "molten-core", .mod = .{ .proj_element = 2, .proj_impact_radius_set = 42.0 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .element = true } } },
-    .{ .id = "frost-prism", .mod = .{ .proj_element = 3, .proj_impact = 4, .proj_slow_mul_set = 0.68 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .element = true } } },
+    .{ .id = "slow-field", .mod = .{ .damage_mul = 0.86, .proj_impact = 4, .proj_impact_radius_set = 70.0, .proj_slow_mul_set = 0.58 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .impact = true } }, .class_mods = .{ .priest = .{ .damage_mul = 0.76, .proj_impact = 4, .proj_impact_radius_set = 92.0, .proj_slow_mul_set = 0.46 } } },
+    .{ .id = "molten-core", .mod = .{ .proj_element = 2, .proj_impact_radius_set = 42.0 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .element = true } }, .class_mods = .{ .wizard = .{ .proj_element = 2, .proj_impact_radius_set = 42.0 }, .paladin = .{ .proj_element = 2, .proj_impact_radius_set = 58.0 } } },
+    .{ .id = "frost-prism", .mod = .{ .proj_element = 3, .proj_impact = 4, .proj_slow_mul_set = 0.68 }, .meta = .{ .unique = true, .rarity = .uncommon, .buckets = .{ .element = true } }, .class_mods = .{ .wizard = .{ .proj_element = 3, .proj_impact = 4, .proj_slow_mul_set = 0.68 }, .paladin = .{ .proj_element = 3, .proj_impact = 4, .proj_slow_mul_set = 0.55 } } },
     .{ .id = "voltaic-spark", .mod = .{ .projectile_speed_mul = 1.08, .proj_element = 4, .proj_impact = 3, .proj_pierce_count_set = 1.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .element = true } } },
     .{ .id = "void-fracture", .mod = .{ .damage_mul = 1.08, .proj_element = 5, .proj_pierce_count_set = 2.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .element = true } } },
     .{ .id = "radiant-overload", .mod = .{ .damage_mul = 1.14, .fire_rate_mul = 0.82, .proj_size_mul = 1.14, .proj_element = 6, .proj_impact_radius_set = 58.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .element = true } } },
@@ -278,7 +446,7 @@ pub const cards = [_]CardEntry{
     .{ .id = "needle-compressor", .mod = .{ .fire_rate_mul = 1.14, .proj_size_mul = 0.86 }, .meta = .{ .max_stacks = 5, .rarity = .common, .buckets = .{ .utility = true } } },
     .{ .id = "heavy-coolant", .mod = .{ .fire_rate_mul = 0.88, .proj_size_mul = 1.22 }, .meta = .{ .max_stacks = 6, .rarity = .common, .buckets = .{ .utility = true } } },
     .{ .id = "essence-battery", .mod = .{ .proj_size_mul = 1.1, .proj_element = 0 }, .meta = .{ .max_stacks = 4, .rarity = .common, .buckets = .{ .utility = true } } },
-    .{ .id = "crystal-plating", .mod = .{ .max_health_add = 20.0, .move_speed_mul = 0.98, .proj_size_mul = 1.14, .proj_shape = 3, .proj_element = 0 }, .meta = .{ .max_stacks = 5, .rarity = .common, .buckets = .{ .utility = true } } },
+    .{ .id = "crystal-plating", .mod = .{ .max_health_add = 20.0, .move_speed_mul = 0.98, .proj_size_mul = 1.14, .proj_shape = 3, .proj_element = 0 }, .meta = .{ .max_stacks = 5, .rarity = .common, .buckets = .{ .utility = true } }, .class_mods = .{ .wizard = .{ .max_health_add = 20.0, .move_speed_mul = 0.97, .proj_size_mul = 1.14, .proj_shape = 3, .proj_element = 0 }, .paladin = .{ .max_health_add = 20.0, .move_speed_mul = 0.99, .proj_size_mul = 1.2, .proj_shape = 3, .proj_element = 0 } } },
     .{ .id = "wide-parry", .mod = .{ .parry_cover_mul = 1.28, .proj_size_mul = 1.04, .proj_element = 0 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon, .buckets = .{ .utility = true } } },
     .{ .id = "quick-parry", .mod = .{ .dash_cooldown_mul = 0.86, .proj_speed_mul = 1.06, .proj_size_mul = 0.94, .proj_shape = 2 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon, .buckets = .{ .utility = true } } },
     .{ .id = "overcharge", .mod = .{ .fire_rate_mul = 0.72, .proj_size_mul = 1.42, .proj_impact_radius_set = 76.0 }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .utility = true } } },
@@ -289,15 +457,15 @@ pub const cards = [_]CardEntry{
     .{ .id = "sprint-coils", .mod = .{ .move_speed_mul = 1.18 }, .meta = .{ .max_stacks = 3, .rarity = .uncommon, .buckets = .{ .utility = true } } },
     .{ .id = "glide-membrane", .mod = .{ .gravity_mul = 0.74 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon, .buckets = .{ .utility = true } } },
     .{ .id = "lead-boots", .mod = .{ .move_speed_mul = 1.06, .gravity_mul = 1.35 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon, .buckets = .{ .utility = true } } },
-    .{ .id = "spring-heel", .mod = .{ .jump_mul = 1.18, .wall_jump_mul = 1.16 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon, .buckets = .{ .utility = true } } },
+    .{ .id = "spring-heel", .mod = .{ .jump_mul = 1.18, .wall_jump_mul = 1.16 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon, .buckets = .{ .utility = true } }, .class_mods = .{ .wizard = .{ .jump_mul = 1.1, .wall_jump_mul = 1.1 }, .paladin = .{ .jump_mul = 1.04, .wall_jump_mul = 1.14 } } },
     .{ .id = "gecko-grip", .mod = .{ .wall_slide_mul = 0.45 }, .meta = .{ .max_stacks = 2, .rarity = .uncommon, .buckets = .{ .utility = true } } },
-    .{ .id = "double-jump", .mod = .{ .air_jumps_add = 1.0 }, .meta = .{ .max_stacks = 3, .rarity = .rare, .buckets = .{ .utility = true } } },
+    .{ .id = "double-jump", .mod = .{ .air_jumps_add = 1.0 }, .meta = .{ .max_stacks = 3, .rarity = .rare, .buckets = .{ .utility = true } }, .class_mods = .{ .wizard = .{ .air_jumps_add = 1.0 }, .paladin = .{ .air_jumps_add = 1.0 } } },
     .{ .id = "blink-dash", .mod = .{ .dash_charges_add = 1.0 }, .meta = .{ .max_stacks = 2, .rarity = .rare, .buckets = .{ .utility = true } } },
-    .{ .id = "bulwark-core", .mod = .{ .shield_charge_mul = 1.6, .proj_size_mul = 1.08, .proj_shape = 3 }, .meta = .{ .max_stacks = 3, .rarity = .uncommon, .buckets = .{ .utility = true } } },
-    .{ .id = "rapid-capacitor", .mod = .{ .shield_recharge_mul = 1.8, .proj_size_mul = 1.08, .proj_shape = 0 }, .meta = .{ .max_stacks = 3, .rarity = .uncommon, .buckets = .{ .utility = true } } },
+    .{ .id = "bulwark-core", .mod = .{ .shield_charge_mul = 1.6, .proj_size_bump = 1.08, .proj_shape_bump = 3 }, .meta = .{ .max_stacks = 3, .rarity = .uncommon, .buckets = .{ .utility = true } } },
+    .{ .id = "rapid-capacitor", .mod = .{ .shield_recharge_mul = 1.8, .proj_size_bump = 1.08, .proj_shape_bump = 0 }, .meta = .{ .max_stacks = 3, .rarity = .uncommon, .buckets = .{ .utility = true } } },
     .{ .id = "aim-barrier", .mod = .{ .shield_charge_mul = 2.2, .directional_shield = true }, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .utility = true } } },
     .{ .id = "riot-mirror", .mod = .{ .shield_charge_mul = 1.7, .mirror_shield = true, .directional_shield = true, .proj_element = 0 }, .meta = .{ .unique = true, .rarity = .legendary, .buckets = .{ .utility = true } } },
-    .{ .id = "stolen-fangs", .mod = .{ .proj_element = 0 }, .meta = .{ .unique = true, .rarity = .legendary, .buckets = .{ .utility = true } } },
+    .{ .id = "stolen-fangs", .mod = .{ .proj_element = 0 }, .meta = .{ .unique = true, .rarity = .legendary, .buckets = .{ .utility = true } }, .class_mods = .{ .priest = .{ .leech_fraction = 0.08, .proj_size_bump = 1.08, .proj_shape_bump = 5 } } },
     .{ .id = "crimson-tithe", .mod = .{}, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .ability = true }, .active = .{ .kind = .crimson_tithe, .cooldown_ms = 14000.0, .duration_ms = 3000.0 } } },
     .{ .id = "shadow-step", .mod = .{}, .meta = .{ .unique = true, .rarity = .rare, .buckets = .{ .ability = true }, .active = .{ .kind = .shadow_step, .cooldown_ms = 9000.0 } } },
     .{ .id = "veil-of-nought", .mod = .{}, .meta = .{ .unique = true, .rarity = .legendary, .buckets = .{ .ability = true }, .active = .{ .kind = .veil_of_nought, .cooldown_ms = 16000.0, .duration_ms = 1500.0 } } },

@@ -8,10 +8,82 @@ const std = @import("std");
 const gen = @import("data/cards_gen.zig");
 const world_state = @import("world_state.zig");
 
-const B = gen.StarterBase;
-
 fn round2(v: f64) f64 {
     return @round(v * 100.0) / 100.0;
+}
+
+// ── True merge semantics (Track E1 classModifiers port) ──────────────────
+// weaponBuild.ts's mergeProjectileModifier / applyCard don't last-write
+// categorical identities or scalar sets — they rank-prefer, max, min, or
+// orthogonally blend. The old direct-set folds here were only ever
+// exercised from the class-blind starter base, whose values are the
+// weakest in every dimension (element crystal, pathing straight, impact
+// none, count 1, spread 0.03, homing 0), so "incoming wins" coincided
+// with TS on every single-card parity walk. The class-gated bases break
+// that coincidence (priest: element fire, pathing homing rank 5, count 3,
+// spread 0.45; paladin: sizeMultiplier 1.15), and multi-card hands always
+// could — so the real semantics are ported 1:1 below.
+
+/// weaponBuild.ts PATHING_RANK, by pathing enum index (0=straight ..
+/// 7=accelerate; 5=anti-homing is unlisted in TS and falls back to 0 via
+/// `?? 0`). Shared by preferPathing and the delivery-feel branches.
+const PATHING_RANK = [8]u8{ 0, 3, 1, 2, 5, 0, 4, 1 };
+
+/// weaponBuild.ts WEAK_SHAPES ("default starter shapes — safe to
+/// overwrite"): circle (0) and hexagon (3), by shape enum index.
+const WEAK_SHAPE = [7]bool{ true, false, false, true, false, false, false };
+
+/// weaponBuild.ts ELEMENT_RANK by element enum index (crystal, neutral,
+/// fire, ice, lightning, void, radiant, electric, toxic, sticky,
+/// explosive). electric/toxic are unlisted in TS (`?? 0`).
+const ELEMENT_RANK = [11]u8{ 1, 0, 3, 3, 3, 4, 4, 0, 0, 2, 2 };
+
+/// weaponBuild.ts IMPACT_RANK by impact enum index (none, explosive,
+/// sticky, pierce-chain, slow-field).
+const IMPACT_RANK = [5]u8{ 0, 4, 2, 3, 1 };
+
+fn preferShape(current: u8, incoming: u8) u8 {
+    const cw = WEAK_SHAPE[current];
+    const iw = WEAK_SHAPE[incoming];
+    if (cw and !iw) return incoming;
+    if (iw and !cw) return current;
+    if (current == incoming) return current;
+    if (cw) return incoming;
+    return current;
+}
+
+fn preferPathing(current: u8, incoming: u8) u8 {
+    return if (PATHING_RANK[incoming] >= PATHING_RANK[current]) incoming else current;
+}
+
+fn preferElement(current: u8, incoming: u8) u8 {
+    if (incoming == 1) return current; // neutral never overwrites
+    if (current == 1) return incoming;
+    return if (ELEMENT_RANK[incoming] > ELEMENT_RANK[current]) incoming else current;
+}
+
+fn preferImpact(current: u8, incoming: u8) u8 {
+    return if (IMPACT_RANK[incoming] >= IMPACT_RANK[current]) incoming else current;
+}
+
+/// weaponBuild.ts orthogonalScale: same-direction factors multiply;
+/// mixed grow/shrink log-blend (stronger |log| at 1.0, weaker at 0.55) so
+/// opposing cards don't cancel to mush. @log/@exp here vs JS Math.log/exp
+/// may differ in the last ULP on the (rare) mixed branch — recorded
+/// tolerance-level residual, vs. the plain product's guaranteed wrongness.
+fn orthogonalScale(current: f64, incoming: f64) f64 {
+    if (incoming == 1) return current;
+    if (current == 1) return incoming;
+    const cur_grow = current >= 1;
+    const in_grow = incoming >= 1;
+    if (cur_grow == in_grow) return current * incoming;
+    const a = @log(@max(1e-6, current));
+    const b = @log(@max(1e-6, incoming));
+    const abs_a = @abs(a);
+    const abs_b = @abs(b);
+    const w_a: f64 = if (abs_a >= abs_b) 1 else 0.55;
+    const w_b: f64 = if (abs_b > abs_a) 1 else 0.55;
+    return @exp(a * w_a + b * w_b);
 }
 
 /// archetype → class dev-id. Mirrors cardTypes.ts's ARCHETYPE_CLASS_ID map
@@ -37,9 +109,17 @@ pub fn resolveBuild(card_ids: []const []const u8, class_id: ?gen.ClassId) world_
     var n: usize = 0;
     for (card_ids) |id| {
         if (n >= buf.len) break;
-        if (gen.cardMod(id)) |m| {
-            buf[n] = m;
-            n += 1;
+        // Track E1 classModifiers port: pick the EFFECTIVE mod for this
+        // class (the card's wholesale per-class override when authored,
+        // else the class-blind mod) — mirrors weaponBuild.ts's
+        // `effectiveCardModifier` at the exact same point in the pipeline
+        // (per card, before any folding).
+        for (&gen.cards) |*c| {
+            if (std.mem.eql(u8, c.id, id)) {
+                buf[n] = gen.effectiveCardMod(c, class_id);
+                n += 1;
+                break;
+            }
         }
     }
     return resolveMods(buf[0..n], class_id);
@@ -52,7 +132,8 @@ pub fn resolveByIndices(indices: []const u8, class_id: ?gen.ClassId) world_state
     for (indices) |idx| {
         if (n >= buf.len) break;
         if (idx < gen.cards.len) {
-            buf[n] = gen.cards[idx].mod;
+            // Same effective-mod selection as resolveBuild above (Track E1).
+            buf[n] = gen.effectiveCardMod(&gen.cards[idx], class_id);
             n += 1;
         }
     }
@@ -60,16 +141,30 @@ pub fn resolveByIndices(indices: []const u8, class_id: ?gen.ClassId) world_state
 }
 
 fn resolveMods(mods: []const gen.CardMod, class_id: ?gen.ClassId) world_state.ResolvedFireConfig {
-    var damage = B.damage;
-    var fire_rate = B.fire_rate;
-    var projectile_speed = B.projectile_speed;
-    var spread = B.spread_radians;
+    // Track E1 classModifiers port: the WHOLE base weapon is class-gated
+    // now, mirroring weapons.ts's `baseWeaponForClass` (priest's tendril
+    // rework / paladin's heavier bolt; wizard/ninja/class-blind share
+    // `starter_base`). This closes the old "per-class starter STAT
+    // overrides remain an unported, recorded gap" residual — the previous
+    // `base_delivery` class switch here covered ONLY the delivery seed;
+    // the per-class literals in cards_gen.zig carry it inside `.delivery`.
+    const base = gen.baseWeaponForClass(class_id);
+    var damage = base.damage;
+    var fire_rate = base.fire_rate;
+    var projectile_speed = base.projectile_speed;
+    var spread = base.spread_radians;
     // Recoil (Track Z0c Item A): two independent channels, exactly like
     // weaponBuild.ts — the build-level impulse (base × top-level card
     // recoilMultiplier, :278) and the per-projectile multiplier (:428).
-    var recoil_impulse = B.recoil_impulse;
-    var p_recoil_mul = B.p_recoil_mul;
+    var recoil_impulse = base.recoil_impulse;
+    var p_recoil_mul = base.p_recoil_mul;
     var max_health_add: f64 = 0;
+    // Passive Tithe leech (Track E1 classModifiers port) — applyCard's
+    // max-fold (weaponBuild.ts:361, "cap, don't stack unboundedly"),
+    // clamped + rounded below exactly like clampBuild's tail. Replaces
+    // the host-side patchLeechFraction stopgap (fireConfigShared.ts,
+    // retired).
+    var leech: f64 = 0;
     var move_speed_mul: f64 = 1;
     var parry_cover_mul: f64 = 1;
     var parry_cooldown_mul: f64 = 1;
@@ -85,49 +180,36 @@ fn resolveMods(mods: []const gen.CardMod, class_id: ?gen.ClassId) world_state.Re
     var mirror = false;
     var directional = false;
     // Delivery identity (0=projectile, 1=raycast, 2=continuous-beam,
-    // 3=area-pulse) — seeded from the BASE weapon's own delivery (true
-    // hitscan, 2026-07-20: StarterBase.delivery is 1/raycast, not the old
-    // hardcoded-0 default), mirrors weaponBuild.ts's applyCard delivery
-    // merge exactly: a card's delivery only overrides while the CURRENT
-    // value still equals the untouched base default — once a card has
-    // upgraded it away, a later "projectile" (0) card never stomps that
-    // upgrade. See weaponBuild.ts's `applyCard`'s own `baseDelivery` param
-    // doc comment for the full reasoning.
-    //
-    // Track Z1c item 1: the base delivery is CLASS-GATED, mirroring
-    // weapons.ts's `baseWeaponForClass` — priest (priestStarterWeapon)
-    // and paladin (paladinStarterWeapon) both carry an explicit
-    // `delivery: "projectile"` override ("homing tendrils need real
-    // travel time to curve in"); wizard and ninja share `starterWeapon`'s
-    // raycast, and class-blind resolution (`class_id == null`) uses
-    // `starterWeapon` too (TS `baseWeaponForClass(undefined)`). ONLY the
-    // delivery seed is class-gated here — the per-class starter STAT
-    // overrides (priest tendril damage/speed/homing, paladin's heavier
-    // bolt) remain an unported, recorded gap (they predate this cut and
-    // are not delivery-shaped work).
-    const base_delivery: u8 = if (class_id) |c| switch (c) {
-        .priest, .paladin => 0,
-        else => B.delivery,
-    } else B.delivery;
+    // 3=area-pulse) — seeded from the class-gated BASE weapon's own
+    // delivery (Track Z1c item 1, now via `base.delivery` itself: priest/
+    // paladin literals carry the explicit "projectile" override — "homing
+    // tendrils need real travel time to curve in" — while wizard/ninja/
+    // class-blind share starter_base's raycast, true hitscan 2026-07-20).
+    // Mirrors weaponBuild.ts's applyCard delivery merge exactly: a card's
+    // delivery only overrides while the CURRENT value still equals the
+    // untouched base default — once a card has upgraded it away, a later
+    // "projectile" (0) card never stomps that upgrade. See applyCard's own
+    // `baseDelivery` param doc comment for the full reasoning.
+    const base_delivery: u8 = base.delivery;
     var delivery: u8 = base_delivery;
 
-    var p_shape: u8 = B.p_shape;
-    var p_element: u8 = B.p_element;
-    var p_pathing: u8 = B.p_pathing;
-    var p_impact: u8 = B.p_impact;
-    var p_count = B.p_count;
-    var p_range = B.p_range_px;
-    var p_speed_mul = B.p_speed_mul;
-    var p_size_mul = B.p_size_mul;
-    var p_lifetime_mul = B.p_lifetime_mul;
-    var p_gravity_scale = B.p_gravity_scale;
-    var p_homing = B.p_homing_strength;
-    var p_accel_mul = B.p_acceleration_mul;
-    var p_bounces = B.p_bounces;
-    var p_impact_radius = B.p_impact_radius;
-    var p_pierce = B.p_pierce_count;
-    var p_split = B.p_split_count;
-    var p_slow = B.p_slow_mul;
+    var p_shape: u8 = base.p_shape;
+    var p_element: u8 = base.p_element;
+    var p_pathing: u8 = base.p_pathing;
+    var p_impact: u8 = base.p_impact;
+    var p_count = base.p_count;
+    var p_range = base.p_range_px;
+    var p_speed_mul = base.p_speed_mul;
+    var p_size_mul = base.p_size_mul;
+    var p_lifetime_mul = base.p_lifetime_mul;
+    var p_gravity_scale = base.p_gravity_scale;
+    var p_homing = base.p_homing_strength;
+    var p_accel_mul = base.p_acceleration_mul;
+    var p_bounces = base.p_bounces;
+    var p_impact_radius = base.p_impact_radius;
+    var p_pierce = base.p_pierce_count;
+    var p_split = base.p_split_count;
+    var p_slow = base.p_slow_mul;
 
     for (mods) |m| {
         if (m.delivery) |d| {
@@ -138,10 +220,13 @@ fn resolveMods(mods: []const gen.CardMod, class_id: ?gen.ClassId) world_state.Re
         recoil_impulse *= m.recoil_mul;
         projectile_speed *= m.projectile_speed_mul;
         max_health_add += m.max_health_add;
-        move_speed_mul *= m.move_speed_mul;
+        leech = @max(leech, m.leech_fraction);
+        // moveSpeed/gravity accumulate via orthogonalScale in TS
+        // (applyCard:328-341) — mixed grow/shrink stacks must not cancel.
+        move_speed_mul = orthogonalScale(move_speed_mul, m.move_speed_mul);
         parry_cover_mul *= m.parry_cover_mul;
         parry_cooldown_mul *= m.parry_cooldown_mul;
-        gravity_mul *= m.gravity_mul;
+        gravity_mul = orthogonalScale(gravity_mul, m.gravity_mul);
         shield_charge_mul *= m.shield_charge_mul;
         shield_recharge_mul *= m.shield_recharge_mul;
         jump_mul *= m.jump_mul;
@@ -152,31 +237,46 @@ fn resolveMods(mods: []const gen.CardMod, class_id: ?gen.ClassId) world_state.Re
         dash_cooldown_mul *= m.dash_cooldown_mul;
         directional = directional or m.directional_shield;
         mirror = mirror or m.mirror_shield;
-        if (m.spread_radians_set) |s| spread = s;
+        // Spread: never shrink a prior wide fan with a later absolute set
+        // (applyCard:364-367).
+        if (m.spread_radians_set) |s| spread = @max(spread, s);
         spread += m.spread_radians_add;
-        // Projectile merge: set-fields override, then the top-level adds.
-        if (m.proj_shape) |v| p_shape = v;
-        if (m.proj_element) |v| p_element = v;
-        if (m.proj_pathing) |v| p_pathing = v;
-        if (m.proj_impact) |v| p_impact = v;
-        if (m.proj_count_set) |v| p_count = v;
-        if (m.proj_range_px_set) |v| p_range = v;
-        if (m.proj_gravity_scale_set) |v| p_gravity_scale = v;
-        if (m.proj_homing_strength_set) |v| p_homing = v;
-        if (m.proj_acceleration_mul_set) |v| p_accel_mul = v;
-        if (m.proj_bounces_set) |v| p_bounces = v;
-        if (m.proj_impact_radius_set) |v| p_impact_radius = v;
-        if (m.proj_pierce_count_set) |v| p_pierce = v;
-        if (m.proj_split_count_set) |v| p_split = v;
-        if (m.proj_slow_mul_set) |v| p_slow = v;
-        p_speed_mul *= m.proj_speed_mul;
-        p_size_mul *= m.proj_size_mul;
+        // Projectile merge — mergeProjectileModifier's real semantics
+        // (prefer/max/min/extreme/direct per field, see that function's own
+        // doc comment), then the top-level adds, then the cosmetic bump
+        // channel (ensureVisibleCardSignature — plain multiply + direct
+        // shape overwrite, runs LAST in applyCard, same order here).
+        if (m.proj_shape) |v| p_shape = preferShape(p_shape, v);
+        if (m.proj_element) |v| p_element = preferElement(p_element, v);
+        if (m.proj_pathing) |v| p_pathing = preferPathing(p_pathing, v);
+        if (m.proj_impact) |v| p_impact = preferImpact(p_impact, v);
+        if (m.proj_count_set) |v| p_count = @max(p_count, v);
+        if (m.proj_range_px_set) |v| p_range = v; // direct: a set may be a nerf
+        if (m.proj_gravity_scale_set) |v| {
+            // Keep the more extreme |g| away from 0 when both set.
+            if (@abs(v) >= @abs(p_gravity_scale)) p_gravity_scale = v;
+        }
+        if (m.proj_homing_strength_set) |v| p_homing = @max(p_homing, v);
+        if (m.proj_acceleration_mul_set) |v| p_accel_mul = v; // direct (i-rounds ruling)
+        if (m.proj_bounces_set) |v| p_bounces = @max(p_bounces, v);
+        if (m.proj_impact_radius_set) |v| p_impact_radius = @max(p_impact_radius, v);
+        if (m.proj_pierce_count_set) |v| p_pierce = @max(p_pierce, v);
+        if (m.proj_split_count_set) |v| p_split = @max(p_split, v);
+        // Slow: lower multiplier = stronger slow — keep the stronger one.
+        if (m.proj_slow_mul_set) |v| p_slow = @min(p_slow, v);
+        p_speed_mul = orthogonalScale(p_speed_mul, m.proj_speed_mul);
+        p_size_mul = orthogonalScale(p_size_mul, m.proj_size_mul);
         p_recoil_mul *= m.proj_recoil_mul;
-        p_lifetime_mul *= m.proj_lifetime_mul;
+        p_lifetime_mul = orthogonalScale(p_lifetime_mul, m.proj_lifetime_mul);
         p_count += m.proj_count_add;
         p_bounces += m.proj_bounce_add;
         p_split += m.proj_split_add;
         p_homing += m.proj_homing_add;
+        // Visible-signature bump (plain channel — see CardMod's own
+        // proj_*_bump doc comments; exactly one channel live per card).
+        p_speed_mul *= m.proj_speed_bump;
+        p_size_mul *= m.proj_size_bump;
+        if (m.proj_shape_bump) |v| p_shape = v;
     }
 
     // ── THE GEOMETRICIAN RULING (Jake, 2026-07-24 — supersedes 2026-07-22)
@@ -198,30 +298,19 @@ fn resolveMods(mods: []const gen.CardMod, class_id: ?gen.ClassId) world_state.Re
     // applyDeliveryFeel (weaponBuild.ts) — runs BEFORE clampBuild there, same
     // order here. Maps the rare delivery identity onto projectile params so
     // raycast/beam/pulse cards feel distinct without a separate hitscan step.
-    // PATHING_RANK, by pathing enum index (0=straight..7=accelerate, see
-    // gen_card_data.ts's PATHING array order) — mirrors weaponBuild.ts's
-    // PATHING_RANK table exactly; the one unlisted index (5=anti-homing)
-    // falls back to rank 0 same as TS's `?? 0`. Index 7 (accelerate) is
-    // rank 1 — TS added `accelerate: 1` in the i-rounds/falling-star
-    // speed-profile pass and this table was never updated (stale comment
-    // here even claimed accelerate was unlisted in TS), silently force-
-    // resetting accelerate→straight in the raycast/beam feel branch on the
-    // Zig side only. Invisible to the class-blind parity walk (i-rounds'
-    // own `delivery: "projectile"` fallback meant the raycast branch never
-    // ran for it) — caught 2026-07-24 by the wizard-forces-raycast parity
-    // walk the GEOMETRICIAN RULING added, which resolves i-rounds through
-    // the raycast branch for the first time.
-    const pathing_rank = [8]u8{ 0, 3, 1, 2, 5, 0, 4, 1 };
+    // PATHING_RANK is the file-scope table now (Track E1 true-merge port —
+    // preferPathing shares it); its i-rounds/accelerate history lives on
+    // the table's own doc comment.
     if (delivery == 1) { // raycast
         p_count = @max(1.0, p_count);
-        if (pathing_rank[p_pathing] == 0) p_pathing = 0; // → "straight"
+        if (PATHING_RANK[p_pathing] == 0) p_pathing = 0; // → "straight"
         p_speed_mul = @max(p_speed_mul, 3.2);
         p_lifetime_mul = @min(p_lifetime_mul, 0.35);
         p_range = @max(p_range, 880.0);
         if (p_gravity_scale == 0 or p_pathing == 0) p_gravity_scale = 0;
         p_size_mul = @max(0.55, p_size_mul);
     } else if (delivery == 2) { // continuous-beam
-        if (pathing_rank[p_pathing] == 0) p_pathing = 0;
+        if (PATHING_RANK[p_pathing] == 0) p_pathing = 0;
         p_size_mul = @min(@max(p_size_mul, 0.55), @max(0.7, p_size_mul));
         p_lifetime_mul = @min(p_lifetime_mul, 0.55);
         p_range = @max(p_range, 720.0);
@@ -246,9 +335,12 @@ fn resolveMods(mods: []const gen.CardMod, class_id: ?gen.ClassId) world_state.Re
     // product here is exact — same values, same one multiplication).
     recoil_impulse = round2(@max(0.0, recoil_impulse));
     projectile_speed = round2(@max(80.0, projectile_speed));
-    const pls = round2(@max(0.1, B.projectile_lifetime_seconds));
+    const pls = round2(@max(0.1, base.projectile_lifetime_seconds));
     spread = @max(0.0, spread);
     max_health_add = @max(0.0, @round(max_health_add));
+    // clampBuild:705 — cap so no stack of leech sources can out-leech the
+    // timed ability's own cap, then round to 3dp (roundTo(x, 3)).
+    leech = @round(@max(0.0, @min(0.5, leech)) * 1000.0) / 1000.0;
     move_speed_mul = round2(@max(0.45, move_speed_mul));
     parry_cover_mul = round2(@max(0.45, parry_cover_mul));
     parry_cooldown_mul = round2(@max(0.28, parry_cooldown_mul));
@@ -339,6 +431,7 @@ fn resolveMods(mods: []const gen.CardMod, class_id: ?gen.ClassId) world_state.Re
         .directional_shield = if (directional) 1 else 0,
         .recoil_impulse = recoil_impulse * p_recoil_mul,
         .delivery = delivery,
+        .leech_fraction = @floatCast(leech),
     };
 }
 
@@ -451,11 +544,10 @@ pub export fn resolve_player_fire_config(
 ) void {
     if (player_index >= world_state.MAX_PLAYERS) return;
     const n = @min(count, @as(u32, world_state.MAX_PLAYER_CARDS));
-    // Class derived from the player's own character_id (no ABI change) —
-    // THE GEOMETRICIAN RULING needs the resolver to know when the player is
-    // a wizard; every other class resolves exactly as before (the class
-    // only gates the wizard delivery rule, nothing else — Zig carries no
-    // classModifiers data, see gen_card_data.ts).
+    // Class derived from the player's own character_id (no ABI change).
+    // The class gates the wizard delivery rule, the per-class starter base
+    // (gen.baseWeaponForClass), and each card's effective mod
+    // (gen.effectiveCardMod — the Track E1 classModifiers port).
     const cls = classForArchetype(state_ptr.players[player_index].character_id);
     state_ptr.player_fire_config[player_index] = resolveByIndices(indices_ptr[0..n], cls);
 }
