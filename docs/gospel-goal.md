@@ -180,6 +180,17 @@ position (1.2), bell taper (1.5), announcer (4.3), board persistence.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-05 (d) · **Track P: 2026-07-31 replay STUDIED** (first of the
+  footage queue) — 3 windows rendered via the host's own headless
+  pipeline, motion-analyzed, full-res verified. Findings in
+  docs/clip-sheets/study-2026-08-05-jul31-replay.md: S1 bot idle floor
+  violated (7.7 s statue bot, HIGH), S2 spectator director dwells on
+  idle subjects (HIGH), S3 HUD-less renders read countdowns as dead
+  air (MED), S4 render pipeline envelope documented (≤~45 s windows;
+  upload 413 above; full-match encode wedges). S1+S2 = wave-3 lane
+  candidates. Also recorded: all three 07-31 replays ran
+  backend=wasm/fallback=0 live — verify which layer before treating E2
+  as pre-flipped. Wave 2 (6 lanes) still in flight.
 - 2026-08-05 (c) · **Wave 1 merged — Doors Phase 0 COMPLETE, E1
   split-spawn (real-projectile half) CLOSED.** Three parallel worktree
   lanes (doc-drift d18641b · honest-copy 46843d2 · split-spawn d6b1b9d,
