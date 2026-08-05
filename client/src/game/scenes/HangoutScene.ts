@@ -25,6 +25,7 @@ import { resolveMap } from "../../sim/data/maps.js";
 import { resolveHangoutTotems, resolveVenueTotems, type TotemDefinition } from "../../sim/totem.js";
 import { PrivateRoomClient } from "../net/PrivateRoomClient";
 import { fetchVenueLobbyAssignment } from "../../net/worldClient";
+import { armArenaPreconnect, disarmArenaPreconnect } from "../../net/arenaPreconnect";
 import { fallbackPlayerName, sanitizePlayerName } from "../../net/playerName";
 import { ProceduralPlayerRig } from "../rendering/ProceduralPlayerRig";
 import { colorToNumber } from "../render/colorToNumber.js";
@@ -243,6 +244,12 @@ export class HangoutScene extends Phaser.Scene {
   /** Picked (or otherwise done) this visit — suppresses re-opens until the
    *  player walks out and back in. */
   private loadoutDismissed = false;
+  /** Set the instant `venue-admitted` lands (open-doors 1.3): the scene is
+   *  about to hand off to the arena, so teardown must NOT disarm the
+   *  pre-opened arena socket (OnlineMatchScene adopts it), and the
+   *  admission-edge venue-status frame (queued list now empty) must not
+   *  disarm it either. */
+  private venueAdmittedHandoff = false;
 
   constructor() {
     super(SceneKeys.Hangout);
@@ -252,6 +259,7 @@ export class HangoutScene extends Phaser.Scene {
     this.mode = data.mode ?? "private";
     this.roomCode = data.roomCode ?? "";
     this.localPlayerId = PlayerId(data.localPlayerId);
+    this.venueAdmittedHandoff = false; // scene instances are reused
     void this.connect();
   }
 
@@ -468,6 +476,12 @@ export class HangoutScene extends Phaser.Scene {
         onVenueStatus: (status) => {
           this.venueStatus = { ...status, duoQueued: status.duoQueued ?? [] };
           this.venueStatusAtMs = performance.now();
+          // The admission race (open-doors 1.3): keep the background arena
+          // socket in step with the server's queue truth — armed while
+          // queued, disarmed when the player steps off the bell. Runs on
+          // the 1 Hz status cadence, so a dropped pre-open self-heals on
+          // the next frame while still queued.
+          this.syncArenaPreconnect();
         },
         // Loadout station (S2.E, separated 2026-07-17): state arrives while
         // standing at the loadout totem (re-pushed on its retrigger
@@ -487,6 +501,10 @@ export class HangoutScene extends Phaser.Scene {
         // scene handoff (stop Hangout → its teardown closes this socket →
         // start OnlineMatchScene mode:"world").
         onVenueAdmitted: () => {
+          // Flag BEFORE the event: the scene handoff (main.ts) stops this
+          // scene, and teardown must know the pre-opened arena socket now
+          // belongs to the arena, not to this scene's cleanup.
+          this.venueAdmittedHandoff = true;
           window.dispatchEvent(new CustomEvent("jakesjam:venue-admitted"));
         },
       });
@@ -506,6 +524,32 @@ export class HangoutScene extends Phaser.Scene {
 
   private setStatus(message: string): void {
     this.statusText?.setText(message);
+  }
+
+  /**
+   * The admission race (open-doors 1.3): pre-open the arena socket while
+   * this player is QUEUED at the bell, so `venue-admitted` → insertion
+   * never depends on a fresh TCP+WS handshake inside the ~3 s countdown.
+   * Server truth drives both directions — the pushed venue-status queue
+   * lists arm it, stepping off the bell disarms it (the server holds a
+   * non-admitted pre-open as a spectator regardless; this just avoids
+   * keeping sockets warm for players who changed their minds). After
+   * admission the sync stands down: the handoff owns the socket.
+   */
+  private syncArenaPreconnect(): void {
+    if (this.mode !== "venue" || !this.venueStatus || this.venueAdmittedHandoff) return;
+    const pid = this.localPlayerId as string;
+    const queued =
+      this.venueStatus.queued.includes(pid) || this.venueStatus.duoQueued.includes(pid);
+    if (queued) {
+      void armArenaPreconnect(
+        pid,
+        sanitizePlayerName(localStorage.getItem("jakesjam.playerName") ?? ""),
+        sanitizeCharacterId(localStorage.getItem(PLAYER_CHARACTER_KEY)),
+      );
+    } else {
+      disarmArenaPreconnect();
+    }
   }
 
   /**
@@ -1632,6 +1676,11 @@ export class HangoutScene extends Phaser.Scene {
     this.scale.off("resize", this.applyCameraZoom, this);
     this.touchControls?.destroy();
     this.touchControls = null;
+    // A pre-opened arena socket dies with the scene UNLESS the player was
+    // admitted — then it's the whole point (open-doors 1.3): the arena
+    // scene adopts it, and closing it here would re-run the very
+    // handshake race this machinery exists to kill.
+    if (!this.venueAdmittedHandoff) disarmArenaPreconnect();
     // disconnect(), not stop() — leaving the hangout should close the WS
     // immediately, not strand a ghost until the liveness sweep (same fix
     // as OnlineMatchScene teardown, venue-goal Pillar 0.6).

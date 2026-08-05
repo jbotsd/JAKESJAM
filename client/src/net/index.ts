@@ -36,6 +36,12 @@ export {
   postRematchReady,
   type WorldAssignment,
 } from "./worldClient.js";
+export {
+  armArenaPreconnect,
+  disarmArenaPreconnect,
+  takeArenaPreconnect,
+  isArenaPreconnectArmed,
+} from "./arenaPreconnect.js";
 export { InterpolationBuffer } from "./interpolationBuffer.js";
 export { sanitizePlayerName, stripDisallowedChars } from "./playerName.js";
 export {
