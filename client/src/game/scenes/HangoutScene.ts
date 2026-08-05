@@ -57,6 +57,7 @@ import { ActionBarSystem, type ActionBarVitals } from "../ui/ActionBarSystem.js"
 import { activeSlotVitals } from "../ui/activeSlots.js";
 import { acquiredAbilities } from "../ui/acquiredAbilities.js";
 import { deriveHudChips } from "../ui/statusChips.js";
+import { formatBellCountdown } from "../ui/bellCountdown.js";
 import { resolvePlayerBuild } from "../../sim/weapon.js";
 import { EMISSION_CHARGE_MAX } from "../../sim/constants.js";
 import {
@@ -204,6 +205,12 @@ export class HangoutScene extends Phaser.Scene {
   private venueStatusAtMs = 0;
   private feedText: Phaser.GameObjects.Text | null = null;
   private bellLabel: Phaser.GameObjects.Text | null = null;
+  /** Doors 1.5b: the persistent top-center next-bell countdown — created at
+   *  create() so it exists from second ZERO of entering the venue (an
+   *  honest "--:--" placeholder until the first 1Hz status frame), never
+   *  only at the bell totem's world-space label. updateVenueFeed owns its
+   *  per-frame text + compact-width layout. */
+  private bellCountdownText: Phaser.GameObjects.Text | null = null;
   /** Touch combat (Doors 1.5a) — same last-aim convention as
    *  OnlineMatchScene: shots keep their heading when the thumb lifts. */
   private lastTouchAim: { x: number; y: number } = { x: 1, y: 0 };
@@ -366,6 +373,27 @@ export class HangoutScene extends Phaser.Scene {
       // class's construct, not just those two.
       this.statusVfx = new StatusVfxController(this, this.particlePool);
       this.constructVfx = new ConstructVfxController(this, this.particlePool);
+
+      // Doors 1.5b: the wait is survivable only if it's LEGIBLE — a
+      // persistent, quiet next-bell countdown from the second the venue is
+      // entered. Same mono/ink idiom as the feed (no new colour grammar);
+      // holds the honest "--:--" placeholder until the first venue-status
+      // frame lands (≤1 s once the socket is up), then ticks smoothly.
+      // Sits at the feed's old top-center anchor; the feed re-anchors
+      // BELOW it in updateVenueFeed, so the element never jumps when data
+      // arrives. Built before installHudCamera (below) like the action
+      // bar, so the initial HUD partition sees it.
+      const uiW = uiWidth(this);
+      this.bellCountdownText = this.add
+        .text(uiW / 2, uiW < 520 ? 46 : 14, formatBellCountdown(null), {
+          color: "#9aa5b1",
+          fontFamily: "'Space Mono', 'Courier New', monospace",
+          fontSize: "14px",
+          align: "center",
+        })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setDepth(1000);
     }
 
     this.lastFrameMs = performance.now();
@@ -1095,8 +1123,25 @@ export class HangoutScene extends Phaser.Scene {
    *  frame (same monotonicity contract as the death overlay's wait). */
   private updateVenueFeed(nowMs: number): void {
     if (this.mode !== "venue") return;
+
+    // Doors 1.5b: the countdown element renders from second zero — layout
+    // runs every frame (compact-width reposition on resize/rotation), and
+    // before the first status frame it holds the honest placeholder.
+    // Fighting/round-over values are upper-bound estimates and carry the
+    // "~" per phaseCountdown.ts's doctrine (venue-goal Pillar 0.2) instead
+    // of asserting false precision; they only ever jump DOWN.
+    const uiW0 = uiWidth(this);
+    const compact0 = uiW0 < 520;
+    if (this.bellCountdownText) {
+      this.bellCountdownText.setFontSize(compact0 ? 12 : 14);
+      this.bellCountdownText.setPosition(uiW0 / 2, compact0 ? 46 : 14);
+    }
+
     const s = this.venueStatus;
-    if (!s) return;
+    if (!s) {
+      this.bellCountdownText?.setText(formatBellCountdown(null));
+      return;
+    }
 
     if (!this.feedText) {
       // CSS px (uiWidth), not raw backing-store scale.width: this object is
@@ -1118,21 +1163,29 @@ export class HangoutScene extends Phaser.Scene {
     }
 
     // C1 mobile-QA fix (2026-07-28): this feed string ("THE ARENA —
-    // FIGHTING · ROUND N · N FIGHTER(S) · N BOTS / NEXT BELL M:SS") had no
-    // wordWrapWidth, no compact-width branching, and no truncation — at
-    // 13px monospace it's comfortably wider than a 393px phone, so it
-    // clipped off BOTH edges every frame in the venue (exactly the class of
-    // bug HudSystem's compact mode already handles elsewhere in this same
-    // file). Also nudges below the fixed top-right MENU/CLIPS ON pill
-    // (match-chrome, ~44px tall on narrow widths per style.css) instead of
-    // letting the centred block run underneath it.
-    const uiW = uiWidth(this);
-    const compact = uiW < 520;
+    // FIGHTING · ROUND N · N FIGHTER(S) · N BOTS") had no wordWrapWidth,
+    // no compact-width branching, and no truncation — at 13px monospace
+    // it's comfortably wider than a 393px phone, so it clipped off BOTH
+    // edges every frame in the venue (exactly the class of bug HudSystem's
+    // compact mode already handles elsewhere in this same file). The
+    // compact anchor also clears the fixed top-right MENU/CLIPS ON pill
+    // (match-chrome, ~44px tall on narrow widths per style.css). Doors
+    // 1.5b moved the "NEXT BELL" line OUT of this string into the
+    // dedicated persistent element above; the feed now anchors below it
+    // (displayHeight-based, same anti-collision discipline as duoHintY).
+    const uiW = uiW0;
+    const compact = compact0;
     this.feedText.setFontSize(compact ? 11 : 13);
     this.feedText.setWordWrapWidth(Math.min(560, uiW - 32), true);
-    this.feedText.setPosition(uiW / 2, compact ? 46 : 14);
+    const feedY = this.bellCountdownText
+      ? this.bellCountdownText.y + this.bellCountdownText.displayHeight + (compact ? 4 : 6)
+      : compact
+        ? 46
+        : 14;
+    this.feedText.setPosition(uiW / 2, feedY);
 
     const bellMs = Math.max(0, s.nextBellMs - (nowMs - this.venueStatusAtMs));
+    this.bellCountdownText?.setText(formatBellCountdown(bellMs, s.arenaPhase));
     const bellSec = Math.ceil(bellMs / 1000);
     const mm = Math.floor(bellSec / 60);
     const ss = (bellSec % 60).toString().padStart(2, "0");
@@ -1147,7 +1200,7 @@ export class HangoutScene extends Phaser.Scene {
     const fighters = s.humans === 1 ? "1 FIGHTER" : `${s.humans} FIGHTERS`;
     const bots = s.bots > 0 ? ` · ${s.bots} BOT${s.bots === 1 ? "" : "S"}` : "";
     this.feedText.setText(
-      `THE ARENA — ${phaseLabel} · ROUND ${s.roundIndex + 1} · ${fighters}${bots}\nNEXT BELL ${mm}:${ss}`,
+      `THE ARENA — ${phaseLabel} · ROUND ${s.roundIndex + 1} · ${fighters}${bots}`,
     );
 
     // Wave-2 QA fix (2026-07-29): C1's fix moved feedText down to y=46 in
@@ -1662,6 +1715,7 @@ export class HangoutScene extends Phaser.Scene {
     // references and the last frame must be cleared by hand).
     this.feedText = null;
     this.bellLabel = null;
+    this.bellCountdownText = null;
     this.venueStatus = null;
     this.duoHintText = null;
     this.lastTouchAim = { x: 1, y: 0 };
