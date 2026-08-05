@@ -99,6 +99,14 @@ type WorldExports = {
   /** Optional — older sim.wasm builds predate spawn points (Track Z0b
    *  Item A). Flat f64 array, 2 per point: [x, y], map.spawns order. */
   world_state_set_spawn_points?: (points_ptr: number, count: number) => number;
+  /** Optional — older sim.wasm builds predate the hangout flag (Track
+   *  E1d). Module-level STEP INPUT (arena-bounds pattern): written before
+   *  every step_world call from `step()`'s opts, so a lobby world and a
+   *  combat world stepping interleaved through this shared singleton can
+   *  never leak one mode into the other. matchHost gates its backend pick
+   *  on `supportsHangoutFlag()` — a hangout match never routes to a wasm
+   *  build without this export. */
+  world_state_set_hangout_mode?: (enabled: number) => void;
   /** Track Z2 — apply one queued draft pick post-pack, pre-step (see
    *  world.zig's doc comment). Returns 1 if the pick landed. */
   world_apply_card_pick?: (
@@ -193,6 +201,17 @@ class ServerWasmHost {
     return this.resolvedReady && this.readyError === null;
   }
 
+  /** True once the loaded sim.wasm exposes the Track E1d hangout flag.
+   *  matchHost's backend pick requires this for `mode: "hangout"` hosts —
+   *  stepping a lobby on a pre-flag build would run combat semantics
+   *  (visitors could kill each other), so those fall back to TS. */
+  supportsHangoutFlag(): boolean {
+    return (
+      this.isReady() &&
+      typeof this.ex?.world_state_set_hangout_mode === "function"
+    );
+  }
+
   /** Buffered + auto-flushed on next step(). */
   setStatics(aabbs: ReadonlyArray<StaticAABB>, oneWay: ReadonlyArray<number>): void {
     this.cachedStatics = {
@@ -285,7 +304,11 @@ class ServerWasmHost {
    *
    * Throws if not ready. Caller should `await ready()` first.
    */
-  step(state: WorldState, dtMs: number): WasmStepResult {
+  step(
+    state: WorldState,
+    dtMs: number,
+    opts?: { hangoutMode?: boolean },
+  ): WasmStepResult {
     if (!this.resolvedReady || !this.ex || this.statePtr === null) {
       throw new Error(
         "[server-wasm-host] step() called before ready. Await serverWasmHost.ready() first.",
@@ -324,6 +347,22 @@ class ServerWasmHost {
     this.writeSlopesIntoMemory();
     this.writeSpawnPointsIntoMemory();
     this.writeInputsIntoMemory();
+    // Hangout flag (Track E1d) — a per-STEP input, deliberately NOT a
+    // cached setter like the config writes above: this singleton is shared
+    // by every MatchHost on the process (the always-on venue lobby AND
+    // arena matches), so the flag must ride each step call rather than
+    // whatever host configured last. Written unconditionally (0 clears).
+    const hangoutMode = opts?.hangoutMode === true;
+    if (typeof ex.world_state_set_hangout_mode === "function") {
+      ex.world_state_set_hangout_mode(hangoutMode ? 1 : 0);
+    } else if (hangoutMode) {
+      // Belt-and-braces: matchHost's backend pick already requires
+      // supportsHangoutFlag() for hangout hosts. Combat semantics in the
+      // lobby is the one failure mode this file must never allow.
+      throw new Error(
+        "[server-wasm-host] hangout step requested but world_state_set_hangout_mode is missing from sim.wasm — rebuild required",
+      );
+    }
     const rc = ex.step_world(statePtr, dtMs);
     if (rc !== 0) {
       throw new Error(`[server-wasm-host] step_world returned ${rc}`);

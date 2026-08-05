@@ -60,7 +60,12 @@ export class WasmStepStrategy implements StepStrategy {
     // wrote configs the step's own pack immediately zero-filled, so
     // step_world never saw them — starter pistol regardless of cards.
 
-    const result = wasmHost.step(state, dtMs);
+    // Hangout flag (Track E1d): the wasm orchestrator gates its no-PvP
+    // lobby semantics off this per-step input — mirrors TS's own
+    // `runtime.mode === "hangout"` read at the top of stepWithRuntime.
+    const result = wasmHost.step(state, dtMs, {
+      hangoutMode: runtime.mode === "hangout",
+    });
 
     // Translate wasm event tags → discriminated TS SimEvents.
     const events: SimEvent[] = convertWasmEventsToTs(

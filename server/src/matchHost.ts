@@ -81,6 +81,17 @@ const USE_WASM_STEP_WORLD =
   process.env.USE_WASM_STEP_WORLD === "1" ||
   process.env.USE_WASM_STEP_WORLD === "true";
 
+/** Which MatchHost's per-match config (statics/bounds/pads/slopes/spawns/
+ *  target score) currently occupies serverWasmHost's SINGLE config-cache
+ *  slot. The singleton has one slot per config kind but the process runs
+ *  several hosts at once (the always-on venue lobby + arena matches +
+ *  private-room hangouts) — before the Track E1d hangout-pin lift only one
+ *  wasm-stepping match existed at a time, so constructor-once config was
+ *  safe; with hangout hosts on the wasm path too, each host re-syncs its
+ *  own config before stepping whenever a DIFFERENT host stepped since
+ *  (pointer compare per tick, full re-push only on actual interleaving). */
+let wasmConfigOwner: unknown = null;
+
 /** Emission Engine kill-switch (docs/emission-engine-goal.md "ship
  *  safely"). Default ON — shipped enabled 2026-07-16 by direct user call
  *  ("go"); set EMISSIONS=off to strip the Ability bit at input
@@ -431,48 +442,7 @@ export class MatchHost {
     // so step_world has terrain. Idempotent; no-op when wasm path
     // is disabled. The host buffers if not yet ready.
     if (USE_WASM_STEP_WORLD) {
-      const aabbs = this.map.platforms.map((p) => ({
-        x: p.position.x - p.size.x / 2,
-        y: p.position.y - p.size.y / 2,
-        w: p.size.x,
-        h: p.size.y,
-      }));
-      const oneWay = this.map.platforms.map((p) =>
-        p.kind === "platform" ? 1 : 0,
-      );
-      serverWasmHost.setStatics(aabbs, oneWay);
-      // Ceiling clamp + void kill-plane — same values the client feeds its host,
-      // so step_world's bounds match on both sides.
-      serverWasmHost.setArenaBounds(
-        this.runtime.ceilingClampY,
-        this.map.size.y > 0 ? this.map.size.y + KILL_PLANE_MARGIN_PX : 0,
-      );
-      // Raw arena size (Track Z0b Item C) — feeds the Zig shrink-zone
-      // storm's center/half-diagonal math (same map.size the TS storm
-      // reads). Fail-closed Zig-side if never set.
-      serverWasmHost.setArenaSize(this.map.size.x, this.map.size.y);
-      // Launch pads — static map geometry (world.zig §8c), same host-set
-      // cadence as the statics/bounds. Empty array clears stale pads.
-      serverWasmHost.setLaunchPads(this.map.launchPads ?? []);
-      // True slopes — same host-set cadence (player.zig module-level,
-      // stepped inside the wasm player pass). Empty array clears.
-      serverWasmHost.setSlopes(this.map.slopes ?? []);
-      // Spawn points (Track Z0b Item A) — the Zig assignSpawnPoints port
-      // seats mid-round fast respawns from the same list the TS respawn
-      // path reads. TS's no-spawns fallback (map center) is applied HERE:
-      // world.zig has no map size to derive it.
-      serverWasmHost.setSpawnPoints(
-        this.map.spawns.length > 0
-          ? this.map.spawns
-          : [{ x: this.map.size.x / 2, y: this.map.size.y / 2 }],
-      );
-      // Match win-target — without this, step_world's match-end detection
-      // and sudden-death trigger are permanently inert (Track Z0a /
-      // 02b74f5 fix). Same resolveModeConfig source the TS round machine
-      // reads every tick.
-      serverWasmHost.setTargetScore(
-        resolveModeConfig(this.state.chaosModifierIds).targetScore,
-      );
+      this.syncWasmMatchConfig();
     }
     this.grid = new InterestGrid(this.map.size.x, this.map.size.y, CELL_SIZE_PX);
     // Perf audit N2 (2026-07-18): on a map small enough that the observe
@@ -485,27 +455,32 @@ export class MatchHost {
     // `isReady()` re-check meant the backend could switch mid-match when
     // the wasm load finished — invisible live, but it makes the recorded
     // replay non-re-simulable (no single backend reproduces every tick).
-    // Hangout matches are HARD-PINNED to TS regardless of
-    // USE_WASM_STEP_WORLD. Re-recorded 2026-07-24 (Track Z2 item 3) with
-    // current evidence — this is a CORRECTNESS pin, not merely a
-    // "no stakes in a lobby" convenience: hangout is a distinct TS sim
-    // MODE with no Zig mirror, and step_world would actively misbehave
-    // in the lobby. Verified by grep against World.ts's hangoutMode
-    // branches: (1) PvP damage immunity lives in the TS damage resolver
-    // (`if (!victim.alive || ctx.hangoutMode) return`, World.ts:1669) —
-    // Zig applies full damage, so lobby visitors could kill each other;
-    // (2) the round machine never steps in hangout (phase pinned
-    // "fighting", World.ts:2312-2316) — Zig's round machine would end
-    // the lobby's "round", roll drafts and bump scores; (3) projectiles
-    // and hitscan ghost through players (`projectilePlayerIds = []`,
-    // World.ts:2888/2893) — Zig resolves real hits. Lift this only
-    // after step_world grows a hangout mode flag covering all three.
+    // HANGOUT PIN LIFTED 2026-08-05 (Track E1d — gospel-goal.md E1's
+    // "hangout flag in `step_world`"): the 2026-07-24 (Track Z2 item 3)
+    // hard-pin to TS recorded exactly one lift condition — "a step_world
+    // hangout mode flag covering all three" — and that flag now exists
+    // (`world_state_set_hangout_mode`, world.zig's g_hangout_mode; a
+    // per-STEP input passed via serverWasmHost.step opts below). All three
+    // recorded behaviours are mirrored in Zig and covered by tests, plus
+    // the rest of World.ts's hangoutMode gates (melee arc/dash-through/
+    // paladin hooks/instant-AOE/emission cast/fire-blast damage/storm
+    // skip/void-fall silent respawn — see g_hangout_mode's own doc for
+    // the full list and the recorded practice-dummy-alternate cuts):
+    // (1) PvP damage immunity — projectile/hitscan player pools empty +
+    //     resolver belt-and-braces (smoke.zig hangout tests, TS-vs-Zig
+    //     lockstep in hangoutModeParity.test.ts);
+    // (2) round machine frozen — section 1 skipped wholesale, clock/rng/
+    //     phase untouched;
+    // (3) projectiles/hitscan ghost through players, dummies still break.
+    // Hangout hosts still require the loaded sim.wasm to actually HAVE
+    // the flag (supportsHangoutFlag) — a pre-flag build falls back to TS
+    // rather than running combat semantics in the lobby.
     this.simBackend =
-      this.mode === "hangout"
-        ? "ts"
-        : USE_WASM_STEP_WORLD && serverWasmHost.isReady()
-          ? "wasm"
-          : "ts";
+      USE_WASM_STEP_WORLD &&
+      serverWasmHost.isReady() &&
+      (this.mode !== "hangout" || serverWasmHost.supportsHangoutFlag())
+        ? "wasm"
+        : "ts";
     this.replayRecorder = new ReplayRecorder({
       matchId: this.matchId,
       mapId: this.map.id,
@@ -1572,12 +1547,68 @@ export class MatchHost {
    * Returns the same shape as `stepWithRuntime` so call sites
    * don't need to change.
    */
+  /** Push THIS match's map/config into serverWasmHost's single config-cache
+   *  slot (see `wasmConfigOwner`). Called from the constructor and re-called
+   *  before any wasm step that follows another host's step. Verbatim the
+   *  former constructor block — every comment retained. */
+  private syncWasmMatchConfig(): void {
+    const aabbs = this.map.platforms.map((p) => ({
+      x: p.position.x - p.size.x / 2,
+      y: p.position.y - p.size.y / 2,
+      w: p.size.x,
+      h: p.size.y,
+    }));
+    const oneWay = this.map.platforms.map((p) =>
+      p.kind === "platform" ? 1 : 0,
+    );
+    serverWasmHost.setStatics(aabbs, oneWay);
+    // Ceiling clamp + void kill-plane — same values the client feeds its host,
+    // so step_world's bounds match on both sides.
+    serverWasmHost.setArenaBounds(
+      this.runtime.ceilingClampY,
+      this.map.size.y > 0 ? this.map.size.y + KILL_PLANE_MARGIN_PX : 0,
+    );
+    // Raw arena size (Track Z0b Item C) — feeds the Zig shrink-zone
+    // storm's center/half-diagonal math (same map.size the TS storm
+    // reads). Fail-closed Zig-side if never set.
+    serverWasmHost.setArenaSize(this.map.size.x, this.map.size.y);
+    // Launch pads — static map geometry (world.zig §8c), same host-set
+    // cadence as the statics/bounds. Empty array clears stale pads.
+    serverWasmHost.setLaunchPads(this.map.launchPads ?? []);
+    // True slopes — same host-set cadence (player.zig module-level,
+    // stepped inside the wasm player pass). Empty array clears.
+    serverWasmHost.setSlopes(this.map.slopes ?? []);
+    // Spawn points (Track Z0b Item A) — the Zig assignSpawnPoints port
+    // seats mid-round fast respawns from the same list the TS respawn
+    // path reads. TS's no-spawns fallback (map center) is applied HERE:
+    // world.zig has no map size to derive it.
+    serverWasmHost.setSpawnPoints(
+      this.map.spawns.length > 0
+        ? this.map.spawns
+        : [{ x: this.map.size.x / 2, y: this.map.size.y / 2 }],
+    );
+    // Match win-target — without this, step_world's match-end detection
+    // and sudden-death trigger are permanently inert (Track Z0a /
+    // 02b74f5 fix). Same resolveModeConfig source the TS round machine
+    // reads every tick.
+    serverWasmHost.setTargetScore(
+      resolveModeConfig(this.state.chaosModifierIds).targetScore,
+    );
+    wasmConfigOwner = this;
+  }
+
   private runStep(
     state: WorldState,
     inputsByPlayer: Record<PlayerId, InputFrame | null>,
   ): { state: WorldState; events: SimEvent[]; matchComplete: boolean } {
     if (this.simBackend === "wasm") {
       try {
+        // Re-occupy the singleton's config slot if another host stepped
+        // since we last did (Track E1d — the lobby + arena now share the
+        // wasm path; see wasmConfigOwner's doc comment).
+        if (wasmConfigOwner !== this) {
+          this.syncWasmMatchConfig();
+        }
         // Build the per-player keys map so wasm sees fresh input.
         const inputsMap = new Map<
           string,
@@ -1595,7 +1626,12 @@ export class MatchHost {
           this.runtime.prevKeys.set(pid as PlayerId, frame.keys);
         }
         serverWasmHost.writeInputs(inputsMap);
-        const result = serverWasmHost.step(state, STEP_MS);
+        // Hangout flag (Track E1d): a per-STEP input riding every call —
+        // the singleton serves the lobby and arena interleaved, so the
+        // mode can never be a cached setter (see serverWasmHost.step).
+        const result = serverWasmHost.step(state, STEP_MS, {
+          hangoutMode: this.mode === "hangout",
+        });
         // Track Z2 item 2 (convergence-goal.md): forward the FULL converted
         // wasm event stream. The old branch dropped every Zig-emitted
         // SimEvent except the overlay's round/draft events — wasm-mode

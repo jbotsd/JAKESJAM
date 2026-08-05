@@ -122,6 +122,43 @@ pub export fn world_state_set_arena_bounds(
     g_kill_plane_y = kill_plane_y;
 }
 
+// Hangout mode (Track E1d — gospel-goal.md "hangout flag in `step_world`",
+// lifting the hosts' TS-only pin). Module-level like the arena bounds above
+// (zero WorldState bytes — a STEP INPUT, not sim state): hosts write it
+// before EVERY step_world call (client runWasmStepSync / server
+// serverWasmHost.step both write it unconditionally per step, so a shared
+// wasm instance stepping a lobby and an arena interleaved can never leak
+// one match's mode into the other). Default false = combat semantics, the
+// exact behavior every pre-flag sim.wasm shipped.
+//
+// What it gates (each site mirrors the World.ts hangoutMode branch it
+// names — the venue lobby is a no-PvP walking space, docs/venue-goal.md):
+//   - fighting-phase pin (World.ts:2510) — movement/fire stay live;
+//   - player-hit ghosting for real projectiles (:6770), hitscan (:3113),
+//     and the belt-and-braces resolver guard (:1824);
+//   - melee arc (:5725/:6148), dash-through tag (:5588), paladin landing
+//     hooks (:2936), instant-AOE resolution (:5313), Paper Double burst
+//     resolution (:7148), emission cast (:3333);
+//   - fire-patch (:7030) / destructible-blast (:6987) player damage;
+//   - shrink-zone storm skip (:7167) — hangout pins the round clock, which
+//     would otherwise read as "final seconds" and run the soft zone
+//     permanently at full strength;
+//   - void-plane fall = silent respawn, not a kill (:6397);
+//   - round machine freeze (:7407), kill-tally credit (:7389), charge
+//     fill (:7312), mid-round fast respawn (:7478).
+// NOT mirrored (recorded cuts, all hangout-only ALTERNATE paths TS runs
+// for the practice dummies): melee/edge arc-vs-destructible hits
+// (:5904/:6334 — needs a per-swing dedupe set in the ABI-frozen
+// MeleeSwingMemory), instant-AOE-vs-destructibles (:5330), and the
+// hangout destructible-damage charge source (:7318's sibling block).
+var g_hangout_mode: bool = false;
+
+/// Host sets hangout mode before EVERY step_world call (step-input
+/// cadence, not match-start — see g_hangout_mode's own doc comment).
+pub export fn world_state_set_hangout_mode(enabled: u32) void {
+    g_hangout_mode = enabled != 0;
+}
+
 // Arena X/Y extent (map.size.x/map.size.y in TS) — a SEPARATE global pair
 // from the ceiling/kill-plane bounds above because it serves a different
 // consumer: Phase 4c's movement-ability collision-free-landing search
@@ -456,6 +493,9 @@ fn creditKill(
     attacker_idx: i32,
     victim_idx: i32,
 ) void {
+    // Hangout: the kill tally never accrues (World.ts:7389's !hangoutMode
+    // fold gate). Belt-and-braces — every damage path is already gated.
+    if (g_hangout_mode) return;
     if (attacker_idx < 0 or attacker_idx == victim_idx) return;
     state.players[@intCast(attacker_idx)].round_kills += 1;
 }
@@ -487,6 +527,12 @@ fn maybeAwardFirstBlood(
     victim_idx: i32,
     is_fighting: bool,
 ) void {
+    // Hangout: no ranged hit can land on a player (empty candidate pools),
+    // so TS's resolveRangedHit claim site is unreachable there. Explicit
+    // guard rather than emergent — is_fighting is PINNED true in hangout
+    // (World.ts:2510), so without this a future hangout-reachable caller
+    // would silently open the wager in the lobby.
+    if (g_hangout_mode) return;
     if (!is_fighting) return;
     if (state.header.first_blood_idx_plus1 != 0) return;
     if (attacker_idx < 0 or attacker_idx == victim_idx) return;
@@ -642,7 +688,12 @@ fn applyHitscanHitOnPlayer(
     leech_fraction: f64,
 ) HitscanHitOutcome {
     _ = hit_x; // kept for signature symmetry with the caller's hit point; only hit_y feeds the headshot band (a pure Y-band check, matching TS's isHeadshot).
-    if (!state.players[victim_idx].flags.alive) return .{}; // belt-and-braces — the caller only ever builds candidates from alive players.
+    // Belt-and-braces pair mirroring World.ts:1824's `!victim.alive ||
+    // ctx.hangoutMode` resolver guard exactly: the caller only ever builds
+    // candidates from alive players, and hangout empties the player pool
+    // upstream — but a future ranged source that bypasses the pool build
+    // must not quietly reopen player damage in the lobby.
+    if (!state.players[victim_idx].flags.alive or g_hangout_mode) return .{};
 
     // Ninja dash i-frames (Track Z1c "ninja dash i-frames" item) — ahead of
     // everything else (headshot/vulnerability/ward/parry/shield/peel), same
@@ -1123,7 +1174,12 @@ fn resolveHitscanFire(
     var cand_idx: [world_state.MAX_PLAYERS]u32 = undefined;
     var cand_box: [world_state.MAX_PLAYERS]collision_types.AABB = undefined;
     var cand_n: u32 = 0;
-    {
+    // Hangout ghosting (World.ts:3113 `hitscanPlayerCandidateIds =
+    // hangoutMode ? [] : ...`): players take ZERO ranged damage in the
+    // lobby — an EMPTY player pool makes a player hit structurally
+    // unreachable, while the decoy/destructible pools below stay live
+    // (practice dummies still break).
+    if (!g_hangout_mode) {
         var cpi: u32 = 0;
         while (cpi < state.player_count) : (cpi += 1) {
             if (cpi == shooter_idx) continue;
@@ -1980,8 +2036,11 @@ pub fn resolveInstantAoeCasts(
 //     energy grant (Wall Bloom's own hook, section 8, unrelated to this
 //     paragraph) stays TS-owned/un-ported.
 //   - Destructible arc hits — World.ts's own comment marks this path
-//     hangout-mode-only (Zig models real matches, not the venue-lobby
-//     hangout mode — no Zig analog exists to hang this off of).
+//     hangout-mode-only. UPDATED (Track E1d): step_world now HAS a hangout
+//     mode (g_hangout_mode), so "no Zig analog exists" no longer applies —
+//     what still blocks the port is the per-swing destructible dedupe set
+//     (TS's mem.hitDestructiblesThisSwing) needing a new field in the
+//     ABI-frozen MeleeSwingMemory; recorded in g_hangout_mode's cuts list.
 //   - Paper Double arc hits — STILL not ported (UPDATED, this pass: no
 //     longer "nothing to hit in practice" — Paper Double now HAS a
 //     spawn-on-cast path, world.zig section 6z's `.paper_double` arm, so
@@ -4414,6 +4473,16 @@ fn stepMeleeSwing(
     const reached_contact = (was_active or is_active_now) and active_elapsed_after >= eff_contact_delay;
     if (!reached_contact) return;
 
+    // Hangout: the swing FSM itself stays live (windup/active/recovery all
+    // ran above, same as TS), but the player arc hit-check below never runs
+    // — World.ts gates it `hasReachedSlashContact && !hangoutMode` (:5725)
+    // / `hasReachedEdgeContact && !hangoutMode` (:6148). TS's hangout-only
+    // ALTERNATE (arc-vs-destructible practice-dummy hits, :5904/:6334)
+    // remains unported — it needs a per-swing destructible dedupe set in
+    // the ABI-frozen MeleeSwingMemory (see the "deliberately NOT ported"
+    // list in this fn's doc comment).
+    if (g_hangout_mode) return;
+
     // ---- Arc hit-check (from the contact-delay tick onward, every
     //      victim in the cone — not "first hit only") ----
     const aim_angle = trig.lutAtan2(mem.aim_y, mem.aim_x);
@@ -4866,7 +4935,10 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     // Player movement + weapon fire gate on this; the round machine itself
     // now runs LAST (just before end-of-tick compaction) instead of first
     // — see its own relocated comment below for the full reasoning.
-    const is_fighting = state.header.round_phase ==
+    // Hangout OR-pin (World.ts:2510 `fightingPhase = hangoutMode ||
+    // phase === "fighting"`): movement + fire stay live in the lobby
+    // regardless of the (frozen) round machine's phase cell.
+    const is_fighting = g_hangout_mode or state.header.round_phase ==
         @intFromEnum(round.RoundPhase.fighting);
 
     // 8. Player physics (I16). Bridge PlayerEntity +
@@ -5077,7 +5149,10 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             // `if (...armedUntilTick... > state.tick)` branch, so it only
             // actually fires when live; harmless either way since 0 already
             // reads as "not armed").
-            if (state.players[pmi].character_id == .heavy) {
+            // Hangout: World.ts wraps its whole paladin landing/air-jump
+            // hook block `classId === "paladin" && !hangoutMode` (:2936) —
+            // no Shock Ring slam queues in the lobby.
+            if (state.players[pmi].character_id == .heavy and !g_hangout_mode) {
                 const grounded_after_step = ps.grounded_last_frame != 0;
                 const just_landed = grounded_before_step == 0 and grounded_after_step;
                 if (just_landed) {
@@ -5139,7 +5214,11 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         }
                     }
                 }
-                if (dashing_now) {
+                // Hangout: no dash-through tagging/energy/Read-mark in the
+                // lobby — World.ts:5588 gates this exact loop
+                // `dashingNow && !hangoutMode` (the Razor Route dash-START
+                // consume above stays live there, same as TS).
+                if (dashing_now and !g_hangout_mode) {
                     const attacker_box = combat.playerHitboxAabb(
                         state.players[pmi].x,
                         state.players[pmi].y,
@@ -5200,11 +5279,29 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         // is alive here (checked at loop top). Emit hit_confirmed (damage =
         // remaining health) + player_killed like any other death.
         if (g_kill_plane_y > 0 and state.players[pmi].y > g_kill_plane_y) {
-            const rem = state.players[pmi].health;
-            state.players[pmi].health = 0;
-            state.players[pmi].flags.alive = false;
-            emitEvent(state, .hit_confirmed, @intCast(pmi), -1, 0, rem, state.players[pmi].x, state.players[pmi].y);
-            emitEvent(state, .player_killed, @intCast(pmi), -1, 0, 0, state.players[pmi].x, state.players[pmi].y);
+            if (g_hangout_mode) {
+                // Hangout (World.ts:6397): no combat/death concept in the
+                // lobby — the void plane is a generic safety net, so a fall
+                // is a SILENT respawn (no events, no health change) rather
+                // than a kill. TS respawns via assignSpawnPoints(map, [pid])
+                // — a single-id assignment always lands on the map's FIRST
+                // spawn point (no "already placed" competitors to spread
+                // away from); no spawn points = keep position (TS's
+                // `?? { x: p.x, y: p.y }` fallback), zero velocity either
+                // way.
+                if (g_spawn_point_count > 0) {
+                    state.players[pmi].x = g_spawn_points_x[0];
+                    state.players[pmi].y = g_spawn_points_y[0];
+                }
+                state.players[pmi].vx = 0;
+                state.players[pmi].vy = 0;
+            } else {
+                const rem = state.players[pmi].health;
+                state.players[pmi].health = 0;
+                state.players[pmi].flags.alive = false;
+                emitEvent(state, .hit_confirmed, @intCast(pmi), -1, 0, rem, state.players[pmi].x, state.players[pmi].y);
+                emitEvent(state, .player_killed, @intCast(pmi), -1, 0, 0, state.players[pmi].x, state.players[pmi].y);
+            }
         }
     }
 
@@ -5220,7 +5317,7 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     //     Pads iterate in host array order (== map.launchPads order ==
     //     event entity_id); players in packed order (packed from sorted ids
     //     by worldStateBridge — same order TS iterates).
-    if (state.header.round_phase == @intFromEnum(round.RoundPhase.fighting)) {
+    if (is_fighting) {
         var lpi: u32 = 0;
         while (lpi < g_launch_pad_count) : (lpi += 1) {
             const pad = &g_launch_pads[lpi];
@@ -5399,6 +5496,10 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         if (ability_edge and
             player_ptr.flags.alive and
             state.header.round_phase == @intFromEnum(round.RoundPhase.fighting) and
+            // Hangout no-ops the Emission cast (World.ts:3333's !hangoutMode
+            // — charge never fills there, but the guard is explicit per the
+            // emission-engine-goal doctrine, not emergent).
+            !g_hangout_mode and
             player_ptr.ability_charge >= EMISSION_CHARGE_MAX)
         {
             const em = weapon_build.emissionFromConfig(&state.player_fire_config[pi3]);
@@ -5843,9 +5944,11 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     //     Runs after section 6's per-player loop has finished for EVERY
     //     player (so shield state is already this-tick-final, same
     //     ordering guarantee section 6b relies on) and before section 6b.
-    //     Fighting-phase only — Zig has no hangout-mode analog to carve out
-    //     the way World.ts does (see stepMeleeSwing's doc comment).
-    if (state.header.round_phase == @intFromEnum(round.RoundPhase.fighting)) {
+    //     Fighting-phase only. Hangout (Track E1d): the swing FSM still
+    //     runs here (phase is pinned "fighting" in that mode), matching
+    //     TS — the hangout carve-out lives INSIDE stepMeleeSwing, at the
+    //     player arc hit-check (World.ts:5725/:6148 mirror).
+    if (is_fighting) {
         var mai: u32 = 0;
         while (mai < state.player_count) : (mai += 1) {
             stepMeleeSwing(state, mai, eff_dt, melee_fire_rising_edge[mai], shield_rising_edge[mai]);
@@ -5865,13 +5968,22 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     //     so Paper Double's death/expiry burst is no longer discoverable
     //     here; it gets the SAME second, later drain TS has (see section
     //     6y + its 6y-drain, after section 4 below).
+    // Hangout: casts still QUEUE (abilities are live in the lobby — Jake's
+    // 2026-07-18 live-playtest ruling, abilitySlots.test.ts), but the
+    // vs-player resolution never runs — World.ts:5313 gates this drain
+    // `fightingPhase && !hangoutMode`. The queue still empties (TS's
+    // pendingInstantAoe is a per-tick local — unresolved casts are
+    // DROPPED, not deferred). TS's hangout-only vs-destructible alternate
+    // (:5330) remains unported — see g_hangout_mode's recorded-cuts list.
     if (state.pending_instant_aoe_count > 0) {
-        resolveInstantAoeCasts(
-            state,
-            state.pending_instant_aoe[0..state.pending_instant_aoe_count],
-            state.header.tick,
-            eff_dt,
-        );
+        if (!g_hangout_mode) {
+            resolveInstantAoeCasts(
+                state,
+                state.pending_instant_aoe[0..state.pending_instant_aoe_count],
+                state.header.tick,
+                eff_dt,
+            );
+        }
         state.pending_instant_aoe_count = 0;
     }
 
@@ -5929,7 +6041,14 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         const patch_ptr = &state.fires[fi];
         if (patch_ptr.remaining_ms <= 0) continue;
         const damage_this_tick = patch_ptr.damage_per_second * (eff_dt / 1000.0);
-        var ph: u32 = 0;
+        // Hangout player immunity (World.ts:7030's !hangoutMode) — patches
+        // still spawn + tick their lifetime (fireEntityTick below runs
+        // unconditionally, same as TS's stepFirePatches), but never touch a
+        // player. Recorded nuance: TS still FORWARDS stepFirePatches'
+        // cosmetic hit-confirmed event in hangout while suppressing the
+        // damage; Zig emits at the damage site, so the wasm stream drops
+        // that cosmetic event too (see g_hangout_mode's recorded-cuts list).
+        var ph: u32 = if (g_hangout_mode) state.player_count else 0;
         while (ph < state.player_count) : (ph += 1) {
             if (!state.players[ph].flags.alive) continue;
             // Skip owner self-damage.
@@ -6065,7 +6184,13 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     //       - reads the section-0b PRE-step round snapshot, exactly as TS
     //         reads `state.round` at tick entry — section 1 has already
     //         overwritten the header by the time this section runs.
-    if (storm_prestep_phase == @intFromEnum(round.RoundPhase.fighting) and
+    //     Hangout: skipped ENTIRELY (World.ts:7167's !hangoutMode) — the
+    //     lobby pins the round clock, so countdown_remaining_ms reads as
+    //     "final seconds" forever and the soft endgame zone would run
+    //     permanently at full strength against immune-everywhere-else
+    //     visitors.
+    if (!g_hangout_mode and
+        storm_prestep_phase == @intFromEnum(round.RoundPhase.fighting) and
         g_arena_size_x > 0 and g_arena_size_y > 0)
     {
         var zone_scale: f64 = 0;
@@ -6299,7 +6424,12 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     dest_ptr.y,
                 );
             }
-            if (r == .broken and (dest_ptr.flags & 1) != 0) {
+            // Hangout: dummies break, blasts never hurt (World.ts:6987's
+            // !hangoutMode). Recorded nuance: TS still forwards the
+            // cosmetic blast hit-confirmed while suppressing the damage;
+            // Zig emits at the damage site, so that cosmetic event is
+            // dropped here too (g_hangout_mode's recorded-cuts list).
+            if (r == .broken and (dest_ptr.flags & 1) != 0 and !g_hangout_mode) {
                 var ex_p: u32 = 0;
                 while (ex_p < state.player_count) : (ex_p += 1) {
                     if (!state.players[ex_p].flags.alive) continue;
@@ -6429,8 +6559,13 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             break;
         }
         if (proj_ptr.lifetime_ms <= 0) continue;
-        // Player overlap: circle vs AABB.
-        var ph2: u32 = 0;
+        // Player overlap: circle vs AABB. Hangout ghosting (World.ts:6770
+        // `projectilePlayerIds = hangoutMode ? [] : ...`): projectiles get
+        // ZERO player hit candidates in the lobby — they pass straight
+        // through avatars and only ever connect with destructibles/decoys/
+        // terrain (the loops above). Empty-range start makes every
+        // projectile-vs-player damage path structurally unreachable.
+        var ph2: u32 = if (g_hangout_mode) state.player_count else 0;
         while (ph2 < state.player_count) : (ph2 += 1) {
             if (!state.players[ph2].flags.alive) continue;
             // Skip owner.
@@ -7200,14 +7335,19 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     // reorder moved section 6b's drain up with the combat block, so 6y's
     // pushes would otherwise sit un-resolved until next tick's drain —
     // and section 9's compaction would have removed the dead doubles by
-    // then). Same call shape as 6b's drain above.
+    // then). Same call shape as 6b's drain above. Hangout: same gate as
+    // 6b too — World.ts:7148 (`paperDoubleBursts.length > 0 &&
+    // !hangoutMode`) suppresses the burst RESOLUTION only; detection above
+    // stays live, and the queue still empties.
     if (state.pending_instant_aoe_count > 0) {
-        resolveInstantAoeCasts(
-            state,
-            state.pending_instant_aoe[0..state.pending_instant_aoe_count],
-            state.header.tick,
-            eff_dt,
-        );
+        if (!g_hangout_mode) {
+            resolveInstantAoeCasts(
+                state,
+                state.pending_instant_aoe[0..state.pending_instant_aoe_count],
+                state.header.tick,
+                eff_dt,
+            );
+        }
         state.pending_instant_aoe_count = 0;
     }
 
@@ -7517,180 +7657,187 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     //    that player's score and signal the phase machine so it
     //    transitions fighting → round_over; a draw (`ended` with winner
     //    -1) still transitions but credits nobody.
-    const resolution = detectRoundWinner(state, eff_dt);
-    const winner_idx = resolution.winner_idx;
-    if (winner_idx >= 0 and
-        state.header.round_phase == @intFromEnum(round.RoundPhase.fighting))
-    {
-        const idx: u32 = @intCast(winner_idx);
-        state.players[idx].score += 1;
-        emitEvent(
-            state,
-            .round_end,
-            winner_idx,
-            -1,
-            0,
-            @floatFromInt(state.players[idx].score),
-            0,
-            0,
-        );
-        // Match-end check (I9): if this player hit target_score,
-        // mark match winner. orchestrator stops advancing past
-        // round_over once match_winner_idx is set.
-        if (state.header.target_score > 0 and
-            state.players[idx].score >= state.header.target_score)
+    //    HANGOUT: the whole section is skipped — World.ts:7407 passes the
+    //    round state straight through unchanged ("never steps the round
+    //    machine at all — no countdown/round-over/drafting transitions,
+    //    ever"): no winner detection, no score/rng mutation, no countdown
+    //    decrement, no draft rolls, no round events, no round respawns.
+    if (!g_hangout_mode) {
+        const resolution = detectRoundWinner(state, eff_dt);
+        const winner_idx = resolution.winner_idx;
+        if (winner_idx >= 0 and
+            state.header.round_phase == @intFromEnum(round.RoundPhase.fighting))
         {
-            state.header.match_winner_idx = winner_idx;
-        }
-    }
-    // Prev-phase snapshot (Phase 2, docs/zig-step-world-parity-goal.md):
-    // captured BEFORE `roundStepPhase` overwrites `state.header.round_phase`
-    // below — needed to tell "arrived at countdown FROM drafting" apart
-    // from any other arrival, and to gate `allDraftersResolved` (only
-    // meaningful while CURRENTLY in drafting).
-    const prev_phase = state.header.round_phase;
-    const drafting_all_resolved =
-        prev_phase == @intFromEnum(round.RoundPhase.drafting) and
-        draft.allDraftersResolved(state);
-    const phase_result = round.roundStepPhase(
-        state.header.round_phase,
-        state.header.countdown_remaining_ms,
-        eff_dt,
-        // `ended` (not `winner_idx >= 0`): a sudden-death mutual KO ends
-        // the round as a DRAW — the phase must still leave `fighting`
-        // even though nobody is credited (round.ts scores only when
-        // `winner !== null` but transitions on any non-undefined verdict).
-        resolution.ended,
-        drafting_all_resolved,
-    );
-    // Auto-pick stragglers BEFORE committing the new phase below: this
-    // runs `draft.applyCardPick` (via `autoPickStragglers`), which itself
-    // gates on `state.header.round_phase == drafting` — it must still see
-    // the OLD (drafting) phase here, not the new (countdown) one the very
-    // next line is about to write. Same reasoning as capturing `prev_phase`
-    // above: side effects that need to observe "we were just in drafting"
-    // must run before the phase write, not after.
-    if (phase_result.transitioned == 1 and
-        phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown) and
-        prev_phase == @intFromEnum(round.RoundPhase.drafting) and
-        !drafting_all_resolved)
-    {
-        // Window expired with picks outstanding: auto-pick the FIRST
-        // offer for every unpicked drafter (round.ts's own expiry branch).
-        draft.autoPickStragglers(state);
-    }
-
-    state.header.round_phase = phase_result.new_phase;
-    state.header.countdown_remaining_ms =
-        phase_result.new_countdown_remaining_ms;
-    if (phase_result.transitioned == 1 and
-        phase_result.new_phase == @intFromEnum(round.RoundPhase.round_over))
-    {
-        // Persist THIS round's winner (real index or -1 = draw) so it's
-        // still readable `ROUND_OVER_HOLD_MS` later when drafting rolls
-        // offers and needs it for catch-up role classification — see
-        // `WorldStateHeader.round_winner_idx`'s own doc comment for why a
-        // fresh local `winner_idx` isn't enough (this tick's value would
-        // otherwise be lost by the time drafting starts).
-        state.header.round_winner_idx = winner_idx;
-    }
-    if (phase_result.transitioned == 1 and
-        phase_result.new_phase == @intFromEnum(round.RoundPhase.fighting))
-    {
-        // New round's fighting phase begins: kill tally starts empty
-        // (parity with round.ts's countdown → fighting reset — same
-        // lifecycle as firstBloodPlayerId on the TS side).
-        var ki: u32 = 0;
-        while (ki < state.player_count) : (ki += 1) {
-            state.players[ki].round_kills = 0;
-        }
-        // Sudden-death trigger (Track Z0a port of orphaned-branch commit
-        // 02b74f5 — parity with round.ts): re-evaluated exactly on the
-        // countdown → fighting transition, using the scores as they stand
-        // heading into the new round. This is the first time step_world
-        // DECIDES the trigger independently (previously the flag was
-        // TS-set-only, and the pack path wiped it every tick anyway —
-        // see writeScoresIntoMemory's bug history).
-        state.header.sudden_death_active =
-            if (isSuddenDeathRound(state)) 1 else 0;
-        // First-blood wager resets with the kill tally (Track Z0d —
-        // round.ts's countdown → fighting branch clears BOTH
-        // `firstBloodPlayerId` and `roundKills` in the same block).
-        state.header.first_blood_idx_plus1 = 0;
-    }
-    if (phase_result.transitioned == 1 and
-        phase_result.new_phase == @intFromEnum(round.RoundPhase.drafting))
-    {
-        // round_over → drafting (Phase 2): roll DRAFT_OFFER_COUNT offers
-        // per roster player. See `draft.zig`'s `rollOffersForRound` for
-        // the full candidate-pool-filter + weighted-sample + pity-floor
-        // port of `enterDrafting`.
-        draft.rollOffersForRound(state);
-    }
-    if (phase_result.transitioned == 1 and
-        phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown))
-    {
-        // Wipe drafting bookkeeping so the next round starts clean (no-op
-        // the very first time countdown is ever reached, before any round
-        // has run — player_draft_state is already zero-valued then). Runs
-        // AFTER the auto-pick block above (which needed the pre-clear
-        // offers/picked_slot state to still be readable).
-        draft.clearDraftState(state);
-
-        // Sudden death clears on countdown entry (round.ts sets
-        // `next.suddenDeathActive = undefined` at BOTH →countdown
-        // transitions — round-over→countdown and drafting→countdown; the
-        // countdown→fighting transition above re-decides it fresh). Not in
-        // the 02b74f5 branch spec, which only wrote the flag at the
-        // fighting transition — but without this, a stale `true` survives
-        // the countdown phase where TS reads cleared, a needless
-        // divergence window.
-        state.header.sudden_death_active = 0;
-
-        // First-blood clears at BOTH →countdown transitions too (round.ts
-        // sets `next.firstBloodPlayerId = undefined` in the round-over→
-        // countdown legacy fallback AND the drafting→countdown branch;
-        // the boost must never leak across rounds). Same belt-and-braces
-        // shape as the sudden-death clear immediately above — the
-        // countdown→fighting block re-clears it anyway.
-        state.header.first_blood_idx_plus1 = 0;
-
-        // Round winner clears at the →countdown transition too (round.ts
-        // sets `next.winnerPlayerId = null` in BOTH →countdown branches).
-        // Track Z2: round_winner_idx is now BRIDGED (packed from
-        // state.round.winnerPlayerId / unpacked back), so a stale index
-        // here would survive onto the wire where TS reads null.
-        state.header.round_winner_idx = -1;
-
-        state.header.round_index += 1;
-        // Reset transient entities for the new round (I28).
-        // Players keep their score + buff durations; everything
-        // else clears so the next round starts clean.
-        state.projectile_count = 0;
-        state.fire_count = 0;
-        state.satellite_count = 0;
-        // Respawn ALL players for the new round (Track Z0b Item A —
-        // upgraded from the old heal-in-place approximation to the full
-        // World.ts `respawnAll` port: every player runs the SAME
-        // respawnPlayerAt reset as the mid-round fast respawn, at their
-        // assignSpawnPoints seat — max health honors class chassis +
-        // maxHealthAdd cards instead of the old flat 100, positions move
-        // to the spawn seals instead of staying wherever the bell rang,
-        // and any pending mid-round respawn stamp is consumed. NOTE:
-        // slow deliberately survives now (TS's respawnPlayerAt clears
-        // burn/freeze/parry but NOT slowedUntilTick — the old Zig clear
-        // here was a divergence, not a feature).
-        var ri: u32 = 0;
-        while (ri < state.player_count) : (ri += 1) {
-            const seat = assignedSpawnPoint(state, ri);
-            respawnPlayerAt(
-                &state.players[ri],
-                &state.player_fire_config[ri],
-                seat.x,
-                seat.y,
+            const idx: u32 = @intCast(winner_idx);
+            state.players[idx].score += 1;
+            emitEvent(
+                state,
+                .round_end,
+                winner_idx,
+                -1,
+                0,
+                @floatFromInt(state.players[idx].score),
+                0,
+                0,
             );
+            // Match-end check (I9): if this player hit target_score,
+            // mark match winner. orchestrator stops advancing past
+            // round_over once match_winner_idx is set.
+            if (state.header.target_score > 0 and
+                state.players[idx].score >= state.header.target_score)
+            {
+                state.header.match_winner_idx = winner_idx;
+            }
         }
-    }
+        // Prev-phase snapshot (Phase 2, docs/zig-step-world-parity-goal.md):
+        // captured BEFORE `roundStepPhase` overwrites `state.header.round_phase`
+        // below — needed to tell "arrived at countdown FROM drafting" apart
+        // from any other arrival, and to gate `allDraftersResolved` (only
+        // meaningful while CURRENTLY in drafting).
+        const prev_phase = state.header.round_phase;
+        const drafting_all_resolved =
+            prev_phase == @intFromEnum(round.RoundPhase.drafting) and
+            draft.allDraftersResolved(state);
+        const phase_result = round.roundStepPhase(
+            state.header.round_phase,
+            state.header.countdown_remaining_ms,
+            eff_dt,
+            // `ended` (not `winner_idx >= 0`): a sudden-death mutual KO ends
+            // the round as a DRAW — the phase must still leave `fighting`
+            // even though nobody is credited (round.ts scores only when
+            // `winner !== null` but transitions on any non-undefined verdict).
+            resolution.ended,
+            drafting_all_resolved,
+        );
+        // Auto-pick stragglers BEFORE committing the new phase below: this
+        // runs `draft.applyCardPick` (via `autoPickStragglers`), which itself
+        // gates on `state.header.round_phase == drafting` — it must still see
+        // the OLD (drafting) phase here, not the new (countdown) one the very
+        // next line is about to write. Same reasoning as capturing `prev_phase`
+        // above: side effects that need to observe "we were just in drafting"
+        // must run before the phase write, not after.
+        if (phase_result.transitioned == 1 and
+            phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown) and
+            prev_phase == @intFromEnum(round.RoundPhase.drafting) and
+            !drafting_all_resolved)
+        {
+            // Window expired with picks outstanding: auto-pick the FIRST
+            // offer for every unpicked drafter (round.ts's own expiry branch).
+            draft.autoPickStragglers(state);
+        }
+
+        state.header.round_phase = phase_result.new_phase;
+        state.header.countdown_remaining_ms =
+            phase_result.new_countdown_remaining_ms;
+        if (phase_result.transitioned == 1 and
+            phase_result.new_phase == @intFromEnum(round.RoundPhase.round_over))
+        {
+            // Persist THIS round's winner (real index or -1 = draw) so it's
+            // still readable `ROUND_OVER_HOLD_MS` later when drafting rolls
+            // offers and needs it for catch-up role classification — see
+            // `WorldStateHeader.round_winner_idx`'s own doc comment for why a
+            // fresh local `winner_idx` isn't enough (this tick's value would
+            // otherwise be lost by the time drafting starts).
+            state.header.round_winner_idx = winner_idx;
+        }
+        if (phase_result.transitioned == 1 and
+            phase_result.new_phase == @intFromEnum(round.RoundPhase.fighting))
+        {
+            // New round's fighting phase begins: kill tally starts empty
+            // (parity with round.ts's countdown → fighting reset — same
+            // lifecycle as firstBloodPlayerId on the TS side).
+            var ki: u32 = 0;
+            while (ki < state.player_count) : (ki += 1) {
+                state.players[ki].round_kills = 0;
+            }
+            // Sudden-death trigger (Track Z0a port of orphaned-branch commit
+            // 02b74f5 — parity with round.ts): re-evaluated exactly on the
+            // countdown → fighting transition, using the scores as they stand
+            // heading into the new round. This is the first time step_world
+            // DECIDES the trigger independently (previously the flag was
+            // TS-set-only, and the pack path wiped it every tick anyway —
+            // see writeScoresIntoMemory's bug history).
+            state.header.sudden_death_active =
+                if (isSuddenDeathRound(state)) 1 else 0;
+            // First-blood wager resets with the kill tally (Track Z0d —
+            // round.ts's countdown → fighting branch clears BOTH
+            // `firstBloodPlayerId` and `roundKills` in the same block).
+            state.header.first_blood_idx_plus1 = 0;
+        }
+        if (phase_result.transitioned == 1 and
+            phase_result.new_phase == @intFromEnum(round.RoundPhase.drafting))
+        {
+            // round_over → drafting (Phase 2): roll DRAFT_OFFER_COUNT offers
+            // per roster player. See `draft.zig`'s `rollOffersForRound` for
+            // the full candidate-pool-filter + weighted-sample + pity-floor
+            // port of `enterDrafting`.
+            draft.rollOffersForRound(state);
+        }
+        if (phase_result.transitioned == 1 and
+            phase_result.new_phase == @intFromEnum(round.RoundPhase.countdown))
+        {
+            // Wipe drafting bookkeeping so the next round starts clean (no-op
+            // the very first time countdown is ever reached, before any round
+            // has run — player_draft_state is already zero-valued then). Runs
+            // AFTER the auto-pick block above (which needed the pre-clear
+            // offers/picked_slot state to still be readable).
+            draft.clearDraftState(state);
+
+            // Sudden death clears on countdown entry (round.ts sets
+            // `next.suddenDeathActive = undefined` at BOTH →countdown
+            // transitions — round-over→countdown and drafting→countdown; the
+            // countdown→fighting transition above re-decides it fresh). Not in
+            // the 02b74f5 branch spec, which only wrote the flag at the
+            // fighting transition — but without this, a stale `true` survives
+            // the countdown phase where TS reads cleared, a needless
+            // divergence window.
+            state.header.sudden_death_active = 0;
+
+            // First-blood clears at BOTH →countdown transitions too (round.ts
+            // sets `next.firstBloodPlayerId = undefined` in the round-over→
+            // countdown legacy fallback AND the drafting→countdown branch;
+            // the boost must never leak across rounds). Same belt-and-braces
+            // shape as the sudden-death clear immediately above — the
+            // countdown→fighting block re-clears it anyway.
+            state.header.first_blood_idx_plus1 = 0;
+
+            // Round winner clears at the →countdown transition too (round.ts
+            // sets `next.winnerPlayerId = null` in BOTH →countdown branches).
+            // Track Z2: round_winner_idx is now BRIDGED (packed from
+            // state.round.winnerPlayerId / unpacked back), so a stale index
+            // here would survive onto the wire where TS reads null.
+            state.header.round_winner_idx = -1;
+
+            state.header.round_index += 1;
+            // Reset transient entities for the new round (I28).
+            // Players keep their score + buff durations; everything
+            // else clears so the next round starts clean.
+            state.projectile_count = 0;
+            state.fire_count = 0;
+            state.satellite_count = 0;
+            // Respawn ALL players for the new round (Track Z0b Item A —
+            // upgraded from the old heal-in-place approximation to the full
+            // World.ts `respawnAll` port: every player runs the SAME
+            // respawnPlayerAt reset as the mid-round fast respawn, at their
+            // assignSpawnPoints seat — max health honors class chassis +
+            // maxHealthAdd cards instead of the old flat 100, positions move
+            // to the spawn seals instead of staying wherever the bell rang,
+            // and any pending mid-round respawn stamp is consumed. NOTE:
+            // slow deliberately survives now (TS's respawnPlayerAt clears
+            // burn/freeze/parry but NOT slowedUntilTick — the old Zig clear
+            // here was a divergence, not a feature).
+            var ri: u32 = 0;
+            while (ri < state.player_count) : (ri += 1) {
+                const seat = assignedSpawnPoint(state, ri);
+                respawnPlayerAt(
+                    &state.players[ri],
+                    &state.player_fire_config[ri],
+                    seat.x,
+                    seat.y,
+                );
+            }
+        }
+    } // end of the !g_hangout_mode round-machine block (section 1)
 
     // 9. End-of-tick compaction (I29). Walk projectiles + fire
     //    patches; copy live entries down so the active prefix
@@ -7749,8 +7896,14 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     //     Parried/shielded hits never emit hit_confirmed, so refused damage
     //     cannot charge meters. Charge mutates ONLY here, at cast, and at
     //     player insertion (goal-doc invariant).
+    //     Hangout: never fills (World.ts:7312's !hangoutMode) — no
+    //     player-vs-player combat event can exist there anyway (every
+    //     damage site is gated), but the guard is explicit per the
+    //     goal-doc invariant. TS's hangout-only destructible-damage charge
+    //     source (the dedicated block below World.ts:7312) is unported —
+    //     see g_hangout_mode's recorded-cuts list.
     const pc_i32: i32 = @intCast(state.player_count);
-    var ei: u32 = 0;
+    var ei: u32 = if (g_hangout_mode) state.event_count else 0;
     while (ei < state.event_count) : (ei += 1) {
         const ev = &state.events[ei];
         if (ev.kind != @intFromEnum(world_state.SimEventKind.hit_confirmed)) continue;
@@ -7789,7 +7942,10 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     //     phase read below is the same JUST-stepped value TS's
     //     `roundNow.phase` holds for this tick's decision — the reorder
     //     made this note's old "machine ran at the top" caveat moot.
-    {
+    //     Hangout: skipped (World.ts:7478's !hangoutMode) — players are
+    //     damage-immune there, and a void fall already respawned silently
+    //     at the kill-plane site, so no death can need this pass.
+    if (!g_hangout_mode) {
         const in_fighting =
             state.header.round_phase == @intFromEnum(round.RoundPhase.fighting);
         // TS: Math.ceil(RESPAWN_DELAY_MS / Math.max(1, effDtMs)).

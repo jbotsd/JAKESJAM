@@ -7534,8 +7534,11 @@ export function stepWithRuntime(
   if (wasmActual) return wasmActual;
 
   // J1-monitor (opt-in via ?wasm-world-monitor=1): shadow-run
-  // wasm + log divergence; doesn't change behavior.
-  maybeWasmMonitor(state, dtMs, result);
+  // wasm + log divergence; doesn't change behavior. hangoutMode rides
+  // along (Track E1d) so a lobby shadow-run steps the wasm world in the
+  // same mode TS just stepped — without it every lobby tick would log a
+  // false countdown/phase divergence.
+  maybeWasmMonitor(state, dtMs, result, hangoutMode);
 
   return result;
 }
@@ -7582,6 +7585,7 @@ function maybeWasmActual(
     applyWasmWorldStepFullSync(
       s: WorldState,
       dt: number,
+      opts?: { hangoutMode?: boolean },
     ): { state: WorldState; events: WasmEvent[]; matchComplete: boolean };
     writePlayerInputsIntoMemory(
       m: Map<
@@ -7627,7 +7631,12 @@ function maybeWasmActual(
     // (c)): the old pre-step `writeFireConfigsForState(inputState)` call
     // here wrote configs the step's own pack immediately zero-filled, so
     // step_world never saw them — starter pistol regardless of cards.
-    const result = wb.applyWasmWorldStepFullSync(inputState, dtMs);
+    // Hangout flag (Track E1d): per-step input mirroring this runtime's
+    // own mode — the wasm orchestrator gates its no-PvP lobby semantics
+    // off it (see world.zig's g_hangout_mode doc).
+    const result = wb.applyWasmWorldStepFullSync(inputState, dtMs, {
+      hangoutMode: runtime.mode === "hangout",
+    });
     return {
       state: result.state,
       events: convertWasmEventsToTs(result.events, result.state),
@@ -7649,6 +7658,7 @@ function maybeWasmMonitor(
   inputState: WorldState,
   dtMs: number,
   tsResult: StepResult,
+  hangoutMode: boolean,
 ): void {
   // Browser-only: server runs sim with the SAME World.ts but
   // never visits a URL, so this short-circuits there.
@@ -7668,7 +7678,9 @@ function maybeWasmMonitor(
     try {
       const mod = await import("./wasm/worldWasmBackend.js");
       if (!mod.isWasmWorldReady()) return;
-      const wasmNext = mod.applyWasmWorldStepSync(inputState, dtMs);
+      const wasmNext = mod.applyWasmWorldStepSync(inputState, dtMs, {
+        hangoutMode,
+      });
       const tsState = tsResult.state;
       const drift = {
         tick: wasmNext.tick !== tsState.tick,
