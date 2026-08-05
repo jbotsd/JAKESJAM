@@ -1845,7 +1845,15 @@ test "ability dispatch: Edge Storm (Ninja) — window banks 3 charges; each full
         _ = root.world.stepWorld(&state, 1.0); // windup starts (rising edge)
         _ = root.world.stepWorld(&state, 120.0); // active starts
         _ = root.world.stepWorld(&state, 90.0); // active -> recovery: wave spawns HERE
-        try std.testing.expectEqual(cycle + 1, countWaveProjectiles(&state));
+        // Exactly ONE live wave per cycle: the previous cycle's wave is
+        // genuinely dead by now (WAVE_LIFETIME_MS=333 / WAVE_RANGE=260 —
+        // ~432ms and ~337px of stepping separate the spawns; TS kills it
+        // the same way). The original `cycle + 1` accumulation was an
+        // artifact of the pre-Track-E1 lifetime-expiry zombie: a shard
+        // whose residual lifetime dropped <= dt froze forever (pre-step
+        // short-circuited, lifetime stayed > 0, compaction never removed
+        // it) — the count grew only because corpses never left the array.
+        try std.testing.expectEqual(@as(u32, 1), countWaveProjectiles(&state));
         try std.testing.expectEqual(@as(u32, 2 - cycle), state.players[0].edge_storm_charges_remaining);
         state.players[0].current_keys = 0;
         _ = root.world.stepWorld(&state, 220.0); // recovery -> idle
@@ -1853,9 +1861,11 @@ test "ability dispatch: Edge Storm (Ninja) — window banks 3 charges; each full
     // Window closed early once charges hit 0 (not left to time out).
     try std.testing.expectEqual(@as(u32, 0), state.players[0].edge_storm_until_tick);
 
-    // Sanity-check the FIRST wave's stats (bit-exact, not just "a
-    // projectile exists"): damage = WAVE_DAMAGE(10) * multiplier(2.2) =
-    // 22; radius 10; straight/crystal, no homing/gravity/bounce/pierce.
+    // Sanity-check the surviving (third-cycle) wave's stats (bit-exact,
+    // not just "a projectile exists"): damage = WAVE_DAMAGE(10) *
+    // multiplier(2.2) = 22; radius 10; straight/crystal, no homing/
+    // gravity/bounce/pierce. Earlier cycles' waves are genuinely dead by
+    // now (see the per-cycle count comment above).
     var found_wave: ?root.world_state.ProjectileEntity = null;
     for (state.projectiles[0..state.projectile_count]) |p| {
         if (@abs(p.radius - 10.0) < 1e-9) {
@@ -1875,7 +1885,12 @@ test "ability dispatch: Edge Storm (Ninja) — window banks 3 charges; each full
     _ = root.world.stepWorld(&state, 1.0); // windup starts
     _ = root.world.stepWorld(&state, 120.0); // active starts
     _ = root.world.stepWorld(&state, 90.0); // active -> recovery, no wave this time
-    try std.testing.expectEqual(@as(u32, 3), countWaveProjectiles(&state)); // unchanged from the 3 real waves
+    // Zero waves live: the third cycle's wave expired mid-swing (211ms of
+    // stepping pushed it past WAVE_LIFETIME_MS/WAVE_RANGE) and — the
+    // actual assertion — no 4th wave spawned to replace it. (Was `3`
+    // before Track E1 for the same zombie-corpse reason as the per-cycle
+    // count above.)
+    try std.testing.expectEqual(@as(u32, 0), countWaveProjectiles(&state));
 }
 
 test "ability dispatch: Edge Storm NOT cast — a slash swing's active->recovery transition spawns NO wave at all (base melee stays melee-only, matching World.ts's own 'without Edge Storm live, the swing is melee-only')" {
@@ -4392,4 +4407,320 @@ test "ally substrate: Aegis Share — window stamps; a caster with NO ally insid
     _ = root.world.stepWorld(&duo, 1000.0);
     try std.testing.expectEqual(@as(u32, 4), duo.players[0].aegis_share_until_tick);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), duo.players[0].kindling, 1e-9);
+}
+
+// ── Split-spawn orchestrator (Track E item E1 — gospel-goal.md; the last
+//    Z5 scope-cut). world.zig's sections 3/4 now queue every TS-mirrored
+//    projectile death and the "4s" pass materialises the child fan via
+//    `projectileSplitVelocities` (bit-exact vs TS `spawnSplit`) with
+//    spawnSplit's exact field inheritance (projectile.ts:922-955). These
+//    tests drive `stepWorld` natively, hand-seeding `state.projectiles` —
+//    same "prove the Zig-internal behavior directly" precedent as the
+//    hitscan decoy/destructible section above. ──────────────────────────
+
+/// Bystander far from every scenario's geometry — keeps the round machine
+/// out of the zero-roster short-circuit without interacting.
+fn splitTestBystander(state: *root.world_state.WorldState, idx: usize) void {
+    state.players[idx].flags.alive = true;
+    state.players[idx].health = 100;
+    state.players[idx].x = 50_000;
+    state.players[idx].y = 50_000;
+    setPlayerId(&state.players[idx], "bystander");
+}
+
+/// The shared parent literal: straight shard, split_count=2, damage 30,
+/// radius 6, range 400. Individual tests override what they need.
+fn splitParentLiteral() root.world_state.ProjectileEntity {
+    var p = std.mem.zeroes(root.world_state.ProjectileEntity);
+    p.x = 500;
+    p.y = 300;
+    p.vx = 600;
+    p.vy = 0;
+    p.radius = 6;
+    p.damage = 30;
+    p.lifetime_ms = 1000;
+    p.age_ms = 100; // past the first-tick muzzle-overlap exemption
+    p.traveled_px = 0;
+    p.origin_x = 500;
+    p.origin_y = 300;
+    p.range_px = 400;
+    p.slow_multiplier = 1;
+    p.id = 900;
+    p.split_count = 2;
+    p.flags = .{
+        .has_owner = false,
+        .has_impact = true,
+        .has_split = true,
+        .has_slow = false,
+        .has_homing = false,
+        .has_acceleration = false,
+        .has_gravity_scale = false,
+        .has_range = true,
+        .has_age = true,
+        .has_traveled = true,
+        .has_origin = true,
+        .returning = false,
+        .has_sticky_fuse = false,
+        .has_impact_radius = false,
+    };
+    p.pathing = .straight;
+    p.element = .neutral;
+    p.impact = .none;
+    p.shape = .circle;
+    return p;
+}
+
+test "split-spawn: lifetime expiry — a split_count=2 shard whose residual lifetime <= dt dies PRE-motion and fans exactly 2 children with spawnSplit's field inheritance, threading header.rng_state one draw per child" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    splitTestBystander(&state, 0);
+    state.header.rng_state = 12345;
+    state.header.next_entity_id = 40;
+
+    state.projectile_count = 1;
+    state.projectiles[0] = splitParentLiteral();
+    state.projectiles[0].lifetime_ms = 10.0; // <= dt -> .lifetime_expired
+
+    // Independently compute the expected fan from the same parent
+    // snapshot + rng cursor the orchestrator must use.
+    const parent_snapshot = state.projectiles[0];
+    var expected_fan: [root.projectile.SPLIT_MAX]root.projectile.SplitVelocity = undefined;
+    const expected = root.projectile.projectileSplitVelocities(&parent_snapshot, 12345, expected_fan[0..]);
+    try std.testing.expectEqual(@as(u32, 2), expected.count);
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // Parent genuinely died + compacted (pre-E1 it froze as a zombie —
+    // .lifetime_expired was unhandled); exactly the 2 children remain.
+    try std.testing.expectEqual(@as(u32, 2), state.projectile_count);
+    try std.testing.expectEqual(expected.rng_state, state.header.rng_state);
+    try std.testing.expectEqual(@as(u32, 42), state.header.next_entity_id);
+    var ci: u32 = 0;
+    while (ci < 2) : (ci += 1) {
+        const child = &state.projectiles[ci];
+        try std.testing.expectEqual(expected_fan[ci].vx, child.vx);
+        try std.testing.expectEqual(expected_fan[ci].vy, child.vy);
+        // Death was PRE-motion: children spawn at the parent's frozen
+        // position, which is also their origin.
+        try std.testing.expectEqual(@as(f64, 500.0), child.x);
+        try std.testing.expectEqual(@as(f64, 300.0), child.y);
+        try std.testing.expectEqual(@as(f64, 500.0), child.origin_x);
+        try std.testing.expectEqual(@as(f64, 300.0), child.origin_y);
+        // spawnSplit inheritance (projectile.ts:922-955).
+        try std.testing.expectEqual(@as(f64, 30.0 * 0.42), child.damage);
+        try std.testing.expectEqual(@as(f64, 6.0 * 0.78), child.radius);
+        try std.testing.expectEqual(@as(f64, 280.0), child.lifetime_ms); // max(280, 10*0.42)
+        try std.testing.expectEqual(@as(f64, 400.0 * 0.32), child.range_px);
+        try std.testing.expectEqual(@as(u32, 0), child.split_count); // no cascade
+        try std.testing.expectEqual(@as(u32, 0), child.pierce_remaining);
+        try std.testing.expectEqual(@as(u32, 0), child.bounces_remaining);
+        try std.testing.expectEqual(root.world_state.ProjectilePathing.straight, child.pathing);
+        try std.testing.expectEqual(root.world_state.ProjectileImpact.none, child.impact);
+        try std.testing.expectEqual(@as(f64, 0.0), child.age_ms);
+        try std.testing.expectEqual(@as(f64, 0.0), child.traveled_px);
+        try std.testing.expectEqual(false, child.flags.has_split);
+        try std.testing.expectEqual(@as(u32, 40 + ci), child.id);
+    }
+}
+
+test "split-spawn: no-split control — an identical shard with split_count=0 dies leaving NOTHING, no rng draw, no id burn" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    splitTestBystander(&state, 0);
+    state.header.rng_state = 12345;
+    state.header.next_entity_id = 40;
+
+    state.projectile_count = 1;
+    state.projectiles[0] = splitParentLiteral();
+    state.projectiles[0].lifetime_ms = 10.0;
+    state.projectiles[0].split_count = 0;
+    state.projectiles[0].flags.has_split = false;
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(u32, 0), state.projectile_count);
+    try std.testing.expectEqual(@as(u32, 12345), state.header.rng_state);
+    try std.testing.expectEqual(@as(u32, 40), state.header.next_entity_id);
+}
+
+test "split-spawn: player-hit consumption — the fan spawns at the POST-motion contact position and the child lifetime scales from the parent's PRE-decrement lifetime (max(280, 1000*0.42) = 420, not 413.28)" {
+    var state = freshFightingState();
+    state.player_count = 2;
+    splitTestBystander(&state, 0);
+    state.players[1].flags.alive = true;
+    state.players[1].health = 100;
+    state.players[1].x = 600;
+    state.players[1].y = 300; // shard arrives dead body-centre -> no headshot
+    setPlayerId(&state.players[1], "victim");
+    state.header.rng_state = 777;
+    state.header.next_entity_id = 10;
+
+    state.projectile_count = 1;
+    state.projectiles[0] = splitParentLiteral();
+    state.projectiles[0].x = 580; // 580 + 600*0.016 = 589.6; victim box left edge 585
+    state.projectiles[0].origin_x = 580;
+
+    const parent_snapshot = state.projectiles[0]; // straight: velocity unchanged by motion
+    var expected_fan: [root.projectile.SPLIT_MAX]root.projectile.SplitVelocity = undefined;
+    const expected = root.projectile.projectileSplitVelocities(&parent_snapshot, 777, expected_fan[0..]);
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 70.0), state.players[1].health, 1e-9);
+    try std.testing.expectEqual(@as(u32, 2), state.projectile_count);
+    try std.testing.expectEqual(expected.rng_state, state.header.rng_state);
+    var ci: u32 = 0;
+    while (ci < 2) : (ci += 1) {
+        const child = &state.projectiles[ci];
+        try std.testing.expectEqual(expected_fan[ci].vx, child.vx);
+        try std.testing.expectEqual(expected_fan[ci].vy, child.vy);
+        // POST-motion contact position (TS's split parent carries the
+        // integrated x/y at the hit, projectile.ts:513-522).
+        try std.testing.expectEqual(@as(f64, 580.0 + 600.0 * 0.016), child.x);
+        try std.testing.expectEqual(@as(f64, 300.0), child.y);
+        // PRE-decrement lifetime restore (queueSplitDeath's lifetime_pre):
+        // 1000 * 0.42 = 420 exactly; the post-decrement value would give
+        // (1000 - 16) * 0.42 = 413.28.
+        try std.testing.expectEqual(@as(f64, 420.0), child.lifetime_ms);
+    }
+}
+
+test "split-spawn: terrain impact — a shard flying into a static wall dies at its integrated position and fans children there" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    splitTestBystander(&state, 0);
+    state.header.rng_state = 999;
+    state.header.next_entity_id = 1;
+
+    state.static_count = 1;
+    state.statics[0] = .{ .x = 585, .y = 200, .w = 40, .h = 200 };
+
+    state.projectile_count = 1;
+    state.projectiles[0] = splitParentLiteral();
+    state.projectiles[0].x = 580; // integrates to 589.6, radius 6 overlaps the wall at 585
+    state.projectiles[0].origin_x = 580;
+
+    const parent_snapshot = state.projectiles[0];
+    var expected_fan: [root.projectile.SPLIT_MAX]root.projectile.SplitVelocity = undefined;
+    const expected = root.projectile.projectileSplitVelocities(&parent_snapshot, 999, expected_fan[0..]);
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(u32, 2), state.projectile_count);
+    try std.testing.expectEqual(expected.rng_state, state.header.rng_state);
+    try std.testing.expectEqual(expected_fan[0].vx, state.projectiles[0].vx);
+    try std.testing.expectEqual(expected_fan[1].vx, state.projectiles[1].vx);
+    try std.testing.expectEqual(@as(f64, 580.0 + 600.0 * 0.016), state.projectiles[0].x);
+}
+
+test "split-spawn: sticky fuse-end — a stuck (vx=vy=0) shard whose fuse runs out fans split_count=3 children on the zero-velocity floor-speed fan (child speed 180)" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    splitTestBystander(&state, 0);
+    state.header.rng_state = 4242;
+    state.header.next_entity_id = 1;
+
+    state.projectile_count = 1;
+    state.projectiles[0] = splitParentLiteral();
+    state.projectiles[0].vx = 0;
+    state.projectiles[0].vy = 0;
+    state.projectiles[0].impact = .sticky;
+    state.projectiles[0].split_count = 3;
+    state.projectiles[0].flags.has_sticky_fuse = true;
+    state.projectiles[0].sticky_fuse_ms = 10.0; // <= dt -> .sticky_expired
+
+    const parent_snapshot = state.projectiles[0];
+    var expected_fan: [root.projectile.SPLIT_MAX]root.projectile.SplitVelocity = undefined;
+    const expected = root.projectile.projectileSplitVelocities(&parent_snapshot, 4242, expected_fan[0..]);
+    try std.testing.expectEqual(@as(u32, 3), expected.count);
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(u32, 3), state.projectile_count);
+    try std.testing.expectEqual(expected.rng_state, state.header.rng_state);
+    var ci: u32 = 0;
+    while (ci < 3) : (ci += 1) {
+        const child = &state.projectiles[ci];
+        try std.testing.expectEqual(expected_fan[ci].vx, child.vx);
+        try std.testing.expectEqual(expected_fan[ci].vy, child.vy);
+        // Zero-velocity parent -> child speed is the 180 floor (within
+        // the 1024-entry trig LUT's quantization — lutCos/lutSin aren't
+        // an exactly-unit pair; the fan bit-equality above is the real
+        // proof, this is a readability check on the magnitude).
+        try std.testing.expectApproxEqAbs(@as(f64, 180.0), @sqrt(child.vx * child.vx + child.vy * child.vy), 1e-4);
+        // Sticky parents pass sticky on to children (projectile.ts:942)…
+        try std.testing.expectEqual(root.world_state.ProjectileImpact.sticky, child.impact);
+        // …but the fuse itself is NOT armed until the child sticks.
+        try std.testing.expectEqual(false, child.flags.has_sticky_fuse);
+    }
+}
+
+test "split-spawn: range cap — the (new, TS projectile.ts:700) range-cap death both kills the shard and fans children; a no-split shard at range just dies" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    splitTestBystander(&state, 0);
+    state.header.rng_state = 31337;
+    state.header.next_entity_id = 1;
+
+    state.projectile_count = 1;
+    state.projectiles[0] = splitParentLiteral();
+    state.projectiles[0].range_px = 50;
+    state.projectiles[0].traveled_px = 45; // + 9.6 this tick -> 54.6 >= 50
+
+    const parent_snapshot = state.projectiles[0];
+    var expected_fan: [root.projectile.SPLIT_MAX]root.projectile.SplitVelocity = undefined;
+    const expected = root.projectile.projectileSplitVelocities(&parent_snapshot, 31337, expected_fan[0..]);
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(u32, 2), state.projectile_count);
+    try std.testing.expectEqual(expected.rng_state, state.header.rng_state);
+    try std.testing.expectEqual(expected_fan[0].vx, state.projectiles[0].vx);
+    // Children inherit the scaled range: 50 * 0.32 = 16.
+    try std.testing.expectEqual(@as(f64, 16.0), state.projectiles[0].range_px);
+
+    // Control: same geometry, no split -> the shard dies alone.
+    var state2 = freshFightingState();
+    state2.player_count = 1;
+    splitTestBystander(&state2, 0);
+    state2.header.rng_state = 31337;
+    state2.projectile_count = 1;
+    state2.projectiles[0] = splitParentLiteral();
+    state2.projectiles[0].range_px = 50;
+    state2.projectiles[0].traveled_px = 45;
+    state2.projectiles[0].split_count = 0;
+    state2.projectiles[0].flags.has_split = false;
+    _ = root.world.stepWorld(&state2, 16.0);
+    try std.testing.expectEqual(@as(u32, 0), state2.projectile_count);
+    try std.testing.expectEqual(@as(u32, 31337), state2.header.rng_state);
+}
+
+test "split-spawn: boomerang home-return — a returning boomerang crossing its origin catch radius (16 + radius) dies and fans children (the other new TS site, projectile.ts:673)" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    splitTestBystander(&state, 0);
+    state.header.rng_state = 606;
+    state.header.next_entity_id = 1;
+
+    state.projectile_count = 1;
+    state.projectiles[0] = splitParentLiteral();
+    state.projectiles[0].pathing = .boomerang;
+    state.projectiles[0].flags.returning = true;
+    // Aligned dead-on at the origin ahead (+x): rotate-toward is a no-op,
+    // and the integrated position lands 0.4px short of the origin — well
+    // inside the 16 + 6 catch radius.
+    state.projectiles[0].x = 495;
+    state.projectiles[0].origin_x = 505;
+    state.projectiles[0].origin_y = 300;
+    state.projectiles[0].range_px = 10_000; // stay clear of the range cap
+    state.projectiles[0].traveled_px = 9_000; // returning already latched
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    // Parent died at the catch, 2 children remain (both straight —
+    // children never inherit boomerang pathing).
+    try std.testing.expectEqual(@as(u32, 2), state.projectile_count);
+    try std.testing.expect(state.header.rng_state != 606);
+    try std.testing.expectEqual(root.world_state.ProjectilePathing.straight, state.projectiles[0].pathing);
+    try std.testing.expectEqual(root.world_state.ProjectilePathing.straight, state.projectiles[1].pathing);
 }

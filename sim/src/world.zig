@@ -545,24 +545,31 @@ fn maybeAwardFirstBlood(
 //     chain-AOE-vs-players reaction — that chain is a real-projectile-
 //     only path in TS too (`stepDestructibles`' own collision loop), never
 //     wired to the direct-damage funnel non-projectile sources use.
-//   - STILL CUT: pierce (ordered multi-hit along one ray, wall-terminated)
-//     IS ported (and now walks decoy/destructible candidates too, not just
-//     players). Split-spawn at the ray's terminal point is NOT — moot
-//     today, since no Zig code path (real projectiles included) reads
-//     `split_count` to spawn children yet; hitscan isn't a NEW gap here,
-//     the same pre-existing one — there is no equivalent-projectile-path
-//     pattern to mirror, so this isn't a "small port" the way the other 4
-//     sub-items were. Re-confirmed during the follow-up pass: `projectile.
-//     zig`'s `projectileSplitVelocities` computes the child-velocity fan
-//     (bit-exact parity-tested against TS's `spawnSplit` in
-//     `projectileLifecycleParity.test.ts`) but nothing in `world.zig`'s
-//     `stepWorld` ever CALLS it — no real-projectile death/expiry site
-//     materialises split children into `state.projectiles`, so the
-//     primitive exists in isolation with no orchestrator wired to any
-//     delivery path. Building that orchestrator from scratch is a
-//     separate, larger task (a new spawn site touching projectile
-//     lifecycle end-of-life handling generally, not a hitscan-specific
-//     port) — out of scope here, left exactly as documented.
+//   - PARTIALLY CLOSED (Track E item E1, split-spawn orchestrator):
+//     pierce (ordered multi-hit along one ray, wall-terminated) IS ported
+//     (and walks decoy/destructible candidates too, not just players).
+//     The REAL-PROJECTILE half of the split gap is now DONE: every
+//     projectile death/expiry TS splits on is orchestrated (see the
+//     `queueSplitDeath` section comment + the "4s" materialisation pass)
+//     — sticky fuse-end, lifetime expiry, terrain impact, player-hit
+//     consumption (mitigated hits included — TS splits before
+//     resolveRangedHit's mitigation runs), plus the boomerang
+//     home-return and range-cap expiries (which stepV2 had never
+//     implemented at all). `projectileSplitVelocities` is no longer an
+//     orphaned primitive. STILL CUT: split-spawn at a HITSCAN ray's
+//     terminal point (World.ts:3254-3275) — that site cannot be
+//     mirrored bit-exactly today for two concrete reasons: (a) TS
+//     builds the synthetic split parent's velocity from libm
+//     `Math.cos/Math.sin(pellet.aimAngle)` (World.ts:3260-3261), which
+//     wasm cannot reproduce bit-for-bit (the LUT trig used everywhere
+//     else is a different function; note the hitscan RAY itself already
+//     carries this same accepted approximation, lutCos vs Math.cos, at
+//     `resolveHitscanFire`), and (b) TS draws the fan jitter from the
+//     SHADOW rng cursor (`runtimeRngState`, World.ts:2559/3272 — seeded
+//     from tick-start rngState, advanced by fire.ts's spread draws at
+//     World.ts:3070-3072, and DISCARDED at end of tick, never merged
+//     back), a cursor whose position Zig cannot know without also
+//     porting the fire-path rng draws — out of this item's scope.
 //   - CLOSED: impact-AOE routing (explosive/slow-field) detonates into
 //     `pending_instant_aoe` at the ray's terminal point exactly like
 //     World.ts's own `pellet.impact === "explosive" || "slow-field"`
@@ -4728,6 +4735,88 @@ fn stepMeleeSwing(
     }
 }
 
+// =================================================================
+// Split-spawn orchestrator (Track E item E1 — gospel-goal.md; closes the
+// one remaining Z5 scope-cut re-confirmed in the "Hitscan resolution"
+// section header above). TS's `stepProjectile` spawns `splitCount` child
+// shards at every projectile death that isn't a sticky-stick or a
+// pierce-survival (projectile.ts sites: sticky fuse-end :236, lifetime
+// expiry :248, player-hit consumption :513, terrain impact :579/:652,
+// boomerang home-return :673, range cap :700) and World.ts inserts them
+// with fresh ids AFTER each projectile's own step (World.ts:6854-6858).
+// `projectileSplitVelocities` (projectile.zig, bit-exact vs TS's
+// `spawnSplit`) computes the fan; the three pieces below are the missing
+// orchestration:
+//
+//   1. `projectile_lifetime_pre_step` — TS's split parent is the INPUT
+//      `proj` spread (`{...proj, x, y, vx, vy, ...}`), whose lifetimeMs
+//      is the PRE-decrement value; Zig's section 3 decrements
+//      `lifetime_ms` before section 4 ever sees the shard, so the
+//      pre-step value is stashed per slot and restored onto the parent
+//      snapshot (child lifetime = max(280, parent.lifetimeMs * 0.42) —
+//      recomputing via `lifetime_ms + eff_dt` would not be bit-exact).
+//   2. `pending_split_parents`/`pending_split_valid` — deaths are
+//      DISCOVERED across two phases (section 3 motion/expiry, section 4
+//      hit resolution) but TS consumes split RNG draws strictly in
+//      ascending projectile-id order (one interleaved per-projectile
+//      pass). Spawning at each Zig discovery site would reorder the RNG
+//      stream whenever a lower-id shard dies in section 4 while a
+//      higher-id shard dies in section 3 (draw order would flip).
+//      Deaths are therefore only RECORDED (full parent snapshot, taken
+//      before any post-death mutation like the parry velocity flip),
+//      and one ordered pass right after section 4 does every draw +
+//      insertion in slot order — `state.projectiles` is append-ordered
+//      with monotonically increasing ids and section 9's compaction is
+//      an order-preserving copy-down, so slot order == TS's
+//      sorted-id order.
+//   3. The materialisation pass itself (see its call site after
+//      section 4) — child field inheritance mirrors `spawnSplit`'s
+//      spec literal (projectile.ts:922-955) field for field.
+//
+// Scratch is file-scope (wasm-freestanding: no allocator; stepWorld is
+// single-threaded and non-reentrant on both hosts). Slots are cleared
+// eagerly at the top of section 3's loop each tick, so stale entries
+// from a prior tick/world can never leak across compaction reindexing.
+var pending_split_valid: [world_state.MAX_PROJECTILES]bool = @splat(false);
+var pending_split_parents: [world_state.MAX_PROJECTILES]world_state.ProjectileEntity = undefined;
+var projectile_lifetime_pre_step: [world_state.MAX_PROJECTILES]f64 = @splat(0);
+
+/// Record a split-eligible projectile death for the post-section-4
+/// materialisation pass. `slot` is the projectile's CURRENT index in
+/// `state.projectiles` (stable between section 3 and the pass — nothing
+/// spawns or compacts in between). The parent snapshot is taken NOW so
+/// later same-tick mutations (parry/mirror velocity flip, lifetime
+/// zeroing) can't corrupt the fan; `lifetime_pre` restores the TS
+/// parent's pre-decrement lifetime (see the section comment above).
+/// No-split shards are filtered here so the pass can skip them without
+/// consuming RNG — mirrors TS's `(proj.splitCount ?? 0) > 0` guard
+/// wrapping every `spawnSplit` call site.
+fn queueSplitDeath(
+    slot: u32,
+    proj: *const world_state.ProjectileEntity,
+    lifetime_pre: f64,
+) void {
+    if (!(proj.flags.has_split and proj.split_count > 0)) return;
+    pending_split_parents[slot] = proj.*;
+    pending_split_parents[slot].lifetime_ms = lifetime_pre;
+    pending_split_valid[slot] = true;
+}
+
+/// TS's player-hit split site (projectile.ts:513) is only reached when
+/// the shard is CONSUMED by the body contact — a sticky shard sticks
+/// (splits later, at fuse-end) and a shard with pierce budget survives
+/// (no split). Zig's section-4 mitigation branches (ninja i-frames,
+/// Ghost Guard, parry, mirror shield, generic shield block) consume the
+/// shard BEFORE its own pierce/sticky checks run, so each of those
+/// hooks applies this same eligibility test explicitly. The generic
+/// post-damage kill site needs no guard — its sticky/pierce branches
+/// already diverted above it, same as TS.
+fn splitEligibleOnPlayerHit(proj: *const world_state.ProjectileEntity) bool {
+    if (proj.impact == .sticky) return false;
+    if (proj.impact == .pierce_chain and proj.pierce_remaining > 0) return false;
+    return true;
+}
+
 pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     state.event_count = 0;
     state.header.tick += 1;
@@ -6067,6 +6156,10 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     var pi: u32 = 0;
     while (pi < state.projectile_count) : (pi += 1) {
         const proj_ptr = &state.projectiles[pi];
+        // Split-spawn orchestrator (Track E1) bookkeeping — see the
+        // section comment above `queueSplitDeath` for why both exist.
+        pending_split_valid[pi] = false;
+        projectile_lifetime_pre_step[pi] = proj_ptr.lifetime_ms;
         const result = projectile.projectilePreStep(proj_ptr, eff_dt);
         if (result == .advance) {
             // Bridge ProjectileEntity → ProjectileKinematicsV2 →
@@ -6114,7 +6207,60 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
             proj_ptr.bounces_remaining = @intCast(kine.bounces_remaining);
             // Terrain hit on a non-bouncing shard → expire it (stopped at the
             // wall). End-of-tick compaction removes lifetime<=0 projectiles.
-            if (r.expired != 0) proj_ptr.lifetime_ms = 0;
+            // Split-eligible (Track E1): TS's terrain-impact split site
+            // (projectile.ts:579/:652) splits at the post-integration
+            // position with the post-pathing velocity — exactly what the
+            // write-back above just stored. stepV2's own first-tick
+            // muzzle-overlap exemption already gated `r.expired`, same as
+            // TS's `proj.ageMs !== 0` guard at that site.
+            if (r.expired != 0) {
+                queueSplitDeath(pi, proj_ptr, projectile_lifetime_pre_step[pi]);
+                proj_ptr.lifetime_ms = 0;
+            } else if (r.bounced == 0) {
+                // TS steps 5 + 6 (projectile.ts:669-715) — boomerang
+                // home-return and the range cap. stepV2 never implemented
+                // either (it ends at the terrain check), so before Track
+                // E1 a ranged-capped shard flew to full lifetime and a
+                // returning boomerang orbited its origin forever on the
+                // wasm path. Both are split-eligible deaths in TS. The
+                // bounce branch is exempt exactly like TS (its early
+                // return at :562 skips steps 5/6 on the tick it bounces).
+                if (proj_ptr.pathing == .boomerang and proj_ptr.flags.returning) {
+                    // kine.origin_x/y carry TS's exact coalescing
+                    // (`proj.originX ?? proj.x`, pre-motion x when unset)
+                    // — proj_ptr.origin_x is only meaningful under
+                    // has_origin, and the bridge above already resolved
+                    // that.
+                    const bdx = proj_ptr.x - kine.origin_x;
+                    const bdy = proj_ptr.y - kine.origin_y;
+                    const catch_r = projectile.BOOMERANG_RETURN_RADIUS + proj_ptr.radius;
+                    if (bdx * bdx + bdy * bdy < catch_r * catch_r) {
+                        queueSplitDeath(pi, proj_ptr, projectile_lifetime_pre_step[pi]);
+                        proj_ptr.lifetime_ms = 0;
+                    }
+                } else if (proj_ptr.pathing != .boomerang and
+                    proj_ptr.flags.has_range and
+                    proj_ptr.range_px > 0 and
+                    proj_ptr.traveled_px >= proj_ptr.range_px)
+                {
+                    queueSplitDeath(pi, proj_ptr, projectile_lifetime_pre_step[pi]);
+                    proj_ptr.lifetime_ms = 0;
+                }
+            }
+        } else if (result == .sticky_expired or result == .lifetime_expired) {
+            // TS's pre-motion death sites (projectile.ts:236 sticky
+            // fuse-end, :248 lifetime expiry): the shard dies THIS tick,
+            // before motion, splitting from its as-is state (a stuck
+            // sticky shard has vx=vy=0 — zeroed at the stick site in
+            // section 4 below — so its fan takes the speed==0/baseAngle=0
+            // shape, same as TS). Before Track E1 these two results were
+            // silently unhandled: a shard whose residual lifetime (or
+            // sticky fuse) was <= dt froze as a zombie forever — never
+            // advanced (pre-step short-circuits), never compacted
+            // (lifetime_ms stayed > 0), hit-testing players at its frozen
+            // position every tick.
+            queueSplitDeath(pi, proj_ptr, projectile_lifetime_pre_step[pi]);
+            proj_ptr.lifetime_ms = 0;
         }
     }
 
@@ -6126,6 +6272,13 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
     while (pi2 < state.projectile_count) : (pi2 += 1) {
         const proj_ptr = &state.projectiles[pi2];
         if (proj_ptr.lifetime_ms <= 0) continue;
+        // Sticky linger (Track E1): a stuck shard is inert until its fuse
+        // ends — TS's stepProjectile early-returns for it (projectile.ts:
+        // 225-242) so it never re-collides with ANY candidate pool.
+        // Without this skip the frozen shard re-entered the hit chain
+        // every tick (re-damaging + re-arming its own fuse at the sticky
+        // branch below, so the fuse-end split could never fire).
+        if (proj_ptr.flags.has_sticky_fuse and proj_ptr.sticky_fuse_ms > 0) continue;
         var di: u32 = 0;
         while (di < state.destructible_count) : (di += 1) {
             const dest_ptr = &state.destructibles[di];
@@ -6439,6 +6592,15 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 // "consumed, zero damage, no event" shape Ghost Guard's own
                 // evasion immediately below already establishes.
                 if (isNinjaEvading(state, ph2)) {
+                    // Split-eligible consumption (Track E1): TS's split
+                    // happens INSIDE stepProjectile at body contact
+                    // (projectile.ts:513), BEFORE resolveRangedHit's
+                    // mitigation — an evaded hit still fans children in
+                    // TS (the suppressed event only skips damage,
+                    // World.ts:6854 inserts `result.spawned` regardless).
+                    if (splitEligibleOnPlayerHit(proj_ptr)) {
+                        queueSplitDeath(pi2, proj_ptr, projectile_lifetime_pre_step[pi2]);
+                    }
                     proj_ptr.lifetime_ms = 0;
                     break;
                 }
@@ -6457,6 +6619,11 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                     @sqrt(state.players[ph2].vx * state.players[ph2].vx + state.players[ph2].vy * state.players[ph2].vy) > combat.NINJA_GHOST_GUARD_MOVE_SPEED_THRESHOLD)
                 {
                     state.players[ph2].ghost_guard_charge_until_tick = 0;
+                    // Same TS-splits-before-mitigation reasoning as the
+                    // i-frames hook above (Track E1).
+                    if (splitEligibleOnPlayerHit(proj_ptr)) {
+                        queueSplitDeath(pi2, proj_ptr, projectile_lifetime_pre_step[pi2]);
+                    }
                     proj_ptr.lifetime_ms = 0;
                     break;
                 }
@@ -6489,6 +6656,17 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                         state.players[ph2].x,
                         state.players[ph2].y,
                     );
+                    // Split at the contact (Track E1): in TS the shard's
+                    // own stepProjectile already consumed the hit and
+                    // fanned children (projectile.ts:513) before the
+                    // deflect override re-inserted the reflected shard
+                    // under the same id (World.ts:6867-6879) — a parried
+                    // split shard BOTH splits AND reflects. Queue the
+                    // snapshot NOW, before the velocity flip below, so
+                    // the fan takes the incoming direction like TS's.
+                    if (splitEligibleOnPlayerHit(proj_ptr)) {
+                        queueSplitDeath(pi2, proj_ptr, projectile_lifetime_pre_step[pi2]);
+                    }
                     // REFLECTIVE parry (mirrors client/src/sim/World.ts): rather
                     // than dropping the shard, send it back — now OWNED by the
                     // parrier so it can strike the attacker. Travel/age reset so
@@ -6602,6 +6780,13 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                             state.players[ph2].x,
                             state.players[ph2].y,
                         );
+                    }
+                    // Split at the contact (Track E1) — same reasoning as
+                    // the parry hook above; TS splits on a shielded hit
+                    // whether the shard is then mirrored back or dropped,
+                    // and the fan must take the PRE-reflect velocity.
+                    if (splitEligibleOnPlayerHit(proj_ptr)) {
+                        queueSplitDeath(pi2, proj_ptr, projectile_lifetime_pre_step[pi2]);
                     }
                     // Mirror shield: bounce the shard back at the attacker
                     // (owned by the blocker) instead of expiring it.
@@ -6794,6 +6979,13 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                 if (proj_ptr.impact == .sticky) {
                     proj_ptr.sticky_fuse_ms = projectile.STICKY_FUSE_MS;
                     proj_ptr.flags.has_sticky_fuse = true;
+                    // Freeze in place (Track E1) — TS's stuck literal sets
+                    // vx/vy to 0 (projectile.ts:470-471). Matters for the
+                    // fuse-end split: a zero-velocity parent takes the
+                    // speed==0 fan (baseAngle 0, child speed floor 180),
+                    // which is exactly TS's sticky fuse-end shape.
+                    proj_ptr.vx = 0;
+                    proj_ptr.vy = 0;
                     proj_ptr.lifetime_ms = @max(
                         proj_ptr.lifetime_ms,
                         projectile.STICKY_FUSE_MS + eff_dt,
@@ -6824,9 +7016,132 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
                             state.players[ph2].y,
                         );
                     }
+                    // Generic hit consumption — TS's projectile.ts:513
+                    // split site (Track E1). No eligibility guard needed
+                    // here: the sticky arm above and the pierce-survive
+                    // branch further up already diverted, mirroring TS's
+                    // own ordering (sticky :458, pierce :495, split :513).
+                    queueSplitDeath(pi2, proj_ptr, projectile_lifetime_pre_step[pi2]);
                     proj_ptr.lifetime_ms = 0;
                 }
                 break;
+            }
+        }
+    }
+
+    // 4s. Split-child materialisation (Track E item E1 — the split-spawn
+    //     orchestrator; see the section comment above `queueSplitDeath`
+    //     for the full design). One ordered pass over the slots sections
+    //     3/4 marked: compute each parent's fan via
+    //     `projectileSplitVelocities` (bit-exact vs TS `spawnSplit`,
+    //     threading `header.rng_state` in ascending slot order — TS
+    //     consumes its persisted rng cursor in exactly this order, one
+    //     parent at a time, World.ts:6785-6858) and insert the children
+    //     with the same field inheritance TS's SpawnedChild spec carries
+    //     (projectile.ts:922-955). Children join `state.projectiles`
+    //     NOW — after all hit resolution, before compaction — so like
+    //     TS's `remainingProjectiles` inserts they exist in the end-of-
+    //     tick state but neither move nor collide until next tick.
+    {
+        // Bound at the PRE-pass count: insertions below grow
+        // `projectile_count`, and slots >= the section-3 count were
+        // never cleared this tick — walking into them would read stale
+        // valid flags from an earlier, larger tick.
+        const split_scan_count = state.projectile_count;
+        var spi: u32 = 0;
+        while (spi < split_scan_count) : (spi += 1) {
+            if (!pending_split_valid[spi]) continue;
+            pending_split_valid[spi] = false;
+            const parent = &pending_split_parents[spi];
+            // Always offer the FULL SPLIT_MAX buffer: the fan fn advances
+            // rng once per EMITTED child, and TS (which has no world
+            // capacity cap at all) always emits min(splitCount, 8) —
+            // a smaller buffer here would desync the rng stream.
+            var fan: [projectile.SPLIT_MAX]projectile.SplitVelocity = undefined;
+            const fan_res = projectile.projectileSplitVelocities(
+                parent,
+                state.header.rng_state,
+                fan[0..],
+            );
+            state.header.rng_state = fan_res.rng_state;
+            // Child field inheritance — mirrors spawnSplit's spec literal
+            // (projectile.ts:922-955) field for field. parent.lifetime_ms
+            // already carries the TS parent's pre-decrement value (see
+            // queueSplitDeath).
+            const child_radius = @max(
+                projectile.SPLIT_RADIUS_MIN,
+                parent.radius * projectile.SPLIT_RADIUS_SCALE,
+            );
+            const child_damage = parent.damage * projectile.SPLIT_DAMAGE_SCALE;
+            const child_lifetime = @max(
+                projectile.SPLIT_MIN_LIFETIME_MS,
+                parent.lifetime_ms * projectile.SPLIT_LIFETIME_SCALE,
+            );
+            const child_impact: world_state.ProjectileImpact =
+                if (parent.impact == .sticky) .sticky else .none;
+            const child_impact_radius =
+                (if (parent.flags.has_impact_radius) parent.impact_radius_px else 0.0) *
+                projectile.SPLIT_IMPACT_RADIUS_SCALE;
+            const child_range: f64 =
+                if (parent.flags.has_range) parent.range_px * projectile.SPLIT_RANGE_SCALE else 0.0;
+            var ci: u32 = 0;
+            while (ci < fan_res.count) : (ci += 1) {
+                // Id advances for EVERY computed child (TS allocates one
+                // per child unconditionally — it has no capacity cap);
+                // only the insertion respects the Zig-side defensive
+                // MAX_PROJECTILES cap, same drop-on-full discipline as
+                // the other spawn sites.
+                const new_id: u32 = state.header.next_entity_id;
+                state.header.next_entity_id += 1;
+                if (state.projectile_count >= world_state.MAX_PROJECTILES) continue;
+                const slot: u32 = state.projectile_count;
+                state.projectile_count += 1;
+                state.projectiles[slot] = .{
+                    .x = parent.x,
+                    .y = parent.y,
+                    .vx = fan[ci].vx,
+                    .vy = fan[ci].vy,
+                    .radius = child_radius,
+                    .damage = child_damage,
+                    .lifetime_ms = child_lifetime,
+                    .age_ms = 0,
+                    .traveled_px = 0,
+                    .origin_x = parent.x,
+                    .origin_y = parent.y,
+                    .homing_strength = 0,
+                    .acceleration_multiplier = 0,
+                    .gravity_scale = 0,
+                    .range_px = child_range,
+                    .slow_multiplier = parent.slow_multiplier,
+                    .sticky_fuse_ms = 0,
+                    .impact_radius_px = child_impact_radius,
+                    .id = new_id,
+                    .bounces_remaining = 0,
+                    .pierce_remaining = 0,
+                    .split_count = 0, // no infinite cascade (TS :944)
+                    .flags = .{
+                        .has_owner = parent.flags.has_owner,
+                        .has_impact = true,
+                        .has_split = false,
+                        .has_slow = parent.flags.has_slow,
+                        .has_homing = false,
+                        .has_acceleration = false,
+                        .has_gravity_scale = false,
+                        .has_range = parent.flags.has_range,
+                        .has_age = true,
+                        .has_traveled = true,
+                        .has_origin = true,
+                        .returning = false,
+                        .has_sticky_fuse = false,
+                        .has_impact_radius = child_impact_radius > 0,
+                    },
+                    .pathing = .straight, // children never cascade pathing (TS :938)
+                    .element = parent.element,
+                    .impact = child_impact,
+                    .shape = parent.shape,
+                    .owner_id_len = parent.owner_id_len,
+                    .owner_id_bytes = parent.owner_id_bytes,
+                };
             }
         }
     }
