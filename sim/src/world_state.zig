@@ -1001,13 +1001,20 @@ pub const FireEntity = extern struct {
 /// ALWAYS has a living owner (types.ts: "never null") — no has_owner flag
 /// needed.
 ///
-/// Deliberately has NO wasm-ABI crossing today: types.ts's own header
-/// comment is explicit that `PaperDoubleEntity` does NOT cross the WASM
-/// ABI (six-axes-goal.md "Zig line" — TS-only combat/ability state, not
-/// identity/roster/resource state). This mirror exists purely for
-/// step_world's OWN internal use (movement/expiry/collision/compaction),
-/// ready for a later phase's ability-cast system to spawn into — see this
-/// pass's own report for what's deliberately NOT wired yet (spawn-on-cast).
+/// CROSSES the wasm ABI as of Track E1c (gospel-goal.md, the Paper
+/// Double bridge): worldStateBridge.ts's packPaperDouble/unpackPaperDouble
+/// round-trip this struct field-for-field every full-sync tick. The
+/// original 2026-07-20 cut deliberately had NO ABI crossing ("TS-only
+/// combat/ability state" per the six-axes Zig line), but that stopped
+/// being tenable the moment world.zig's `.paper_double` cast arm + full
+/// step/collide/compact pipeline landed: the full-sync hosts repack the
+/// whole buffer every tick, so an unbridged decoy — whether TS-spawned or
+/// Zig-spawned — was wiped one tick after it appeared (the Z0e/Z1a/Z2
+/// wipe-on-repack bug class; wave-1's split-spawn lane had to drive
+/// stepWorld natively in tests because of exactly this). Field offsets
+/// are pinned by comptime asserts next to the size assert below, and
+/// offset_paper_doubles()/sizeof_paper_double_entity() pin the section
+/// placement against the TS bridge's own derivation.
 pub const PaperDoubleEntity = extern struct {
     x: f64,
     y: f64,
@@ -1759,11 +1766,11 @@ pub const WorldState = extern struct {
     _pad_after_pickup_count: [4]u8 = .{ 0, 0, 0, 0 },
     pickups: [MAX_PICKUPS]PickupEntity,
 
-    /// Paper Double decoys (2026-07-20 gap-closure pass item 3). Not yet
-    /// spawned by anything (no Zig ability-cast system exists — see
-    /// PaperDoubleEntity's own doc comment) but fully stepped/collided/
-    /// compacted by stepWorld every tick, ready for a later phase's
-    /// spawn-on-cast hook.
+    /// Paper Double decoys (2026-07-20 gap-closure pass item 3). Spawned
+    /// by world.zig's `.paper_double` cast arm (section 6z), fully
+    /// stepped/collided/compacted by stepWorld every tick, and BRIDGED
+    /// across the full-sync repack as of Track E1c — see
+    /// PaperDoubleEntity's own doc comment for the ABI-crossing history.
     paper_double_count: u32,
     _pad_after_paper_double_count: [4]u8 = .{ 0, 0, 0, 0 },
     paper_doubles: [MAX_PAPER_DOUBLES]PaperDoubleEntity,
@@ -2167,6 +2174,42 @@ comptime {
     // PaperDoubleEntity's own doc comment for the DestructibleEntity-
     // pattern rationale.
     std.debug.assert(@sizeOf(PaperDoubleEntity) == 96);
+    // Track E1c (gospel-goal.md, the Paper Double bridge) — bridged-field
+    // offset locks for worldStateBridge.ts's packPaperDouble/
+    // unpackPaperDouble codec, same role as the PlayerEntity offset locks
+    // above: the TS side hardcodes these relative offsets, so a future
+    // growth cut that moves any of them trips loudly at `zig build`
+    // before the codec silently drifts. The stale "does NOT cross the
+    // WASM ABI" note in PaperDoubleEntity's own doc comment is CLOSED by
+    // that cut — decoys are full pack/unpack citizens now (they had to
+    // be: the full-sync hosts repack the whole buffer every tick, so an
+    // unbridged decoy was wiped one tick after it spawned, the same
+    // wipe-on-repack bug class as Z0e/Z1a/Z2).
+    std.debug.assert(@offsetOf(PaperDoubleEntity, "x") == 0);
+    std.debug.assert(@offsetOf(PaperDoubleEntity, "y") == 8);
+    std.debug.assert(@offsetOf(PaperDoubleEntity, "vx") == 16);
+    std.debug.assert(@offsetOf(PaperDoubleEntity, "vy") == 24);
+    std.debug.assert(@offsetOf(PaperDoubleEntity, "health") == 32);
+    std.debug.assert(@offsetOf(PaperDoubleEntity, "remaining_ms") == 40);
+    std.debug.assert(@offsetOf(PaperDoubleEntity, "id") == 48);
+    std.debug.assert(@offsetOf(PaperDoubleEntity, "owner_id_len") == 52);
+    std.debug.assert(@offsetOf(PaperDoubleEntity, "owner_id_bytes") == 56);
+    // The paper-double section keeps the same "u32 count + 4 pad + array"
+    // preamble shape every other entity section uses — the TS bridge
+    // derives the array offset as count-word + 8, so pin that shape here
+    // (the count word's own absolute position is pinned at runtime by the
+    // offset_paper_doubles() export vs the bridge's derived constant,
+    // paperDoubleBridge.test.ts gate A).
+    std.debug.assert(@offsetOf(WorldState, "paper_doubles") ==
+        @offsetOf(WorldState, "paper_double_count") + 8);
+    // Track E1c — header.next_entity_id is BRIDGED as of the same cut
+    // (packWorldState used to write a placeholder 0 here every repack,
+    // which reset the spawn-id cursor world.zig's spawn sites increment —
+    // wasm-assigned entity ids restarted from 0 after every full-sync
+    // repack and could collide with live entity ids). The TS codec
+    // hardcodes byte offset 12 in the header; pin it like the
+    // PlayerEntity locks above.
+    std.debug.assert(@offsetOf(WorldStateHeader, "next_entity_id") == 12);
     // PendingInstantAoe (2026-07-20 gap-closure pass — deferred-write AOE
     // primitive): 9×f64 (72) + caster_idx u32 (4) + 3×u8 flags + 1×u8 pad
     // (4) = 80, already 8-byte-aligned, no tail padding. Doesn't cross the
@@ -2312,6 +2355,29 @@ pub export fn offset_player_draft_state() u32 {
 /// Z2) — same contract as sizeof_melee_swing_memory above.
 pub export fn sizeof_player_draft_state() u32 {
     return @intCast(@sizeOf(PlayerDraftState));
+}
+
+/// Byte offset of `paper_doubles[0]` from the start of `WorldState`
+/// (Track E1c — the Paper Double bridge). The full-sync hosts repack the
+/// whole buffer every tick, so live decoys must round-trip through the
+/// pack like every other entity collection — before this bridge, the
+/// pack left the section zero-filled and every live decoy was wiped one
+/// tick after it spawned (the Z0e/Z1a/Z2 wipe-on-repack bug class). The
+/// bridge derives its own offset from the layout constants; this export
+/// exists so paperDoubleBridge.test.ts gate A can assert the two
+/// derivations agree, same contract as offset_melee_swing above.
+pub export fn offset_paper_doubles() u32 {
+    return @intCast(@offsetOf(WorldState, "paper_doubles"));
+}
+
+/// @sizeOf pin for the bridge's PAPER_DOUBLE_ENTITY_SIZE stride (Track
+/// E1c) — same contract as sizeof_melee_swing_memory above.
+pub export fn sizeof_paper_double_entity() u32 {
+    return @intCast(@sizeOf(PaperDoubleEntity));
+}
+
+pub export fn world_state_max_paper_doubles() u32 {
+    return @intCast(MAX_PAPER_DOUBLES);
 }
 
 pub export fn world_state_max_players() u32 {

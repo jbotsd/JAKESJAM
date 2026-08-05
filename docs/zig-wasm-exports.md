@@ -310,6 +310,9 @@ wire contract — bumping any number is a protocol-version change.
 | `offset_player_movement` | byte offset | `movementMemoryBridge.test.ts` (Track Z0e — bridged movement memory) |
 | `offset_melee_swing` | byte offset | `meleeSwingMemoryBridge.test.ts` (Track Z1a — bridged melee swing FSM memory) |
 | `sizeof_melee_swing_memory` | 32 | `meleeSwingMemoryBridge.test.ts` (Track Z1a) |
+| `offset_paper_doubles` | byte offset | `paperDoubleBridge.test.ts` (Track E1c — bridged Paper Double decoys) |
+| `sizeof_paper_double_entity` | 96 | `paperDoubleBridge.test.ts` (Track E1c) |
+| `world_state_max_paper_doubles` | 16 | `paperDoubleBridge.test.ts` (Track E1c) |
 | `combat_hitbox_scale` | per-archetype sizeScale | `combatHitboxScaleParity.test.ts` (Track Z1a item 2 — class-scaled combat hitboxes) |
 | `world_state_max_statics` | 256 | `worldStateLayout.test.ts` (I15) |
 | `world_state_max_events_per_tick` | 64 | `worldStateLayout.test.ts` (I18) |

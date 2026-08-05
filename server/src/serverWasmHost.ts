@@ -607,6 +607,19 @@ function mergeUnpacked(
     projectiles: stableMergeRecord(state.projectiles, unpacked.projectiles),
     satellites: stableMergeRecord(state.satellites, unpacked.satellites),
     pickups: stableMergeRecord(state.pickups, unpacked.pickups),
+    // Paper Doubles (Track E1c — the Paper Double bridge): carried like
+    // every entity collection above — without this, the next pack wiped
+    // every live decoy one tick after it spawned. Mirrors the client
+    // backend's mergeUnpacked exactly.
+    paperDoubles: stableMergeRecord(
+      state.paperDoubles ?? {},
+      unpacked.paperDoubles,
+    ),
+    // Zig's post-step spawn-id cursor (Track E1c): carried so the next
+    // pack writes the REAL cursor back instead of the derived floor (see
+    // WorldState.nextEntityId's doc comment in types.ts). Mirrors the
+    // client backend exactly.
+    nextEntityId: unpacked.nextEntityId,
     // Zig's movement memory rides the state object between packs (Track
     // Z0e) — REPLACED wholesale each tick (Zig's own post-step truth,
     // keyed by id). Mirrors the client backend's mergeUnpacked exactly.

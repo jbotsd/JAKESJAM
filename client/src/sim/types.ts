@@ -1220,11 +1220,15 @@ export type SatelliteEntity = {
  * `SatelliteEntity`, not ability/window state. `state.paperDoubles` crosses
  * the network snapshot-delta wire (net/snapshotDelta.ts, net/
  * snapshotDeltaBits.ts's `PAPER_DOUBLE` bits) exactly like those two
- * collections do. It does NOT cross the WASM ABI (six-axes-goal.md "Zig
- * line" still applies — this is TS-only combat/ability state, not identity/
- * roster/resource state; the opt-in wasm physics dev step spreads
- * `...state` through untouched, matching every other collection it doesn't
- * know about).
+ * collections do. It ALSO crosses the WASM ABI as of Track E1c
+ * (gospel-goal.md, the Paper Double bridge): worldStateBridge.ts's
+ * packPaperDouble/unpackPaperDouble round-trip `state.paperDoubles`
+ * through world_state.zig's PaperDoubleEntity mirror every full-sync
+ * tick — the original "TS-only, no ABI crossing" call stopped being
+ * tenable once world.zig grew its own `.paper_double` cast arm + full
+ * step/collide/compact pipeline (an unbridged decoy was wiped by the
+ * hosts' every-tick repack one tick after it appeared, whichever side
+ * spawned it).
  */
 export type PaperDoubleEntity = {
   id: EntityId;
@@ -1449,6 +1453,24 @@ export type WorldState = {
    * so each round starts clean. Absent when no fire hazard is active.
    */
   fireHazardTimerMs?: number;
+  /**
+   * Zig full-sync path ONLY (Track E1c — the Paper Double bridge):
+   * carrier for `WorldStateHeader.next_entity_id`, Zig's spawn-id cursor
+   * (world.zig's spawn sites read+increment it for projectile children,
+   * paper doubles, etc). `unpackWorldState` reads the post-step cursor
+   * out and the wasm hosts' `mergeUnpacked` seats it here so the NEXT
+   * tick's `packWorldState` writes it back — before this carrier the
+   * pack wrote a placeholder 0, resetting the cursor every repack so
+   * wasm-assigned ids restarted from 0 and could collide with live
+   * entity ids. Pack-side the value is `max(this, max-live-entity-id+1)`
+   * (the derived floor mirrors World.ts's `nextEntityIdSeed`), so a
+   * missing/stale carrier can never regress the cursor below safety.
+   *
+   * The TS-authoritative path never reads or writes it — its allocator
+   * is `WorldRuntime.nextEntityId`. Optional/additive + OFF-WIRE per the
+   * `movementMemory` contract below.
+   */
+  nextEntityId?: number;
   /**
    * Zig full-sync path ONLY (Track Z0e): per-player movement memory
    * bridged across the every-tick WorldState repack. The wasm hosts

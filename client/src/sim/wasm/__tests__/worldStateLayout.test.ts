@@ -105,6 +105,14 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     expect(ex.sizeof_destructible_entity()).toBe(64);
     expect(ex.sizeof_fire_entity()).toBe(88);
     expect(ex.sizeof_pickup_entity()).toBe(64);
+    // Track E1c (the Paper Double bridge): the entity gained a real
+    // sizeof export once the TS codec started packing it — see
+    // world_state.zig's PaperDoubleEntity comptime asserts.
+    expect(
+      (
+        ex as unknown as { sizeof_paper_double_entity: () => number }
+      ).sizeof_paper_double_entity(),
+    ).toBe(96);
   });
 
   test("max-entity counts match the wire contract", () => {
@@ -114,6 +122,11 @@ describe("WorldState extern struct layout (Phase G1c)", () => {
     expect(ex.world_state_max_destructibles()).toBe(64);
     expect(ex.world_state_max_fire()).toBe(32);
     expect(ex.world_state_max_pickups()).toBe(32);
+    expect(
+      (
+        ex as unknown as { world_state_max_paper_doubles: () => number }
+      ).world_state_max_paper_doubles(),
+    ).toBe(16);
   });
 
   test("total WorldState size derives correctly from entity sizes", () => {
