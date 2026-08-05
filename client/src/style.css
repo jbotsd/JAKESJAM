@@ -841,6 +841,28 @@ button.btn-danger:hover:not(:disabled) {
   }
 }
 
+/* Short DESKTOP windows (open-doors 0.5): at 1280x700 the full-height
+   hero block pushed LOBBY to the bottom edge and cut the button row at
+   the fold. Compress the hero's vertical rhythm so the primary CTA and
+   the action rows sit above a 700px fold; portrait phones (fine at
+   393x852) are excluded by the min-width guard, landscape phones by the
+   561px floor (the 560px block above owns them). */
+@media (min-width: 700px) and (min-height: 561px) and (max-height: 800px) {
+  .splash-stage {
+    gap: 12px;
+    padding: 20px 32px;
+  }
+  .splash-logo {
+    width: min(400px, 100%);
+  }
+  .splash-kicker {
+    margin-bottom: 0;
+  }
+  .splash-copy {
+    margin: 0;
+  }
+}
+
 /* ─── Touch controls (mobile match HUD) ──────────────────────────────── */
 
 .tc-root {
