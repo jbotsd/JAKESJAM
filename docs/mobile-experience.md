@@ -526,7 +526,12 @@ same convention the whole doc has used since 2026-07-04/07-09/07-28).
   survives any future change to the feed string's line count or font size —
   the exact failure mode that reopened this the first time (C1's compact-mode
   reposition moved `feedText` but nothing referenced its new position).
-- **C4 — ActionBarSystem gated off on touch in HangoutScene.** The venue is
+- **C4 — ActionBarSystem gated off on touch in HangoutScene.**
+  *(SUPERSEDED 2026-08-05 by open-doors 1.5a: venue touch now carries the
+  full combat verbs — `combatButtons: this.mode === "venue"`, passthrough
+  in `hangoutTouchKeys.ts` — so the bar is load-bearing on touch again and
+  the `!isTouchPrimary()` gate below was removed. Historical record of the
+  2026-07-29 state follows as written.)* The venue is
   walk-only on touch (`combatButtons: false` in `create()`, and the input
   assembly in `update()` never sets Fire/Shield/slot bits for a touch
   player — `keys = t.keys & (movement-only mask)` unconditionally replaces
