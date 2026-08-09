@@ -1,5 +1,11 @@
 # The Convergence — one big /goal, built to be run under ultracode
 
+> **HISTORICAL — not a live tracker (banner added 2026-08-09).** The one
+> goal doc is `docs/gospel-goal.md`. This doc's tracks closed 2026-07-25
+> (Z0–Z2, V, L, B) and it was superseded by `finish-line-goal.md`, which
+> is itself now historical. Kept for its receipts — the Z0 harvest and
+> the divergence-sweep tables — not for its plan. Do not add items here.
+
 **Status:** Orchestration contract for finishing the game's core in one
 sustained multi-agent push. Written 2026-07-23. This doc does not replace
 `cohesion-goal.md` — it ORCHESTRATES its remaining pillars (P2/P3/P4)

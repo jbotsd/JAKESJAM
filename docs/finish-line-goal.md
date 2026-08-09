@@ -1,5 +1,12 @@
 # The Finish Line — everything left, exhaustively, one /goal
 
+> **HISTORICAL — not a live tracker (banner added 2026-08-09).** The one
+> goal doc is `docs/gospel-goal.md`. Every track here is closed except
+> two rows, both of which live in gospel now: F2 audio wiring (blocked
+> on missing input → gospel Doors 4.1) and the Z4 flip (since RATIFIED
+> as "GO ALL ZIG" → gospel Track E2). Kept for its receipts and its Z5
+> record; do not add items here.
+
 **Status:** Successor to `convergence-goal.md` (Z0-Z2 CLOSED, Track V/L/B
 CLOSED as of 2026-07-25) and the melee-feel ledger (both class loops
 render-complete). This doc is the next exhaustive list — every remaining
