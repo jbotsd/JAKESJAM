@@ -1053,6 +1053,28 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (final) · **Closing gate at HEAD, all green** — zig
+  **172/172** (9/9 steps), client **1983 pass / 3 skip / 0 fail**,
+  data-warehouse **30/0**, server **369/0** under an explicit
+  `USE_WASM_STEP_WORLD=0` AND **369/0** under `=1` + `WASM_STRICT=1`,
+  port passport **PASS**. Working tree clean.
+
+  One honest correction to an earlier row: the passport ran **9/9**
+  today, not the 12/12 recorded this morning. Nothing regressed and
+  nothing was skipped — `server/src/replayStore.ts` enforces a total-BYTE
+  quota over `.replays/` and deletes oldest-first, so tonight's two
+  investigation servers wrote 2 new `.jjr` files and evicted several
+  older ones.
+
+- [ ] **P6 Pin the passport corpus (L8).** "12/12 agreed" and "9/9
+      agreed" read like the same strength of claim and are not — the
+      determinism gate currently samples whatever survives a size-capped,
+      self-evicting directory, so **running a server can delete the
+      fixtures the gate depends on**, and coverage silently shrinks
+      between runs. Copy a fixed, named set of replays somewhere the
+      quota cannot reach and have the passport assert it ran the whole
+      set, so the number means the same thing every time.
+
 - 2026-08-09 (zzz) · **SOAK PASSED. E2's machine evidence is complete; the
   flip is now blocked only on E2-a and a deploy.**
 
