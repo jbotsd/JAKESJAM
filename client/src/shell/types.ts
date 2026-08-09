@@ -26,7 +26,14 @@ export const ShellEvents = {
   ENTER_PRACTICE: "jakesjam:enter-practice",
   ENTER_ROOM: "jakesjam:enter-room",
   MATCH_STARTED: "jakesjam:match-started",
+  /** The shell reset out of a match (leave / room-left). NOT "the player
+   *  finished a fight" — see CYCLE_COMPLETED for that. */
   MATCH_ENDED: "jakesjam:match-ended",
+  /** A full cycle reached its results screen with the player in it: the
+   *  end-of-demo moment, and the highest-intent point in the journey
+   *  (Doors 1.2). Deliberately distinct from MATCH_ENDED, which fires
+   *  when someone walks OUT — the opposite of high intent. */
+  CYCLE_COMPLETED: "jakesjam:cycle-completed",
   RETURN_TO_LOBBY: "jakesjam:return-to-lobby",
   BACK_TO_SPLASH: "jakesjam:back-to-splash",
   CLIP_UPLOADED: "jakesjam:clip-uploaded",

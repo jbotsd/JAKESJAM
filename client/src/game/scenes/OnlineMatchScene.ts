@@ -31,7 +31,7 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { HighlightTracker } from "../highlights/highlightRules";
 import { ClipRecorder } from "../highlights/ClipRecorder";
 import { isClipsEnabled } from "../highlights/clipConsent";
-import { emitClipUploaded, ShellEvents } from "../../shell/events";
+import { emitClipUploaded, emitCycleCompleted, ShellEvents } from "../../shell/events";
 import { recordKill, recordDeath, recordStreak, recordMatch } from "../../shell/playerStats";
 import { pickDeathTip, type DeathTipSignal } from "../highlights/deathTip";
 import {
@@ -3148,6 +3148,12 @@ export class OnlineMatchScene extends Phaser.Scene {
           isLocal: pid === this.localPlayerId,
         };
       });
+    // Doors 1.2 — the end-of-demo moment. Fired here rather than on
+    // MATCH_ENDED (which means "walked out", the opposite of high intent)
+    // so whatever wants the player's peak-interest instant — today the
+    // email ask, later a play-again prompt — hangs off one honest signal
+    // instead of inferring it from scene transitions.
+    emitCycleCompleted();
     this.matchResultsOverlay.show(
       {
         winnerPlayerId: state.round.winnerPlayerId,

@@ -21,13 +21,66 @@
 // then fire the POST in the background — a slow network must never break
 // the eight-second promise. The server dedupes, so retries are free.
 
+import { ShellEvents } from "./types.js";
+
 const STORAGE_KEY = "jakesjam.signupEmail";
 const SESSION_SKIP_KEY = "jakesjam.gateSkip";
+/** "maybe later" in post-fight mode — persistent and timestamped, so a
+ *  refresh or a second tab does not re-ask someone who already declined. */
+const SKIP_UNTIL_KEY = "jakesjam.gateSkipUntil";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Permanent invite to #welcome on the JAKESJAM x INTREPID DEV server.
 const DISCORD_INVITE_URL = "https://discord.gg/XrRgTsXWzJ";
+
+// ── Doors 1.2 · DECISION 1 (Jake's) ──────────────────────────────────────
+//
+// Where does the email ask belong? Today it is the FIRST thing a visitor
+// meets — and since Doors 1.1 made the venue the landing, it is now the
+// ONLY thing between a stranger and the game. The end-of-demo-screen
+// pattern says ask at peak intent instead: after a full cycle, when they
+// know whether they care.
+//
+// Built per L4: the recommended change is implemented and DARK. While
+// this reads "boot", behaviour is preserved bit-for-bit, so ratifying is
+// exactly one line. Nothing auto-flips on silence — L4 names the live
+// gate position as consent-class.
+export type GatePosition = "boot" | "post-fight";
+
+/** ← THE ONE LINE. "boot" = today. "post-fight" = Decision 1 ratified. */
+const DEFAULT_GATE_POSITION: GatePosition = "boot";
+
+/** How long "maybe later" is honoured in post-fight mode. Long enough
+ *  that declining means something; short enough that a returning regular
+ *  is eventually asked again. */
+const SKIP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+/** Resolve the position. The override exists so the flip can be TESTED
+ *  and demoed without editing source: `?gate-position=post-fight`, or
+ *  localStorage `jakesjam.gatePosition`. */
+export function gatePosition(): GatePosition {
+  try {
+    const q = new URLSearchParams(window.location.search).get("gate-position");
+    if (q === "post-fight" || q === "boot") return q;
+    const stored = localStorage.getItem("jakesjam.gatePosition");
+    if (stored === "post-fight" || stored === "boot") return stored;
+  } catch {
+    /* storage/URL unavailable — fall through to the default */
+  }
+  return DEFAULT_GATE_POSITION;
+}
+
+/** True while a post-fight "maybe later" is still in its cooldown. */
+function skipCooldownActive(now: number): boolean {
+  try {
+    const until = Number(localStorage.getItem(SKIP_UNTIL_KEY) ?? "0");
+    // A clock that moved backwards must not extend a decline forever.
+    return Number.isFinite(until) && until > now && until - now <= SKIP_COOLDOWN_MS;
+  } catch {
+    return false;
+  }
+}
 
 function shouldSkip(): boolean {
   try {
@@ -36,6 +89,10 @@ function shouldSkip(): boolean {
     if (params.get("gate") === "off") return true;
     if (localStorage.getItem(STORAGE_KEY)) return true;
     if (sessionStorage.getItem(SESSION_SKIP_KEY)) return true;
+    // Post-fight mode only: a persistent decline. Deliberately NOT
+    // consulted in "boot" mode so the dark default is byte-identical to
+    // the behaviour that shipped.
+    if (gatePosition() === "post-fight" && skipCooldownActive(Date.now())) return true;
   } catch {
     // Storage unavailable (e.g. hardened browser) — never block play.
     return true;
@@ -74,9 +131,33 @@ function submitSignup(email: string): void {
   });
 }
 
+/**
+ * Install the gate according to the resolved position (Doors 1.2).
+ *
+ * "boot"       — today: the overlay goes up immediately.
+ * "post-fight" — nothing at boot; the overlay waits for the player to
+ *                finish a cycle (ShellEvents.CYCLE_COMPLETED) and then
+ *                asks once, at peak intent.
+ */
 export function installEmailGate(): void {
+  if (gatePosition() === "post-fight") {
+    // Re-check shouldSkip at fire time, not now: over the course of a
+    // whole cycle the player may have signed up by another route, and a
+    // gate that ignores that would ask a subscriber for their email
+    // moments after they gave it.
+    const onCycle = () => {
+      window.removeEventListener(ShellEvents.CYCLE_COMPLETED, onCycle);
+      if (shouldSkip()) return;
+      showEmailGate();
+    };
+    window.addEventListener(ShellEvents.CYCLE_COMPLETED, onCycle);
+    return;
+  }
   if (shouldSkip()) return;
+  showEmailGate();
+}
 
+function showEmailGate(): void {
   const gate = document.createElement("div");
   gate.className = "email-gate";
   gate.innerHTML = `
@@ -135,6 +216,13 @@ export function installEmailGate(): void {
   skip.addEventListener("click", () => {
     try {
       sessionStorage.setItem(SESSION_SKIP_KEY, "1");
+      // Post-fight mode also remembers the decline across tabs and
+      // reloads (Doors 1.2). The old per-tab skip meant "maybe later"
+      // lasted until the next refresh, so a declining player got asked
+      // again and again — nagging the exact person who already said no.
+      if (gatePosition() === "post-fight") {
+        localStorage.setItem(SKIP_UNTIL_KEY, String(Date.now() + SKIP_COOLDOWN_MS));
+      }
     } catch {
       /* ignore */
     }
