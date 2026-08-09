@@ -387,6 +387,25 @@ app.innerHTML = `
         </dl>
         <p class="shell-hint">On touch the same actions are the on-screen buttons: left stick moves, right stick aims and fires, and the numbered buttons appear only once you have drafted something for them.</p>
       </div>
+      <!-- gospel 3.1 — ONE place owns the bot policy, stated plainly.
+           The game already labels every bot (violet rig, "BOT · NAME"
+           plate) so nobody is deceived in the moment, but a player who
+           wonders "was that a person?" after the fact had nowhere to
+           check. Written as fact rather than reassurance: the honest
+           version is more flattering than the hedged one, and a claim
+           here that stopped being true would be a lying meter with a
+           bigger blast radius than any dashboard (L8). -->
+      <div class="shell-section">
+        <h3>Bots</h3>
+        <p class="shell-hint" data-bot-policy>
+          Fights fill with bots when there are not enough people around, and
+          bots stand about in the venue between rounds. They are always
+          labelled — a violet body and a <strong>BOT</strong> nameplate —
+          and they are never counted as players in anything you are shown.
+          Nobody you meet here is a real person wearing a bot's name, or the
+          other way round.
+        </p>
+      </div>
       <div class="shell-section">
         <h3>Audio</h3>
         <label>

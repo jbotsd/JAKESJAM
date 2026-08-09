@@ -420,7 +420,23 @@ teaches the loop.
             tested a local re-implementation of the same rules and would
             have passed with production deleted — noted because that is
             the failure shape this repo keeps hitting.
-      - [ ] **One FAQ line owns the policy** — still open.
+      - [x] **One line owns the policy** — DONE 2026-08-10. Settings gains
+            a BOTS section stating it as fact: bots fill fights when there
+            are not enough people, they idle in the venue, they are always
+            labelled (violet body, BOT plate), they are never counted as
+            players in anything you are shown, and nobody is a person
+            wearing a bot's name or the reverse. No FAQ page existed and
+            one was not invented for a single paragraph — Settings is two
+            keystrokes from anywhere and already owns the Controls
+            reference.
+            The CLAIMS are pinned by `botPolicyCopy.test.ts`: the label
+            format, the rig hue (hue, not an exact hex — a tint tweak is
+            harmless, a green bot is not), the humans/bots split staying
+            two fields, and the id prefix being reserved. Copy that stops
+            being true misleads every player and they cannot check it, so
+            it gets the same treatment as an honest meter (L8).
+            Verified on screen at 393px, not just asserted: sweep 5/5 and
+            the section reads cleanly with 38px to spare.
 - [ ] **3.2 First-session bot ramp** (Smash Karts / Fortnite pattern) —
       a new player's first cycle is bots tuned to lose entertainingly;
       guarantee a first kill inside 60 s; blend humans in from cycle two.
