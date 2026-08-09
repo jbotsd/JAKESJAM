@@ -23,6 +23,7 @@ const sim = @import("sim_root");
 const jjr = @import("jjr.zig");
 const stepper = @import("stepper.zig");
 const shell = @import("shell.zig");
+const assetpack = @import("pack.zig");
 
 const c = @cImport({
     @cInclude("raylib.h");
@@ -43,6 +44,7 @@ const RenderCtx = struct {
     speed: u32 = 1,
     frames_drawn: u64 = 0,
     closed: bool = false,
+    sfx: Sfx = .{},
 
     /// Follow the action instead of fitting the whole arena.
     ///
@@ -126,6 +128,61 @@ fn shouldContinue(ctx_opaque: ?*anyopaque) bool {
     if (c.WindowShouldClose()) ctx.closed = true;
     return !ctx.closed;
 }
+
+/// gospel N2.5 first slice — canonical SFX, played from the pack.
+///
+/// Loaded from `assets.jjpk` via `LoadWaveFromMemory`, so the binary never
+/// touches the filesystem for audio at runtime and never synthesizes a
+/// substitute (standing rule: meme SFX are canonical recordings or they
+/// are absent). Absent is a reported state, not a silent fallback.
+const Sfx = struct {
+    death: ?c.Sound = null,
+    ready: bool = false,
+    played: u64 = 0,
+    /// Diagnostic: ticks in which at least one player was dead.
+    dead_ticks: u64 = 0,
+    min_alive: u32 = 999,
+    /// Previous frame's alive flags, so a death is detected as a
+    /// TRANSITION. Reading "is dead" every frame would retrigger the cue
+    /// every tick a body stays down.
+    was_alive: [16]bool = @splat(false),
+
+    fn load(self: *Sfx, pack_bytes: []const u8) void {
+        const p = assetpack.Pack.open(pack_bytes) catch return;
+        // Verify before trusting: a half-copied pack should fail loudly
+        // here, not as a burst of noise later.
+        p.verifyAll() catch {
+            std.debug.print("audio: pack failed hash verification — not loading\n", .{});
+            return;
+        };
+        const e = (p.get("sfx/damnson.wav") catch return) orelse return;
+        const wave = c.LoadWaveFromMemory(".wav", e.bytes.ptr, @intCast(e.bytes.len));
+        if (!c.IsWaveValid(wave)) return;
+        defer c.UnloadWave(wave);
+        const snd = c.LoadSoundFromWave(wave);
+        if (!c.IsSoundValid(snd)) return;
+        self.death = snd;
+        self.ready = true;
+    }
+
+    /// Fire on alive→dead transitions in this frame's state.
+    fn noteDeaths(self: *Sfx, state: *const WorldState) void {
+        const alive_now = aliveCount(state);
+        if (alive_now < self.min_alive) self.min_alive = alive_now;
+        if (alive_now < state.player_count) self.dead_ticks += 1;
+        var i: u32 = 0;
+        while (i < @min(state.player_count, 16)) : (i += 1) {
+            const alive = state.players[i].flags.alive;
+            if (self.was_alive[i] and !alive) {
+                if (self.death) |snd| {
+                    c.PlaySound(snd);
+                    self.played += 1;
+                }
+            }
+            self.was_alive[i] = alive;
+        }
+    }
+};
 
 fn aliveCount(state: *const WorldState) u32 {
     var n: u32 = 0;
@@ -298,6 +355,13 @@ fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
     // Draw one frame per `speed` ticks. A 3600-tick replay at 1:1 is a
     // full minute of watching; being able to skim it matters more than
     // smoothness for a proof-of-innocence run.
+    // Deaths are sampled EVERY TICK, before the --speed gate. Sampling
+    // them per drawn frame missed almost everything: at --speed 60 a
+    // death-and-respawn inside a 60-tick window is invisible, and the cue
+    // counter read 0 over a 30k-tick match that plainly had deaths in it.
+    // The counter was measuring the render rate, not the match.
+    ctx.sfx.noteDeaths(state);
+
     if (ctx.speed > 1 and tick % ctx.speed != 0) return;
     ctx.frames_drawn += 1;
     ctx.track(state);
@@ -553,6 +617,9 @@ pub fn main() !void {
     defer c.CloseWindow();
     c.SetTargetFPS(60);
 
+    c.InitAudioDevice();
+    defer if (c.IsAudioDeviceReady()) c.CloseAudioDevice();
+
     // Fit the arena. Statics are already in the state, so the camera is
     // derived from the world rather than configured.
     const state: *WorldState = @ptrCast(@alignCast(state_buf.ptr));
@@ -565,6 +632,22 @@ pub fn main() !void {
         max_y = @max(max_y, state.statics[si].y + state.statics[si].h);
     }
     var ctx = RenderCtx{ .speed = @max(1, speed), .follow = !fit_arena };
+
+    // Load SFX from the pack. Reported either way: a viewer that is
+    // silently silent is indistinguishable from one whose audio is
+    // broken, and this repo has spent enough time on meters that cannot
+    // tell those apart.
+    const pack_bytes = std.fs.cwd().readFileAlloc(gpa, "sim/assets.jjpk", 64 * 1024 * 1024) catch null;
+    defer if (pack_bytes) |pb| gpa.free(pb);
+    if (pack_bytes) |pb| ctx.sfx.load(pb);
+    std.debug.print("audio: {s}\n", .{
+        if (ctx.sfx.ready)
+            "sfx/damnson.wav loaded from assets.jjpk"
+        else if (pack_bytes == null)
+            "NO PACK — run `bun run pack:assets` (silent, not broken)"
+        else
+            "pack present but sfx did not load (silent)",
+    });
     ctx.world_w = max_x;
     ctx.world_h = max_y;
     // --fit keeps the old whole-arena framing; useful for checking map
@@ -589,10 +672,13 @@ pub fn main() !void {
     });
     defer gpa.free(rendered.samples);
 
-    std.debug.print("rendered : {d} ticks, final hash {x:0>8}  ({d} frames drawn)\n", .{
+    std.debug.print("rendered : {d} ticks, final hash {x:0>8}  ({d} frames drawn, {d} death cues; min alive {d}, {d} ticks with a body down)\n", .{
         rendered.ticks_stepped,
         rendered.final_hash,
         ctx.frames_drawn,
+        ctx.sfx.played,
+        ctx.sfx.min_alive,
+        ctx.sfx.dead_ticks,
     });
 
     // ── the verdict ──────────────────────────────────────────────────────

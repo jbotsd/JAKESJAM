@@ -1154,7 +1154,28 @@ cross-compile; on-box today (`extra/raylib 6.0`).
       FFA cycle with all four classes present (chassis rule: the
       Geometrician stays raycast, in any shell, forever). Acceptance:
       the N2 gate numbers over a scripted 5-minute soak, logged per L8.
-- [ ] **2.5 Audio.** Canonical SFX decode+playback (never synthesized
+- [~] **2.5 Audio.** DECODE+PLAYBACK PATH DONE 2026-08-10, the CUE is
+      unproven and the reason is a fixture gap, not the code.
+      Proven: `jjplay` loads `sfx/damnson.wav` out of `assets.jjpk` via
+      `LoadWaveFromMemory` — no filesystem access for audio at runtime, no
+      synthesized substitute (standing rule), and the pack's hashes are
+      verified before anything is decoded so a half-copied pack fails
+      loudly instead of as a burst of noise. Silence is REPORTED: the
+      viewer prints whether the pack was missing, present-but-unloadable,
+      or loaded, because a silently-silent viewer is indistinguishable
+      from a broken one.
+      Unproven: the death cue has never fired. Deaths are sampled every
+      TICK (an earlier version sampled per drawn frame and read 0 because
+      it was measuring the render rate, not the match) — and the corpus
+      still reports **0 ticks with a body down** across two replays of
+      30489 and 47172 ticks. Both are 2-player recordings in which nobody
+      dies. The archive cannot exercise this, so N2.4's live offline match
+      is where the cue gets its first real test.
+      STILL OPEN: the `ProceduralAudio` synth graph port, and the A/B
+      event-aligned capture the row's acceptance asks for — which needs a
+      replay containing deaths.
+      (original row below)
+- [ ] ~~**2.5 Audio.**~~ Canonical SFX decode+playback (never synthesized
       substitutes) + the `ProceduralAudio` synth graph ported to the
       native mixer. Acceptance: A/B capture of the same replay
       browser-vs-native, event-aligned; missing/extra cues listed.
