@@ -31,6 +31,16 @@ let activeLocalPlayerIdGetter: (() => string | null) | null = null;
 /** Renderer-side truth for probes: where each player rig ACTUALLY is on
  *  screen and whether it's visible. Catches "sim says alive at (x,y) but
  *  nothing rendered" bugs that state sampling alone can't see. */
+/** A destructible as the probe reports it — enough to find the nearest
+ *  practice dummy and watch its health. */
+export type ProbeDestructible = {
+  id: string;
+  kind: string;
+  x: number;
+  y: number;
+  health: number;
+};
+
 export type RigDebugRow = {
   pid: string;
   visible: boolean;
@@ -146,6 +156,7 @@ type ProbeWindow = {
   __simHasState?: () => boolean;
   __simSampleHashes?: (count: number, intervalMs: number) => Promise<number[]>;
   __simPlayers?: () => ProbePlayer[] | null;
+  __simDestructibles?: () => ProbeDestructible[] | null;
   __simPhase?: () => string | null;
   __simProjectiles?: () =>
     | {
@@ -182,6 +193,22 @@ export function installWindowProbe(): void {
     return s ? (s.tick | 0) : null;
   };
   w.__simHasState = () => activeStateGetter?.() != null;
+  // venue-goal Pillar 2.5 needs "load -> dummy-hit-possible" measured, and
+  // its Evidence Ledger notes no dummy/hit metric is captured anywhere. A
+  // hit is only observable as a destructible's health falling, so the probe
+  // has to expose destructibles for the e2e to time it. Same read-only,
+  // no-identity shape as __simPlayers.
+  w.__simDestructibles = () => {
+    const s = activeStateGetter?.();
+    if (!s) return null;
+    return Object.values(s.destructibles ?? {}).map((d) => ({
+      id: String(d.id),
+      kind: String((d as { kind?: string }).kind ?? "box"),
+      x: d.x,
+      y: d.y,
+      health: d.health,
+    }));
+  };
   w.__simPlayers = () => {
     const s = activeStateGetter?.();
     if (!s) return null;
