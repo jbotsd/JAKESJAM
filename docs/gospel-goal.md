@@ -1149,7 +1149,15 @@ cross-compile; on-box today (`extra/raylib 6.0`).
       substitutes) + the `ProceduralAudio` synth graph ported to the
       native mixer. Acceptance: A/B capture of the same replay
       browser-vs-native, event-aligned; missing/extra cues listed.
-- [ ] **2.6 HUD + killfeed + nameplates.** Baked-tier text; killfeed
+- [~] **2.6 HUD + killfeed + nameplates.** NAMEPLATES DONE 2026-08-10 in
+      `jjplay`: without them a replay is six identical dots and you cannot
+      follow anyone, which is most of what watching one is for. Bots are
+      labelled `BOT <NAME>` in violet, matching botIdentity's rule and the
+      Settings copy that now states it as fact — an unlabelled bot in the
+      native viewer would make that sentence false. Hash proof re-verified
+      after the change. HUD and killfeed still open.
+      (original row below)
+- [ ] ~~**2.6 HUD + killfeed + nameplates.**~~ Baked-tier text; killfeed
       data from the core (Doors 4.6's landing site). Class-identity
       legibility per the chassis axioms (colour stays earned:
       cyan/gold/white).

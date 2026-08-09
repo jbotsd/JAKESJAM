@@ -209,6 +209,36 @@ fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
         } else {
             c.DrawCircleLines(@intFromFloat(sx), @intFromFloat(sy), r, .{ .r = 90, .g = 100, .b = 120, .a = 255 });
         }
+
+        // gospel N2.6 first slice — nameplates. Without them a replay is
+        // six identical dots and you cannot follow anyone, which is most
+        // of what watching one is for. The id is already in the state; the
+        // renderer just has to say it.
+        //
+        // Bots are labelled, matching the browser's "BOT · NAME" promise
+        // and the Settings copy that now states it as fact — an unlabelled
+        // bot in the native viewer would make that sentence false.
+        if (pl.id_len > 0) {
+            var name_buf: [40]u8 = undefined;
+            const raw_id = pl.id_bytes[0..@min(pl.id_len, 24)];
+            const is_bot = std.mem.startsWith(u8, raw_id, "bot_");
+            const shown = if (is_bot) raw_id[4..] else raw_id;
+            const label = std.fmt.bufPrintZ(&name_buf, "{s}{s}", .{
+                if (is_bot) "BOT " else "",
+                shown,
+            }) catch continue;
+            const tw = c.MeasureText(label, 12);
+            c.DrawText(
+                label,
+                @as(i32, @intFromFloat(sx)) - @divTrunc(tw, 2),
+                @as(i32, @intFromFloat(sy - r)) - 16,
+                12,
+                if (is_bot)
+                    c.Color{ .r = 200, .g = 121, .b = 255, .a = 235 } // violet, per the bot-identity rule
+                else
+                    c.Color{ .r = 210, .g = 230, .b = 250, .a = 235 },
+            );
+        }
     }
 
     var buf: [128]u8 = undefined;
