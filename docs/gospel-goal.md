@@ -1145,6 +1145,37 @@ section early because it is fun; it is fun, and it is parked.
 
 ---
 
+## WHO CAN CLOSE WHAT (added 2026-08-10)
+
+This doc is an ENDLESS goal (L5a) and its Stop-hook asks for "all complete
+and done". That condition is **not tool-satisfiable**, and pretending
+otherwise wastes a session re-deriving the same conclusion. Three
+categories, and only the first can be closed by an agent working alone:
+
+**A · Agent-closable.** Ordinary engineering with a machine-checkable
+bar. Everything closed on 2026-08-09/10 was category A. What remains here
+is large but tractable: N-BOT's stateful half (`worldBots.ts`, 765 lines),
+N-AIM, the whole N1/N2 raylib shell, D 2.1/2.2/3.2, the rest of 3.1
+(persona bots idling by default, the FAQ line).
+
+**B · Jake-only, and an agent must NOT fire them (L4).** Consent-gated,
+so silence is not approval:
+  - the E2 ratification — flip `TRACKED_DEFAULT_AUTHORITY` to `"wasm"` in
+    `server/src/simAuthority.ts` and delete the line from
+    `server/.env.local`. One tracked, reviewable, revertable commit;
+  - the stale-host deploy (the harness blocks outward-facing restarts);
+  - **Decision 1** email-gate position, **Decision 2** bell taper — both
+    built DARK, one line each;
+  - Decision 3 announcer voice source, Decision 4 weekly-board persistence.
+
+**C · Blocked on things that do not exist on this machine.** 4.1–4.4 need
+audio assets; canonical recordings only, never synthesized (standing rule).
+
+**So: a run of this goal terminates when category A is empty, not when the
+doc is.** If you want a Stop-hook that can actually finish, point it at a
+sub-goal drawn only from A. Recorded because this deadlock has now cost
+two sessions.
+
 ## PRIORITY ALGEBRA (when lanes conflict)
 
 D Phase 0–1 → **E2** → N0 (exempt, parallel-safe now) → D Phase 2–3 (sim
