@@ -19,7 +19,6 @@ import { loadSimFromBytes } from "../loader";
 import { packWorldState, WORLD_STATE_TOTAL_SIZE } from "../worldStateBridge";
 import { assistTouchAim } from "../../../game/input/touchAimAssist";
 import {
-  EntityId,
   InputSeq,
   PlayerId,
   Tick,

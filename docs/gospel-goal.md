@@ -324,6 +324,23 @@ order: 4 before 5 (the ceremony needs run data to celebrate). Per D-law,
 the sim-side halves land in Zig.
 
 - [ ] **2.1 Pillar 4** — sim-side run record, HUD run strip, death card
+      **SCOPING NOTE 2026-08-10 on the draft-order sub-item, written after
+      starting it and backing out:** the row points at `round.ts:343`
+      (alphabetical by playerId) as the thing to make reverse-standings.
+      Two corrections to that framing:
+      - `draftingIds` at that line feeds only length/`every` checks, so its
+        sort is determinism hygiene, not pick priority. The order a player
+        actually SEES is the `draft-resolved` emission a few lines below.
+      - more importantly, **`round.ts` does not run under the live
+        authority at all.** matchHost:1119 — "Zig owns the draft on this
+        backend" — so a TS-only reordering is dead code on wasm and would
+        create an authority-dependent ticker order while looking done.
+      Doing it properly means the ZIG side, which emits `draft_resolved` at
+      pick time per player (`draft.zig:422`) rather than in a batch, so
+      reverse-standings needs the emission buffered to end-of-window and
+      sorted by score. That is the actual work; it is not a one-line sort.
+      A TS-only patch was written, tested green, and reverted rather than
+      shipped.
       with run facts + edge-vignette spectate (kill the full-screen blur
       wash, `DeathOverlay.ts:220-233`), shared draft (pick ticker,
       reverse-standings order — today alphabetical by playerId,
