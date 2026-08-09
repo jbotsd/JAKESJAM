@@ -19,7 +19,24 @@
 # catches the same condition without ending the evidence early.
 #
 # Usage:  scripts/wasm-authority-soak.sh [SECONDS]   (default 7800 = 2h10m)
-# Output: .host-logs/soak-<stamp>.{log,csv,verdict}
+# Output: .host-logs/soak-<stamp>.{log,csv,verdict,pid}
+#
+# RUN IT UNDER SYSTEMD, not from an agent/terminal session:
+#
+#   systemctl --user reset-failed jj-soak 2>/dev/null
+#   systemd-run --user --collect --unit=jj-soak --working-directory="$PWD" \
+#     --setenv=PATH="$PATH" bash scripts/wasm-authority-soak.sh 7800
+#   systemctl --user is-active jj-soak      # watch
+#   systemctl --user stop jj-soak           # abort
+#
+# Why: a 2 h soak launched from a shell session keeps getting reaped
+# before it can finish. On 2026-08-09 one run was killed 8 min short of
+# target (94%, every row clean, no verdict) and the next died 30 s in to
+# a SIGTERM neither the script nor the server asked for. systemd owns the
+# process instead of the session, so the run outlives whatever tooling
+# started it. The gate compares soak START against the newest sim commit,
+# so a run that cannot survive to write a verdict blocks the flip just as
+# hard as a failing one.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."

@@ -919,6 +919,26 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (q) · **THE FLIP'S CLOCK IS RUNNING — clean soak started
+  20:08:55 under systemd, and the freeze is the only thing that can break
+  it now.** Two soaks failed for a reason that had nothing to do with the
+  sim: one was killed 8 min short of target (94%, every row clean), the
+  next died 30 s in to a SIGTERM nobody asked for. A 2 h run launched
+  from an agent/terminal session keeps getting reaped. Fixed by giving it
+  to systemd — `systemd-run --user --collect --unit=jj-soak` — so the run
+  outlives whatever started it. Invocation is now in the script header;
+  the unit is `active` and the CSV is filling.
+  - **What has to hold: NOTHING may commit to `sim/src`, `server/src` or
+    `client/src/sim` before ~22:19.** The gate compares soak START
+    (20:08:55) against the newest commit in those paths (currently
+    19:05, f64661b). One commit there and this run joins the other two.
+  - If it survives, every E2 row is green against HEAD and the flip is
+    one command: `scripts/e2-flip.sh` — observed, auto-reverting, and it
+    refuses if any of the three conditions is not met.
+  - Nothing else about E2 is outstanding: gate hardened, input-routing
+    bug fixed, index-space bug fixed, join handoff verified, homing
+    fixed, flip mechanised.
+
 - 2026-08-09 (n) · **HEAD re-soak KILLED at 94% — E2 gate NOT re-met on
   HEAD.** The run reached 7298 s of 7800 (8 m 2 s short) and was stopped
   externally, so the script never wrote a verdict; one was written by hand
