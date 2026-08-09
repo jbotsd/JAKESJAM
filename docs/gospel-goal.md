@@ -553,10 +553,19 @@ teaches the loop.
         from the construct needs a per-class expectation the doc does not
         yet state.
 - [x] **4.6 Live killfeed** — DONE 2026-08-09, verified LIVE in a real
-      arena: `t+131s KILLFEED: BOT · SPARK eliminated BOT · PISTON`, a
-      kill between two OTHER players, correctly worded, observed through
-      the probe. That single line exercises the whole chain — SimEvent →
-      push → TTL → rendered text — so it is proof, not a smoke test. `client/src/game/ui/killfeed.ts` is a pure model (10
+      arena over a 300 s watch, and the full run covers more than the
+      single line first reported:
+
+      ```
+      t+131s  BOT · SPARK eliminated BOT · PISTON     <- two OTHER players
+      t+150s..t+210s  1 line up                        <- holds
+      t+229s  BOT · SPARK eliminated Vessel-EVKFC4     <- the LOCAL player dies
+      t+240s  0 lines up                               <- TTL swept it
+      ```
+
+      That covers three distinct paths, not one: a third-party kill, the
+      local player's own death (the `ofLocal` branch), and expiry actually
+      happening on a live clock rather than only in a unit test. `client/src/game/ui/killfeed.ts` is a pure model (10
       tests): unattributed deaths show the victim only, a suicide
       (killerId === victimId) collapses to the same form rather than
       rendering "Bram eliminated Bram", executes get their own verb, 5 s
