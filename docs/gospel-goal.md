@@ -1164,13 +1164,23 @@ cross-compile; on-box today (`extra/raylib 6.0`).
       viewer prints whether the pack was missing, present-but-unloadable,
       or loaded, because a silently-silent viewer is indistinguishable
       from a broken one.
-      Unproven: the death cue has never fired. Deaths are sampled every
-      TICK (an earlier version sampled per drawn frame and read 0 because
-      it was measuring the render rate, not the match) — and the corpus
-      still reports **0 ticks with a body down** across two replays of
-      30489 and 47172 ticks. Both are 2-player recordings in which nobody
-      dies. The archive cannot exercise this, so N2.4's live offline match
-      is where the cue gets its first real test.
+      The DECISION is proven; the CUE is not, and those are now separate
+      things. `shell.DeathWatch` holds the edge detection and is unit
+      tested without a window — fires once on alive→dead and not every
+      tick a corpse lies there, re-arms on respawn, never fires for a slot
+      that started dead (a mid-match joiner's empty slot), keeps slots
+      independent, and tolerates more players than it watches. 5 tests;
+      mutation-checked by making it fire on STATE instead of transition,
+      which fails 8.
+      It lived inline in `play.zig` first, which links raylib and a window
+      — so it could not be tested at all, and its only exercise was
+      replays that happen to contain no deaths. Moving it was the fix.
+      Still unexercised end-to-end: the archived corpus reports **0 ticks
+      with a body down** across replays of 30489 and 47172 ticks (both
+      arena maps, both 2-player, nobody dies), and a fresh 4-bot recording
+      produced no kills either — bots barely fight without a human target.
+      So the SOUND has never actually played. N2.4's live match is where
+      that gets tested, and it is a fixture gap, not a code gap.
       STILL OPEN: the `ProceduralAudio` synth graph port, and the A/B
       event-aligned capture the row's acceptance asks for — which needs a
       replay containing deaths.

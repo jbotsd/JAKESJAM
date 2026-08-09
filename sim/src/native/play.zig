@@ -142,10 +142,9 @@ const Sfx = struct {
     /// Diagnostic: ticks in which at least one player was dead.
     dead_ticks: u64 = 0,
     min_alive: u32 = 999,
-    /// Previous frame's alive flags, so a death is detected as a
-    /// TRANSITION. Reading "is dead" every frame would retrigger the cue
-    /// every tick a body stays down.
-    was_alive: [16]bool = @splat(false),
+    /// Edge detection lives in shell.DeathWatch — testable without a
+    /// window, which the inline version here was not.
+    watch: shell.DeathWatch = .{},
 
     fn load(self: *Sfx, pack_bytes: []const u8) void {
         const p = assetpack.Pack.open(pack_bytes) catch return;
@@ -170,16 +169,18 @@ const Sfx = struct {
         const alive_now = aliveCount(state);
         if (alive_now < self.min_alive) self.min_alive = alive_now;
         if (alive_now < state.player_count) self.dead_ticks += 1;
+
+        var flags: [shell.MAX_WATCHED]bool = @splat(false);
+        const n = @min(state.player_count, shell.MAX_WATCHED);
         var i: u32 = 0;
-        while (i < @min(state.player_count, 16)) : (i += 1) {
-            const alive = state.players[i].flags.alive;
-            if (self.was_alive[i] and !alive) {
-                if (self.death) |snd| {
-                    c.PlaySound(snd);
-                    self.played += 1;
-                }
+        while (i < n) : (i += 1) flags[i] = state.players[i].flags.alive;
+
+        const died = self.watch.note(flags[0..n]);
+        if (died > 0) {
+            if (self.death) |snd| {
+                c.PlaySound(snd);
+                self.played += died;
             }
-            self.was_alive[i] = alive;
         }
     }
 };

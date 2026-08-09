@@ -299,3 +299,90 @@ test "mapInput: a full hand of inputs composes without collisions" {
     try std.testing.expectEqual(want, f.keys);
     try std.testing.expectEqual(@as(u32, 7), @popCount(f.keys));
 }
+
+// ── gospel N2.5 · death detection, testable without a speaker ────────────
+//
+// Lives here rather than in play.zig because play.zig links raylib and a
+// window, so nothing in it can be unit-tested. The CUE (does a sound come
+// out) needs a device; the DECISION (did someone just die) does not, and
+// conflating them left the logic unverifiable — the first version was
+// exercised only by replays that happen to contain no deaths at all.
+
+pub const MAX_WATCHED: usize = 16;
+
+/// Edge-detector over players' alive flags.
+///
+/// A death is a TRANSITION, not a state. Firing on "is dead" would
+/// retrigger every tick a body stays down, which at 60 Hz is a cue per
+/// 16 ms for as long as the corpse exists.
+pub const DeathWatch = struct {
+    was_alive: [MAX_WATCHED]bool = @splat(false),
+    /// Set once a slot has been seen alive. Without it, the very first
+    /// sample of an already-dead player reads as a death, and a mid-match
+    /// joiner's empty slot would fire a cue on arrival.
+    seen: [MAX_WATCHED]bool = @splat(false),
+    deaths: u64 = 0,
+
+    /// Feed one tick's alive flags; returns how many deaths occurred.
+    pub fn note(self: *DeathWatch, alive: []const bool) u32 {
+        var fired: u32 = 0;
+        for (alive, 0..) |a, i| {
+            if (i >= MAX_WATCHED) break;
+            if (self.seen[i] and self.was_alive[i] and !a) {
+                fired += 1;
+                self.deaths += 1;
+            }
+            if (a) self.seen[i] = true;
+            self.was_alive[i] = a;
+        }
+        return fired;
+    }
+};
+
+test "DeathWatch: fires once on alive->dead, not every tick after" {
+    var w = DeathWatch{};
+    try std.testing.expectEqual(@as(u32, 0), w.note(&.{true}));
+    try std.testing.expectEqual(@as(u32, 1), w.note(&.{false}));
+    // The bug this guards: a corpse lying there is not 60 deaths a second.
+    try std.testing.expectEqual(@as(u32, 0), w.note(&.{false}));
+    try std.testing.expectEqual(@as(u32, 0), w.note(&.{false}));
+    try std.testing.expectEqual(@as(u64, 1), w.deaths);
+}
+
+test "DeathWatch: a respawn re-arms the detector" {
+    var w = DeathWatch{};
+    _ = w.note(&.{true});
+    try std.testing.expectEqual(@as(u32, 1), w.note(&.{false}));
+    _ = w.note(&.{true}); // respawn
+    try std.testing.expectEqual(@as(u32, 1), w.note(&.{false}));
+    try std.testing.expectEqual(@as(u64, 2), w.deaths);
+}
+
+test "DeathWatch: a slot that starts dead never fires" {
+    // A mid-match joiner's empty slot, or a player already down when the
+    // viewer attaches. Neither is a death that just happened.
+    var w = DeathWatch{};
+    try std.testing.expectEqual(@as(u32, 0), w.note(&.{false}));
+    try std.testing.expectEqual(@as(u32, 0), w.note(&.{false}));
+    try std.testing.expectEqual(@as(u64, 0), w.deaths);
+}
+
+test "DeathWatch: independent slots do not bleed into each other" {
+    var w = DeathWatch{};
+    _ = w.note(&.{ true, true, true });
+    // Only the middle one dies.
+    try std.testing.expectEqual(@as(u32, 1), w.note(&.{ true, false, true }));
+    // And the survivors must not fire on the next tick.
+    try std.testing.expectEqual(@as(u32, 0), w.note(&.{ true, false, true }));
+    // Vacuity guard: the other two CAN still fire, so the zero above is
+    // about the transition and not about them being ignored.
+    try std.testing.expectEqual(@as(u32, 2), w.note(&.{ false, false, false }));
+}
+
+test "DeathWatch: more players than MAX_WATCHED does not overflow" {
+    var w = DeathWatch{};
+    var many: [64]bool = @splat(true);
+    _ = w.note(&many);
+    many[0] = false;
+    try std.testing.expectEqual(@as(u32, 1), w.note(&many));
+}
