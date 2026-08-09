@@ -1051,7 +1051,36 @@ cross-compile; on-box today (`extra/raylib 6.0`).
 
 ### N2 — PLAYABLE OFFLINE (the mountain, climbed at the baked tier)
 
-- [ ] **2.1 Frame loop + world render.** Fixed-tick sim (the server's
+- [~] **2.1 Frame loop + world render.** ACCEPTANCE MET 2026-08-10 —
+      `jjplay` plays an archived match back windowed and the hashes match:
+
+      ```
+      headless : 30489 ticks, final hash 4775eef8
+      rendered : 30489 ticks, final hash 4775eef8  (508 frames drawn)
+      MATCH: rendering did not touch the simulation (L9)
+      ```
+
+      **The proof works because there is exactly ONE stepper.** `jjplay`
+      does not re-implement the replay loop — it calls the same
+      `stepper.run` `jjsim` uses and passes a per-tick draw hook that
+      receives a CONST state. Two separate loops that happened to agree
+      would prove nothing; one loop called by both is what makes the
+      match evidence.
+      Verified the check can fail: a hook that `@constCast`s and nudges a
+      player by 0.5px reports `DIVERGED` with both hashes. That took three
+      goes — the first mutation targeted a tick the renderer skips at
+      `--speed 60`, so it compiled, never ran, and read as a pass. The
+      mutation now announces itself, so "it ran" is observed.
+      Also fixed en route: `stepper.Options.every = 0` panicked on
+      `tick % 0`. Zero now means "final sample only", which is what anyone
+      writing it means.
+      STILL OPEN for this row: interpolated presentation (draws are
+      per-tick, so a 144 Hz display shows 60 Hz stutter) and a real
+      camera (currently a fixed fit-the-arena transform, no follow).
+      Draws are baked-tier procedural — rectangles and discs — which is
+      enough to recognise the match and not a frame more.
+      (original row below)
+- [ ] ~~**2.1 Frame loop + world render.**~~ Fixed-tick sim (the server's
       tick) decoupled from render; interpolated presentation; camera.
       Arena, destructibles, satellites, projectiles, players as
       baked-tier procedural draws. Acceptance: an N0 replay *rendered* —

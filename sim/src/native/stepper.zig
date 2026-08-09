@@ -62,12 +62,38 @@ fn slotId(state: *const WorldState, slot: usize) []const u8 {
 
 pub const Options = struct {
     /// Emit a hash every this many ticks (and always at the final tick).
+    /// ZERO means "final tick only" — not "every zero ticks". Guarded
+    /// because the obvious reading of 0 is "no periodic samples", and the
+    /// unguarded modulo panicked with a division by zero the first time a
+    /// caller wrote what they meant.
     every: u64 = 60,
     /// Stop after this many ticks; 0 = the replay's own totalTicks.
     max_ticks: u64 = 0,
     /// Fixed timestep. The live host steps STEP_MS; anything else is a
     /// different simulation, not a faster one.
     dt_ms: f64 = 1000.0 / 60.0,
+
+    /// Optional per-tick hook, so a SHELL can draw the world without
+    /// becoming a second stepper (gospel N2.1).
+    ///
+    /// This is the whole reason it exists. The acceptance bar for the
+    /// native renderer is "watch an archived match play back windowed
+    /// with hashes still matching" — and that proves nothing if the
+    /// renderer runs its own copy of this loop, because then the two
+    /// hashes come from two implementations that merely happen to agree
+    /// today. One stepper, called by both, is what makes the match
+    /// evidence.
+    ///
+    /// Receives a CONST pointer: a hook that mutated state would be
+    /// exactly the shell-owns-behaviour violation L9 forbids, and the
+    /// hashes would diverge as loudly as they should.
+    on_tick: ?*const fn (state: *const WorldState, tick: u64, ctx: ?*anyopaque) void = null,
+    on_tick_ctx: ?*anyopaque = null,
+
+    /// Let the hook stop the run early (window closed). Returning false
+    /// ends the replay cleanly rather than killing the process, so the
+    /// partial result still reports its hash and tick count.
+    should_continue: ?*const fn (ctx: ?*anyopaque) bool = null,
 };
 
 pub const Result = struct {
@@ -141,14 +167,20 @@ pub fn run(
             cursor += 1;
         }
 
+        if (opts.should_continue) |keep_going| {
+            if (!keep_going(opts.on_tick_ctx)) break;
+        }
+
         const rc = sim.world.step_world(state, opts.dt_ms);
+        if (opts.on_tick) |hook| hook(state, tick, opts.on_tick_ctx);
         if (rc != 0) {
             // Surface it as data, not a crash: a nonzero rc mid-replay is
             // itself a finding worth reporting with the tick attached.
             break;
         }
 
-        if (tick % opts.every == 0 or tick == total) {
+        const periodic = opts.every != 0 and tick % opts.every == 0;
+        if (periodic or tick == total) {
             try samples.append(gpa, .{
                 .tick = tick,
                 .hash = hashBytes(state_buf[0..packed_size]),

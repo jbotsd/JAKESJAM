@@ -132,6 +132,32 @@ pub fn build(b: *std.Build) void {
     for ([_][]const u8{ "m", "pthread", "dl", "rt", "GL", "X11" }) |sys_lib| {
         spike_exe.linkSystemLibrary(sys_lib);
     }
+    // gospel N2.1 — the native replay renderer. Same raylib link recipe as
+    // the spike (and the same reasons for every line of it), plus the sim
+    // itself, because it calls the SHARED stepper rather than owning a
+    // loop. Also its own step, never in `test`: it needs the vendored
+    // library and a display.
+    const play_module = b.createModule(.{
+        .root_source_file = b.path("src/native/play.zig"),
+        .target = spike_target,
+        .optimize = optimize,
+    });
+    play_module.addImport("sim_root", sim_root_native);
+    const play_exe = b.addExecutable(.{ .name = "jjplay", .root_module = play_module });
+    play_exe.addIncludePath(b.path("vendor/raylib/src"));
+    play_exe.addObjectFile(b.path("vendor/raylib/build/raylib/libraylib.a"));
+    play_exe.linkLibC();
+    play_exe.addLibraryPath(.{ .cwd_relative = "/usr/lib" });
+    for ([_][]const u8{ "m", "pthread", "dl", "rt", "GL", "X11" }) |sys_lib| {
+        play_exe.linkSystemLibrary(sys_lib);
+    }
+    const play_step = b.step("play", "N2.1: build jjplay (native replay renderer)");
+    play_step.dependOn(&b.addInstallArtifact(play_exe, .{}).step);
+    const run_play = b.addRunArtifact(play_exe);
+    if (b.args) |args| run_play.addArgs(args);
+    const run_play_step = b.step("run-play", "N2.1: run jjplay (args after --)");
+    run_play_step.dependOn(&run_play.step);
+
     const spike_step = b.step("spike-raylib", "N1.1: build the raylib confirmation spike");
     spike_step.dependOn(&b.addInstallArtifact(spike_exe, .{}).step);
     const run_spike = b.addRunArtifact(spike_exe);
