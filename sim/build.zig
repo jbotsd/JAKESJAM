@@ -67,4 +67,47 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run sim unit tests");
     test_step.dependOn(&run_tests.step);
+
+    // ── Native harness (gospel-goal N0 — the port passport) ──────────────
+    // The same core, compiled native, so an archived .jjr can be stepped
+    // headless and hashed against the wasm path. This is a PROMOTION of the
+    // native module the test step already proved builds, not a second
+    // implementation — `sim_root_native` is literally the module above.
+    const native_module = b.createModule(.{
+        .root_source_file = b.path("src/native/main.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
+    native_module.addImport("sim_root", sim_root_native);
+    const native_exe = b.addExecutable(.{
+        .name = "jjsim",
+        .root_module = native_module,
+    });
+    b.installArtifact(native_exe);
+
+    const native_step = b.step("native", "Build the jjsim native harness");
+    native_step.dependOn(&b.addInstallArtifact(native_exe, .{}).step);
+
+    const run_native = b.addRunArtifact(native_exe);
+    if (b.args) |args| run_native.addArgs(args);
+    const run_native_step = b.step("run-native", "Run jjsim (pass args after --)");
+    run_native_step.dependOn(&run_native.step);
+
+    // Native-only unit tests (msgpack + .jjr reader). Wired into `test` so
+    // the passport's parsing layer is covered by the same gate as the sim.
+    const native_test_module = b.createModule(.{
+        .root_source_file = b.path("src/native/jjr.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
+    const native_tests = b.addTest(.{ .root_module = native_test_module });
+    test_step.dependOn(&b.addRunArtifact(native_tests).step);
+
+    const msgpack_test_module = b.createModule(.{
+        .root_source_file = b.path("src/native/msgpack.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
+    const msgpack_tests = b.addTest(.{ .root_module = msgpack_test_module });
+    test_step.dependOn(&b.addRunArtifact(msgpack_tests).step);
 }
