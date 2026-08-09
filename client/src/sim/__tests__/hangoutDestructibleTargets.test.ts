@@ -138,6 +138,60 @@ const EDGE_CONTACT_TICKS = Math.ceil(100 / DT_MS); // EDGE_CONTACT_DELAY_MS (pal
 // practice table and avoids that drift entirely.
 const GROUND_Y = 442;
 
+// Added 2026-08-09, after an e2e found that a visitor standing 18px from a
+// practice dummy and firing continuously never damages it.
+//
+// This file covered melee (ninja, paladin) and instant-AOE (Shard Ring) —
+// but NOT the ranged hitscan path, which is the weapon EVERY visitor
+// arrives holding (starter-pistol, delivery "raycast"). The one attack the
+// venue's practice dummies exist to receive was the one attack nothing
+// tested. Driven through the same stepWithRuntime harness with aim passed
+// in the input frame, so there is no camera or screen-space confound
+// between the shot and the target.
+describe("ranged hitscan vs. destructibles in hangout mode", () => {
+  test("the starter pistol damages a practice dummy", () => {
+    const shooter = mkPlayer(A, 400, GROUND_Y, "balanced", { aimX: 550, aimY: GROUND_Y });
+    const players = [shooter];
+    const runtime = createRuntime(flatMap, "hangout");
+    let s = mkState(players, [dummy(1, 550, GROUND_Y)]);
+
+    for (let i = 0; i < 40; i++) {
+      s = stepWithRuntime(
+        s,
+        runtime,
+        inputsWith(players, { a: frame(FIRE_BIT, i + 1, 550, GROUND_Y) }),
+        DT_MS,
+      ).state;
+    }
+
+    // A removed entity means it was destroyed outright, which is also a
+    // hit — but `?.health` alone would read `undefined` and silently pass
+    // a "never spawned" bug, so spell both cases out.
+    const after = s.destructibles[EntityId(1)];
+    expect(after === undefined || after.health < 60).toBe(true);
+  });
+
+  test("a hitscan shot does NOT damage a dummy behind the shooter", () => {
+    // Control. Without it, a bug that damaged every destructible
+    // regardless of aim would satisfy the test above just as well.
+    const shooter = mkPlayer(A, 400, GROUND_Y, "balanced", { aimX: 550, aimY: GROUND_Y });
+    const players = [shooter];
+    const runtime = createRuntime(flatMap, "hangout");
+    let s = mkState(players, [dummy(1, 250, GROUND_Y)]);
+
+    for (let i = 0; i < 40; i++) {
+      s = stepWithRuntime(
+        s,
+        runtime,
+        inputsWith(players, { a: frame(FIRE_BIT, i + 1, 550, GROUND_Y) }),
+        DT_MS,
+      ).state;
+    }
+
+    expect(s.destructibles[EntityId(1)]?.health).toBe(60);
+  });
+});
+
 describe("ninja/paladin melee vs. destructibles in hangout mode", () => {
   test("ninja melee damages a destructible dummy", () => {
     const attacker = mkPlayer(A, 500, GROUND_Y, "sprinter", { aimX: 900, aimY: GROUND_Y });
