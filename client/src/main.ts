@@ -994,6 +994,22 @@ const bootSkipsCeremony = bootPlan !== "splash";
   const menuLight = new Audio(getAudioUrl("menu-light.m4a"));
   menuLight.loop = true;
   musicRegistry.add(menuLight);
+  // Doors 0.4's rule, re-applied where it leaked back in. 0.4 killed
+  // `preload="auto"` on the MARKUP audio, but `new Audio(url)` defaults
+  // to eager too, so these two were still pulling 4.57 MB at boot
+  // (menu-light 3.80 + splash-theme 0.77) — measured on the landing.
+  // On the lobby-first path neither ever plays: you land in the venue,
+  // which starts venue music of its own.
+  //
+  // Scoped to bootSkipsCeremony deliberately. On the SPLASH path the
+  // anthem IS the ident — the ceremony's 27.93 s timeline is cut to that
+  // track — so making it fetch-on-play there would risk desyncing the
+  // rite against its own audio. Eager where it is the content, lazy
+  // where it is never heard.
+  if (bootSkipsCeremony) {
+    splashTheme.preload = "none";
+    menuLight.preload = "none";
+  }
   const themeVol = Math.min(1, vol * 0.9);
   let handed = false;
   const menuVol = Math.min(1, vol * 0.55); // deliberately light vs the anthem
@@ -1357,7 +1373,15 @@ const bootSkipsCeremony = bootPlan !== "splash";
     gate?.remove();
     ident?.remove();
     document.documentElement.classList.add("ident-done");
-    if (!bootSkipsCeremony) startSplashVideo();
+    if (bootSkipsCeremony) {
+      // Same reasoning as the audio above: the splash video is never
+      // shown on this path, and `preload="metadata"` was still pulling
+      // the whole 3.86 MB file. Measured, not assumed.
+      const v = app.querySelector<HTMLVideoElement>(".splash-bg-video");
+      if (v) v.preload = "none";
+    } else {
+      startSplashVideo();
+    }
   } else if (forceIntro || isKioskMode) {
     // forceIntro: the Intro-button click was already the required user
     // gesture — skip the click-to-initiate gate and run straight in.

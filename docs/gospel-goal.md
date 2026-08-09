@@ -35,7 +35,7 @@ Numeric gates (published browser-game bars — Poki/CrazyGames):
 |---|---|---|
 | Conversion-to-play (load → ≥1 min played) | ≥70% (80% = exceptional) | unmeasured; journey has 5 gates + ≥5 clicks before the lobby |
 | URL → first shot fired | <15 s returning / <30 s first visit | ~60–140 s worst case (median bell wait ~50 s); ~15 s best via `?world=1` |
-| Critical-path payload | <10 MB | **measured 2026-08-09: 2.93 MB code-only; 12.12 MB with media** (see note) |
+| Critical-path payload | <10 MB | **3.64 MB on the landing** (was 12.12 MB — fixed 2026-08-09) |
 | First kill | <60 s | unguaranteed (default-class player vs mixed bots) |
 | Play-again rate after first cycle | ≥50% | unmeasured; cycle ends in a modal |
 
@@ -1023,6 +1023,26 @@ Zig (that's E3's conversation) · Steam before N3.
 ---
 
 ## STATUS — ground truth, newest first
+
+- 2026-08-09 (u) · **Landing payload 12.12 MB → 3.64 MB.** 8.5 MB, 70% of
+  the critical path, removed — and the north-star row goes from
+  unverified prose to a measured number inside its gate.
+  - Cause: **Doors 0.4's rule leaking back in through a different door.**
+    0.4 killed `preload="auto"` on the MARKUP audio, but `new Audio(url)`
+    defaults to eager as well, so `menu-light.m4a` (3.80 MB) and
+    `splash-theme.m4a` (0.77 MB) were still being pulled at boot — plus
+    `splash-loop.mp4` (3.86 MB), which `preload="metadata"` did not spare.
+    On the lobby-first path **none of the three is ever seen or heard**:
+    you land in the venue, which starts its own track.
+  - Scoped to `bootSkipsCeremony`, not applied globally. On the splash
+    path the anthem IS the ident — the 27.93 s ceremony is cut to that
+    track — so fetch-on-play there would risk desyncing the rite against
+    its own audio. Eager where it is the content, lazy where it is never
+    heard. `?splash=1` still measures 12.12 MB, deliberately.
+  - Verified: client 1983/0, five-viewport sweep 5/5, front-door e2e
+    11/11 (lobbyFirst + emailGatePosition + matchResume).
+  - `tools/payload-probe.mjs` keeps the row honest from here — it names
+    the >300 KB offenders, which is where the answer always is.
 
 - 2026-08-09 (t) · **North-star payload row MEASURED — and the answer
   depends on a question the row never asked.** It read "~730 KB gzip JS
