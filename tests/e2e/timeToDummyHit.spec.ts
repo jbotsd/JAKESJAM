@@ -108,13 +108,26 @@ test.describe("venue-goal 2.5 — time to first dummy hit", () => {
   //     starter pistol damages a dummy in hangout mode, and a dummy behind
   //     the shooter correctly stays untouched.
   //
-  // So the break is at the INTEGRATION level, and the surviving lead is the
-  // CLIENT-side world: __simPhase reports "round-over" continuously in the
-  // venue, where hangout mode should pin it to "fighting" (World.ts:1676)
-  // and the round machine should never run at all. Worth checking first
-  // whether the client gates sending fire on its local phase, and whether
-  // the mode reaches the client's createRuntime (clientLoop.ts:956 does
-  // accept one) for the LOBBY connection specifically.
+  // The "round-over" lead was chased and is ALSO not the cause, though it
+  // was a real bug and is fixed: the lobby ran combat-mode client-side
+  // because the client sniffed `matchId.startsWith("hangout_")` and the
+  // lobby's id is "lobby" (ServerHello now states `mode`). And separately,
+  // wasm authority puts the lobby in "round-over" where TS puts it in
+  // "fighting" — logged as gospel E2-b, a live regression.
+  //
+  // Neither fixes this. Re-measured after both: under TS authority with
+  // the lobby correctly at phase "fighting", the dummy is STILL never
+  // damaged. So the remaining suspects are narrow:
+  //   - the shot is blocked by venue geometry on the approach line. The
+  //     map has ground-touching cover pylons at x=2040 (cover-d) and a
+  //     "lip" barrier at x=1740 (lip-c) bracketing the clusterC dummy at
+  //     x=1930, and the harness approaches leftward from x=2812;
+  //   - or the fire input never reaches the server from a real browser,
+  //     as opposed to being locally predicted (fireCooldownMs is a
+  //     client-side value and proves only local processing).
+  // The next step is a server-side observation of the lobby's destructible
+  // health, not another client-side probe — every client-side measurement
+  // so far has been consistent with both hypotheses.
   test.fail();
   test("a visitor can damage a practice dummy inside the budget", async ({ page }) => {
     await asReturningVisitor(page);
