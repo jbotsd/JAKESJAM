@@ -5074,3 +5074,202 @@ test "hangout: the shrink-zone storm never ticks — the pinned round clock woul
         try std.testing.expectApproxEqAbs(@as(f64, 100.0), state.players[0].health, 1e-9);
     }
 }
+
+// ── Homing (Track E1 residual, fixed 2026-08-09) ─────────────────────────
+//
+// stepWorld handed projectile.stepV2 empty player arrays, so under wasm
+// authority a homing shot could never acquire a target and flew dead
+// straight. These pin the fix, and each carries a vacuity guard so a
+// future regression that simply stops running the branch fails loudly
+// instead of passing by doing nothing.
+
+/// A live homing shard travelling +x at (500,300), no owner.
+fn homingShardLiteral() root.world_state.ProjectileEntity {
+    var p = std.mem.zeroes(root.world_state.ProjectileEntity);
+    p.x = 500;
+    p.y = 300;
+    p.vx = 600;
+    p.vy = 0;
+    p.radius = 6;
+    p.damage = 1; // keep the target alive so the turn is what is measured
+    p.lifetime_ms = 5000;
+    p.age_ms = 100; // past the first-tick muzzle-overlap exemption
+    p.origin_x = 500;
+    p.origin_y = 300;
+    p.slow_multiplier = 1;
+    p.id = 901;
+    p.pathing = .homing;
+    // Set fields on the already-zeroed flags rather than writing a full
+    // struct literal: ProjectileFlags grows, and an exhaustive literal
+    // here would break every time someone adds a flag that has nothing to
+    // do with homing.
+    p.flags.has_age = true;
+    p.flags.has_origin = true;
+    p.flags.has_homing = false; // false = default turn rate
+    return p;
+}
+
+test "homing: a shard turns toward the only living player (the E1 gap: empty player arrays meant it never turned)" {
+    var state = freshFightingState();
+    state.player_count = 1;
+    state.players[0].flags.alive = true;
+    state.players[0].health = 100;
+    // Well below and ahead: a straight shot would keep vy == 0 exactly.
+    state.players[0].x = 900;
+    state.players[0].y = 900;
+    setPlayerId(&state.players[0], "prey");
+    state.projectile_count = 1;
+    state.projectiles[0] = homingShardLiteral();
+
+    _ = root.world.stepWorld(&state, 16.0);
+
+    try std.testing.expectEqual(@as(u32, 1), state.projectile_count);
+    // Turned DOWNWARD (toward +y) — the whole bug was vy staying 0.
+    try std.testing.expect(state.projectiles[0].vy > 0.0);
+    // Speed is conserved: rotateVelocityToward rotates, never accelerates.
+    // Tolerance is LUT-sized, not float-sized — the rotation goes through
+    // lutCos/lutSin (the shared table that makes trig bit-identical across
+    // hosts, ADR-0006), so a pure rotation lands ~1e-4 off the input speed
+    // by construction. Measured 599.99986 for 600. Asserting 1e-6 here
+    // would be asserting that the determinism mechanism does not exist.
+    const p0 = state.projectiles[0];
+    const speed = @sqrt(p0.vx * p0.vx + p0.vy * p0.vy);
+    try std.testing.expectApproxEqAbs(@as(f64, 600.0), speed, 0.01);
+}
+
+test "homing: a DEAD player is not a target — the shard flies straight (vacuity guard: the same shard turns for a live one)" {
+    // Dead: no turn.
+    {
+        var state = freshFightingState();
+        state.player_count = 1;
+        state.players[0].flags.alive = false;
+        state.players[0].x = 900;
+        state.players[0].y = 900;
+        setPlayerId(&state.players[0], "corpse");
+        state.projectile_count = 1;
+        state.projectiles[0] = homingShardLiteral();
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expectEqual(@as(f64, 0.0), state.projectiles[0].vy);
+    }
+    // Alive: turns. Without this the test above passes even if homing is
+    // ripped out entirely.
+    {
+        var state = freshFightingState();
+        state.player_count = 1;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        state.players[0].x = 900;
+        state.players[0].y = 900;
+        setPlayerId(&state.players[0], "prey");
+        state.projectile_count = 1;
+        state.projectiles[0] = homingShardLiteral();
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expect(state.projectiles[0].vy > 0.0);
+    }
+}
+
+test "homing: the owner is never its own target (vacuity guard: a second, further player IS)" {
+    // Owner only: nothing to home at.
+    {
+        var state = freshFightingState();
+        state.player_count = 1;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        state.players[0].x = 900;
+        state.players[0].y = 900;
+        setPlayerId(&state.players[0], "shooter");
+        state.projectile_count = 1;
+        state.projectiles[0] = homingShardLiteral();
+        state.projectiles[0].flags.has_owner = true;
+        state.projectiles[0].owner_id_len = 7;
+        @memcpy(state.projectiles[0].owner_id_bytes[0..7], "shooter");
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expectEqual(@as(f64, 0.0), state.projectiles[0].vy);
+    }
+    // Owner + a stranger further away: the stranger is the target, so the
+    // exclusion is the owner specifically, not "any player".
+    {
+        var state = freshFightingState();
+        state.player_count = 2;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        state.players[0].x = 900;
+        state.players[0].y = 900;
+        setPlayerId(&state.players[0], "shooter");
+        state.players[1].flags.alive = true;
+        state.players[1].health = 100;
+        state.players[1].x = 1400;
+        state.players[1].y = 1400;
+        setPlayerId(&state.players[1], "stranger");
+        state.projectile_count = 1;
+        state.projectiles[0] = homingShardLiteral();
+        state.projectiles[0].flags.has_owner = true;
+        state.projectiles[0].owner_id_len = 7;
+        @memcpy(state.projectiles[0].owner_id_bytes[0..7], "shooter");
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expect(state.projectiles[0].vy > 0.0);
+    }
+}
+
+test "homing: NEAREST wins, and anti-homing steers the opposite way from the same target" {
+    // Nearest of two: the near one is ABOVE, the far one BELOW, so the
+    // sign of vy says which was chosen.
+    {
+        var state = freshFightingState();
+        state.player_count = 2;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        state.players[0].x = 560;
+        state.players[0].y = 100; // near, above
+        setPlayerId(&state.players[0], "near");
+        state.players[1].flags.alive = true;
+        state.players[1].health = 100;
+        state.players[1].x = 1500;
+        state.players[1].y = 1500; // far, below
+        setPlayerId(&state.players[1], "far");
+        state.projectile_count = 1;
+        state.projectiles[0] = homingShardLiteral();
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expect(state.projectiles[0].vy < 0.0); // chased the near one, upward
+    }
+    // anti-homing: same single target, opposite turn.
+    {
+        var state = freshFightingState();
+        state.player_count = 1;
+        state.players[0].flags.alive = true;
+        state.players[0].health = 100;
+        state.players[0].x = 900;
+        state.players[0].y = 900; // below
+        setPlayerId(&state.players[0], "prey");
+        state.projectile_count = 1;
+        state.projectiles[0] = homingShardLiteral();
+        state.projectiles[0].pathing = .anti_homing;
+        _ = root.world.stepWorld(&state, 16.0);
+        try std.testing.expect(state.projectiles[0].vy < 0.0); // fled upward
+    }
+}
+
+test "homing: homing_strength overrides the default turn rate (a stronger shard turns further in one tick)" {
+    const turnFor = struct {
+        fn run(strength: f64, has_strength: bool) f64 {
+            var state = freshFightingState();
+            state.player_count = 1;
+            state.players[0].flags.alive = true;
+            state.players[0].health = 100;
+            state.players[0].x = 900;
+            state.players[0].y = 900;
+            setPlayerId(&state.players[0], "prey");
+            state.projectile_count = 1;
+            state.projectiles[0] = homingShardLiteral();
+            state.projectiles[0].flags.has_homing = has_strength;
+            state.projectiles[0].homing_strength = strength;
+            _ = root.world.stepWorld(&state, 16.0);
+            return state.projectiles[0].vy;
+        }
+    }.run;
+
+    const default_vy = turnFor(0, false);
+    const strong_vy = turnFor(root.projectile.HOMING_TURN_RATE_DEFAULT * 3.0, true);
+    try std.testing.expect(default_vy > 0.0);
+    try std.testing.expect(strong_vy > default_vy);
+}

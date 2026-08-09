@@ -2782,6 +2782,91 @@ fn isNinjaEvading(state: *const world_state.WorldState, victim_idx: u32) bool {
 /// distance ties resolved identically on both sides. Distances compare
 /// SQUARED (findNearestEnemyInRange's own shipped precedent) — same
 /// result as TS's hypot compare except in sub-ulp ties.
+/// Closest living non-owner player — the homing / anti-homing target.
+/// Bit-for-bit mirror of `closestNonOwnerPlayer` in
+/// `client/src/sim/projectile.ts`.
+///
+/// Returns a player slot index, or -1 when nothing is targetable (which
+/// is what a lone player against bots-in-another-round looks like — the
+/// caller must leave velocity untouched, NOT steer at nothing).
+///
+/// ITERATION ORDER: same trap and same resolution as findNearestAllyIdx
+/// above — slot order IS TS's id-sorted order, and the strict `<` keeps
+/// distance ties resolving identically. Distances compare SQUARED, as TS
+/// does here too (`d2 < bestSq`), so this is exact rather than
+/// hypot-approximate.
+///
+/// TWO deliberate omissions, both no-ops today:
+///   · Veil of Nought ("homing cannot audit the unmade" — TS skips a
+///     player whose `veilUntilTick > tick`). The veil ACTIVE is itself
+///     unported (`world.zig`'s `.veil_of_nought => {}` — Phase 4), so no
+///     Zig player can ever be veiled and there is nothing to skip.
+///     **Whoever ports the veil must add the skip here in the same
+///     commit**, or homing silently starts tracking through it.
+///   · `enemy_only` IS honoured below, but TS notes no live call site
+///     sets it — it is dormant infrastructure on both sides, kept in
+///     step so the two cannot drift apart unnoticed.
+fn findHomingTargetIdx(
+    state: *const world_state.WorldState,
+    from_x: f64,
+    from_y: f64,
+    /// Empty slice = ownerless projectile (nothing is excluded).
+    owner_id: []const u8,
+    enemy_only: bool,
+) i32 {
+    // The owner is only needed to answer "is this candidate an ally?",
+    // which only `enemy_only` asks — skip the lookup otherwise.
+    var owner_idx: i32 = -1;
+    if (enemy_only and owner_id.len != 0) {
+        var oi: u32 = 0;
+        while (oi < state.player_count) : (oi += 1) {
+            const cand = &state.players[oi];
+            if (cand.id_len == owner_id.len and
+                std.mem.eql(u8, cand.id_bytes[0..cand.id_len], owner_id))
+            {
+                owner_idx = @intCast(oi);
+                break;
+            }
+        }
+    }
+
+    var best: i32 = -1;
+    var best_sq: f64 = std.math.inf(f64);
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        const p = &state.players[i];
+        if (owner_id.len != 0 and
+            p.id_len == owner_id.len and
+            std.mem.eql(u8, p.id_bytes[0..p.id_len], owner_id))
+        {
+            continue;
+        }
+        if (!p.flags.alive) continue;
+        if (owner_idx >= 0) {
+            const owner = &state.players[@intCast(owner_idx)];
+            // isAlly (team.ts): both must carry a team id and match.
+            if (owner.flags.has_team_id and p.flags.has_team_id and
+                owner.team_id_len == p.team_id_len and
+                std.mem.eql(
+                    u8,
+                    owner.team_id_bytes[0..owner.team_id_len],
+                    p.team_id_bytes[0..p.team_id_len],
+                ))
+            {
+                continue;
+            }
+        }
+        const dx = p.x - from_x;
+        const dy = p.y - from_y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < best_sq) {
+            best_sq = d2;
+            best = @intCast(i);
+        }
+    }
+    return best;
+}
+
 fn findNearestAllyIdx(
     state: *const world_state.WorldState,
     caster_idx: u32,
@@ -6287,6 +6372,79 @@ pub fn stepWorld(state: *world_state.WorldState, dt_ms: f64) i32 {
         projectile_lifetime_pre_step[pi] = proj_ptr.lifetime_ms;
         const result = projectile.projectilePreStep(proj_ptr, eff_dt);
         if (result == .advance) {
+            // ── Homing (Track E1 residual, fixed 2026-08-09) ──────────
+            // stepV2 below is still handed EMPTY player arrays, so its
+            // own homing branch can never find a target: under wasm
+            // authority every homing shot flew dead straight. Harmless
+            // while the only homing sources were rare procs; the Priest
+            // tendril rework made it reachable in normal play, and the
+            // E2 flip would have shipped it.
+            //
+            // Steering here rather than by filling stepV2's arrays is
+            // deliberate: TS applies the pathing velocity change and
+            // THEN integrates, which is exactly this order, and it keeps
+            // the richer target rules (owner, alive, ally, and one day
+            // the veil) in one place next to the state they read. stepV2
+            // still re-runs its homing branch on empty arrays and finds
+            // nothing, so there is no double turn.
+            //
+            // NOT ported yet: Priest tendril platform avoidance
+            // (`proj.tendril` + steerAwayFromNearestPlatform in
+            // projectile.ts). It needs a static spatial grid inside
+            // step_world — `spatial.queryGrid` exists but nothing builds
+            // the grid on this path — and a faithful port must reuse the
+            // SAME candidate order or the nearest-surface tie-break can
+            // diverge. Tendrils therefore home correctly but do not yet
+            // dodge terrain: a smaller, named divergence than not homing
+            // at all. See the goal doc's E1-residual list.
+            if (proj_ptr.pathing == .homing or proj_ptr.pathing == .anti_homing) {
+                const owner_slice: []const u8 = if (proj_ptr.flags.has_owner)
+                    proj_ptr.owner_id_bytes[0..proj_ptr.owner_id_len]
+                else
+                    &.{};
+                const target_idx = findHomingTargetIdx(
+                    state,
+                    proj_ptr.x,
+                    proj_ptr.y,
+                    owner_slice,
+                    proj_ptr.flags.enemy_only,
+                );
+                if (target_idx >= 0) {
+                    const target = &state.players[@intCast(target_idx)];
+                    // anti-homing steers at the point mirrored through
+                    // the projectile — i.e. directly away from the
+                    // target — same expression TS uses.
+                    const tx = if (proj_ptr.pathing == .anti_homing)
+                        proj_ptr.x * 2 - target.x
+                    else
+                        target.x;
+                    const ty = if (proj_ptr.pathing == .anti_homing)
+                        proj_ptr.y * 2 - target.y
+                    else
+                        target.y;
+                    const turn_rate = if (proj_ptr.flags.has_homing and
+                        proj_ptr.homing_strength > 0.0)
+                        proj_ptr.homing_strength
+                    else
+                        projectile.HOMING_TURN_RATE_DEFAULT;
+                    var turned_vx: f64 = 0;
+                    var turned_vy: f64 = 0;
+                    projectile.rotateVelocityToward(
+                        proj_ptr.vx,
+                        proj_ptr.vy,
+                        proj_ptr.x,
+                        proj_ptr.y,
+                        tx,
+                        ty,
+                        turn_rate,
+                        eff_dt / 1000.0,
+                        &turned_vx,
+                        &turned_vy,
+                    );
+                    proj_ptr.vx = turned_vx;
+                    proj_ptr.vy = turned_vy;
+                }
+            }
             // Bridge ProjectileEntity → ProjectileKinematicsV2 →
             // step → write motion fields back.
             var kine = projectile.ProjectileKinematicsV2{
