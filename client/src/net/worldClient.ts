@@ -66,6 +66,11 @@ export async function fetchVenueLobbyAssignment(
   playerId: string,
   displayName?: string,
   characterId?: string,
+  /** Doors 1.6 — arrived through the `?fight` fast lane, so ask the venue
+   *  to queue us on arrival instead of making us walk to the bell totem
+   *  first. Advisory only: the server runs it through the same toggleQueue
+   *  a totem touch does, callsign gate included. */
+  fastQueue?: boolean,
 ): Promise<WorldAssignment> {
   const wsBase = readGameServerWsBase();
   const httpBase = wsToHttp(wsBase);
@@ -83,6 +88,7 @@ export async function fetchVenueLobbyAssignment(
   if (displayName) wsUrl.searchParams.set("name", displayName.slice(0, 14));
   // Same chassis side-channel as fetchWorldAssignment above.
   if (characterId) wsUrl.searchParams.set("character", characterId);
+  if (fastQueue) wsUrl.searchParams.set("fight", "1");
   return { wsUrl: wsUrl.toString(), token: json.token };
 }
 

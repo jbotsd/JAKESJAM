@@ -732,6 +732,28 @@ export class VenueHost {
     }
     this.lobbySockets.set(playerId, ws);
     this.lobbyHost.attachClient(ws);
+    // Doors 1.6 — the `?fight` fast lane. The north-star gate is "URL →
+    // first shot under 15 s", and landing in the venue and then WALKING to
+    // the bell totem is most of that gap. A visitor who arrived through the
+    // fast lane is queued on arrival instead.
+    //
+    // Routed through the same `toggleQueue` a totem touch uses, so the
+    // callsign gate (a nameless visitor still cannot queue — S2.C.3) and
+    // the duo branch hold identically: this adds a TRIGGER, not a second
+    // queue path. Guarded on membership because toggleQueue is a toggle —
+    // a reconnect inside the same bell would otherwise queue, then UNqueue,
+    // which is precisely the "silently dropped from the queue" class of bug
+    // Doors 1.3/1.4 just finished closing.
+    if ((ws.data as { fastQueue?: boolean }).fastQueue) {
+      this.ensureQueued(playerId);
+    }
+  }
+
+  /** Queue this player unless they are already in a queue — an idempotent
+   *  wrapper over the toggle, for arrival-time entry (Doors 1.6). */
+  private ensureQueued(playerId: PlayerId): void {
+    if (this.readyQueue.has(playerId) || this.duoQueue.has(playerId)) return;
+    this.toggleQueue(playerId);
   }
 
   routeLobby(ws: ServerWebSocket<MatchSocketData>, raw: Buffer | ArrayBuffer | Uint8Array): void {

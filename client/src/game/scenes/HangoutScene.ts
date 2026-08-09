@@ -85,6 +85,10 @@ export type HangoutSceneInit = {
   /** Required in private mode; unused in venue mode. */
   roomCode?: string;
   localPlayerId: string;
+  /** Doors 1.6 — venue mode only. Arrived through the `?fight` fast lane,
+   *  so ask the venue to queue us for the next bell on arrival instead of
+   *  requiring a walk to the bell totem. */
+  fastQueue?: boolean;
 };
 
 // Same visual scale OnlineMatchScene/MatchScene use — keeps a party member's
@@ -122,6 +126,8 @@ const PLAYER_CHARACTER_KEY = "jakesjam.playerCharacter";
 
 export class HangoutScene extends Phaser.Scene {
   private mode: "private" | "venue" = "private";
+  /** Doors 1.6 — arrived via `?fight`; ride it onto the lobby socket. */
+  private fastQueue = false;
   private roomCode!: string;
   private localPlayerId!: PlayerId;
   private loop: ClientLoop | null = null;
@@ -276,6 +282,10 @@ export class HangoutScene extends Phaser.Scene {
     this.roomCode = data.roomCode ?? "";
     this.localPlayerId = PlayerId(data.localPlayerId);
     this.venueAdmittedHandoff = false; // scene instances are reused
+    // Scene instances are reused, so this must be reset explicitly too —
+    // otherwise a later ordinary venue entry would inherit a stale fast
+    // lane and silently auto-queue someone who never asked for it.
+    this.fastQueue = data.fastQueue ?? false;
     void this.connect();
   }
 
@@ -463,6 +473,10 @@ export class HangoutScene extends Phaser.Scene {
           // venue vessel spawns with the picked class's body. Server pass
           // is authoritative (net/playerCharacter.ts, same function).
           sanitizeCharacterId(localStorage.getItem(PLAYER_CHARACTER_KEY)),
+          // Doors 1.6 — the fast lane. Only ever true when the URL asked
+          // for it; the callsign prompt above still runs first, because the
+          // server refuses a nameless queue entry either way.
+          this.fastQueue,
         );
         wsUrl = assignment.wsUrl;
         matchId = "lobby";
@@ -1826,10 +1840,37 @@ export class HangoutScene extends Phaser.Scene {
   }
 }
 
-/** Shared links promise immediate live play; the normal Lobby button still
- * owns the authored callsign prompt. Email and intro are shell-level surfaces
- * and remain untouched. */
+/**
+ * Does this arrival promise immediate live play? If so the venue names the
+ * visitor itself (fallbackPlayerName) and connects, instead of holding a
+ * prompt in front of a black screen.
+ *
+ * Doors 1.1 widened this. It used to mean only the explicit share link
+ * (`?world=1` / `/world`), because a bare URL meant "came through the
+ * splash", where the callsign field already exists. Lobby-first made the
+ * bare URL the FRONT DOOR — so leaving it out meant a stranger's whole
+ * first impression was a name box over an unconnected void: the venue
+ * gates its own connect on the callsign, so nothing renders until you
+ * type. Now only a deliberate splash journey (?splash / ?intro / kiosk)
+ * or a room link is asked up front; everyone else is in the room in a
+ * couple of seconds and renames later from the splash field.
+ *
+ * The prompt itself is NOT deleted — it is still the authored surface for
+ * the splash path, and it is still the only callsign prompt that exists
+ * (both surfaces write the same `jakesjam.playerName` key).
+ */
 function isSharedWorldInvite(): boolean {
   const params = new URLSearchParams(window.location.search);
-  return params.get("world") === "1" || window.location.pathname === "/world";
+  if (params.get("world") === "1" || window.location.pathname === "/world") return true;
+  // Deliberate front-door journeys keep the authored prompt.
+  if (
+    params.get("splash") === "1" ||
+    params.get("intro") === "1" ||
+    params.get("kiosk") === "1"
+  ) {
+    return false;
+  }
+  // Room/code links run the private-lobby flow, not this one.
+  if (params.get("room") || params.get("code")) return false;
+  return true;
 }

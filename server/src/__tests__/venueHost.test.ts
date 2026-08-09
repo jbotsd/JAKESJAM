@@ -1373,3 +1373,65 @@ describe("VenueHost ability-showcase gauntlet (Part C)", () => {
     venue.dispose();
   });
 });
+
+describe("VenueHost fast lane (Doors 1.6 — ?fight)", () => {
+  /** `?fight` rides SocketData the same way name/character do. */
+  function makeFastLaneWs(
+    playerId: string,
+    name?: string,
+  ): ServerWebSocket<MatchSocketData> {
+    const ws = makeFakeWs(playerId, name);
+    (ws.data as { fastQueue?: boolean }).fastQueue = true;
+    return ws;
+  }
+
+  test("a named fast-lane arrival is queued on attach, with no totem touch", () => {
+    // The whole point of the item: the walk to the bell totem stops being
+    // part of the URL→first-shot budget.
+    const { venue } = makeVenue(0);
+    venue.attachLobby(makeFastLaneWs("p_fast", "AVA"));
+    expect(venue.queuedForTest() as string[]).toEqual(["p_fast"]);
+    venue.dispose();
+  });
+
+  test("an ordinary arrival is NOT queued — the fast lane is opt-in", () => {
+    const { venue } = makeVenue(0);
+    venue.attachLobby(makeFakeWs("p_walk", "BEA"));
+    expect(venue.queuedForTest() as string[]).toEqual([]);
+    venue.dispose();
+  });
+
+  test("the callsign gate still holds: a nameless fast-lane arrival cannot queue", () => {
+    // S2.C.3 — identity precedes commitment. The fast lane adds a trigger,
+    // never an exemption; a deep link must not be a way around the gate.
+    const { venue } = makeVenue(0);
+    venue.attachLobby(makeFastLaneWs("p_nameless"));
+    expect(venue.queuedForTest() as string[]).toEqual([]);
+    venue.dispose();
+  });
+
+  test("a reconnect inside the same bell stays queued (idempotent, not a toggle)", () => {
+    // toggleQueue is a TOGGLE, so calling it blindly on every attach would
+    // queue then UNqueue a reconnecting player — exactly the "silently
+    // dropped from the queue" bug class Doors 1.3/1.4 just closed.
+    const { venue } = makeVenue(0);
+    venue.attachLobby(makeFastLaneWs("p_flap", "CAI"));
+    expect(venue.queuedForTest() as string[]).toEqual(["p_flap"]);
+    venue.attachLobby(makeFastLaneWs("p_flap", "CAI"));
+    expect(venue.queuedForTest() as string[]).toEqual(["p_flap"]);
+    venue.dispose();
+  });
+
+  test("a fast-lane player can still leave the queue at the totem", () => {
+    // Arriving queued must not trap anyone: the totem remains a toggle.
+    const { venue } = makeVenue(0);
+    const ws = makeFastLaneWs("p_leave", "DEE");
+    venue.attachLobby(ws);
+    expect(venue.queuedForTest() as string[]).toEqual(["p_leave"]);
+    (
+      venue as unknown as { toggleQueue(id: ReturnType<typeof PlayerId>): void }
+    ).toggleQueue(PlayerId("p_leave"));
+    expect(venue.queuedForTest() as string[]).toEqual([]);
+    venue.dispose();
+  });
+});

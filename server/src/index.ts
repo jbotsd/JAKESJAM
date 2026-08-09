@@ -173,7 +173,16 @@ type SocketKind = "room" | "world" | "lobby";
 // player picked at the venue loadout station or the private-room dropdown —
 // whitelisted at the upgrade (sanitizeCharacterId), duck-read by
 // WorldHost/VenueHost spawnFor the same way `name` is.
-type SocketData = MatchSocketData & { kind: SocketKind; name?: string; character?: string };
+type SocketData = MatchSocketData & {
+  kind: SocketKind;
+  name?: string;
+  character?: string;
+  /** Doors 1.6 — the `?fight` fast lane asked to be queued on arrival, so
+   *  the visitor waits for the next bell instead of walking to the totem
+   *  first. A hint, not an authority: VenueHost still runs it through the
+   *  same `toggleQueue` (callsign gate, duo branch) a totem touch would. */
+  fastQueue?: boolean;
+};
 
 // ── Self-contained hosting: optional static client serving ─────────────────
 // When SERVE_CLIENT_DIR points at a Vite build output (client/dist), any GET
@@ -1204,6 +1213,10 @@ video{width:100%;height:100%;object-fit:contain;display:block}</style>
         // Chassis rides the lobby half too so the venue vessel wears the
         // picked class's body (same whitelist as /ws/world above).
         character: sanitizeCharacterId(url.searchParams.get("character")),
+        // Doors 1.6 fast lane. Same side-channel shape as name/character:
+        // unsigned, and harmless if forged — the worst a caller can do is
+        // queue themselves, which is the totem's public behaviour anyway.
+        fastQueue: url.searchParams.get("fight") === "1",
         authedAt: Date.now(),
       };
       const upgraded = srv.upgrade(req, { data });

@@ -840,6 +840,44 @@ window.setInterval(() => {
     }
   }
 }, 250);
+
+// ── BOOT PLAN (Doors 1.1 — lobby-first landing) ───────────────────────
+//
+// The front door used to be: click-to-initiate → 27.9 s ident → splash →
+// callsign → walk → bell. Five gates and 5+ clicks before a stranger saw
+// a fight, against a north star of "in a live fight in under 15 seconds".
+// The venue is now the DEFAULT landing; the splash becomes a surface you
+// go BACK to (pause menu → Back to splash), not one you must get past.
+//
+// Decided once, here, because two very separate blocks need the answer:
+// the ident ceremony below (which must not run on the critical path) and
+// the routing block at the bottom of this file.
+//
+// The ident is not deleted — it is promoted to something you ASK for
+// (Credits row → "Intro", which lands as `?intro=1`). `?splash=1` is the
+// escape hatch back to the old landing for a marketing capture or a
+// bisect, and it is also what the pause menu's Back-to-splash uses.
+type BootPlan = "replay" | "room" | "venue" | "splash";
+const bootParams = new URLSearchParams(window.location.search);
+const bootPlan: BootPlan = ((): BootPlan => {
+  if (bootParams.get("replay")) return "replay";
+  if (bootParams.get("room") || bootParams.get("code")) return "room";
+  // Explicit requests for the old front door win over lobby-first.
+  if (bootParams.get("intro") === "1") return "splash";
+  if (bootParams.get("splash") === "1") return "splash";
+  // The stream kiosk exists to show the ceremony — it is the one context
+  // where the ident IS the content, not a toll (stream-kit/).
+  if (bootParams.get("kiosk") === "1") return "splash";
+  try {
+    if (localStorage.getItem("jakesjam.lobbyFirst") === "off") return "splash";
+  } catch {
+    /* storage unavailable — lobby-first is still the right default */
+  }
+  return "venue";
+})();
+/** True when boot should get out of the way: no ceremony, no gate. */
+const bootSkipsCeremony = bootPlan !== "splash";
+
 {
   const gate = app.querySelector<HTMLElement>("[data-boot-gate]");
   const ident = app.querySelector<HTMLElement>("[data-boot-ident]");
@@ -1215,11 +1253,16 @@ window.setInterval(() => {
     const v = app.querySelector<HTMLVideoElement>(".splash-bg-video");
     if (v && v.paused) void v.play().catch(() => undefined);
   };
-  if (instant) {
+  if (instant || bootSkipsCeremony) {
+    // Doors 1.1: lobby-first (or a replay/room deep link) means the
+    // ceremony is not on the critical path at all — no click-to-initiate,
+    // no 27.9 s anthem, no splash to dismiss. The ident still exists and
+    // still plays in full when asked for (Credits → Intro → ?intro=1),
+    // which is the point: a rite you choose, not a toll you pay.
     gate?.remove();
     ident?.remove();
     document.documentElement.classList.add("ident-done");
-    startSplashVideo();
+    if (!bootSkipsCeremony) startSplashVideo();
   } else if (forceIntro || isKioskMode) {
     // forceIntro: the Intro-button click was already the required user
     // gesture — skip the click-to-initiate gate and run straight in.
@@ -2142,7 +2185,14 @@ installFullscreenToggle();
  * (enterArenaFromVenue). joinWorld keeps its name so every caller
  * (Hot Lobby button, ?world=1) inherits the flip.
  */
-function joinWorld(): void {
+/**
+ * @param fastQueue Doors 1.6 — queue for the next bell on arrival instead
+ * of requiring a walk to the bell totem. Only the `?fight` / `?world=1`
+ * deep links pass it; every in-app path (Lobby button, Back to Lobby, the
+ * post-match round trip) deliberately does not, because a player already
+ * inside the venue is choosing when to commit.
+ */
+function joinWorld(fastQueue = false): void {
   startVenueMusic();
   silenceAnnouncer(); // cut the diatribe if it's mid-flight
   requestGameFullscreen();
@@ -2164,6 +2214,7 @@ function joinWorld(): void {
   game.scene.start(SceneKeys.Hangout, {
     mode: "venue",
     localPlayerId: localPlayerId(),
+    fastQueue,
   });
 }
 
@@ -2264,13 +2315,36 @@ if (resumePlace) {
     game.scene.stop(SceneKeys.MainMenu);
     game.scene.start(SceneKeys.Replay);
   }, 0);
-} else if (urlParams.get("world") === "1" || window.location.pathname === "/world") {
+} else if (
+  urlParams.has("fight") ||
+  urlParams.get("world") === "1" ||
+  window.location.pathname === "/world" ||
+  // Venue lobby deep link — same landing since the S2.F flow flip
+  // (joinWorld IS the venue now); kept as a stable alias.
+  urlParams.get("venue") === "1" ||
+  // Doors 1.1 — THE DEFAULT. A bare URL lands in the venue, where there
+  // are bots fighting and dummies to hit, instead of on a splash the
+  // visitor has to get past. `?splash=1` (and the pause menu's
+  // Back-to-splash) still reaches the old front door.
+  bootPlan === "venue"
+) {
+  // Doors 1.6 — the `?fight` fast lane: queued for the next bell on
+  // arrival, so the walk to the bell totem stops being part of the
+  // URL→first-shot budget. `?world=1` / `/world` alias to it per
+  // venue-goal P6.3 — that param IS the public share link, and its whole
+  // promise is "join the fight".
+  //
+  // Deliberately NOT the fast lane: `?venue=1` (it asked for the venue,
+  // not a fight) and the bare default landing (Doors 1.1). Auto-queueing
+  // every default visitor would commit a first-timer to a bout before
+  // anything has taught them the bell — a bigger call than this item, and
+  // one that belongs with the Phase 3 onboarding work.
+  const wantsFastQueue =
+    urlParams.has("fight") ||
+    urlParams.get("world") === "1" ||
+    window.location.pathname === "/world";
   // Defer one tick so Phaser has a chance to register the scene.
-  setTimeout(() => joinWorld(), 0);
-} else if (urlParams.get("venue") === "1") {
-  // Venue lobby deep link — same landing as ?world=1 since the S2.F flow
-  // flip (joinWorld IS the venue now); kept as a stable alias.
-  setTimeout(() => joinWorld(), 0);
+  setTimeout(() => joinWorld(wantsFastQueue), 0);
 } else if (urlParams.get("room") || urlParams.get("code")) {
   // Shared room link → open lobby and auto-join the room (idempotent on server).
   shell.goto("room");
