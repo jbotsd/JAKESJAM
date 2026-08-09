@@ -35,6 +35,7 @@
     "combat:probe": "bun tools/combat-probe.mjs",
     "match:probe": "bun tools/match-probe.mjs",
     "gen:cards": "bun run sim/tools/gen_card_data.ts",
+    "gen:maps": "bun run sim/tools/gen_map_data.ts",
     "autoplay": "bun scripts/autoplay.ts",
     "autoplay:heavy": "bun scripts/autoplay.ts --heavy",
     "presentation:evidence": "bun scripts/audit-presentation-evidence.ts",

@@ -5348,3 +5348,68 @@ test "world_init_roster: the built world actually STEPS (the acceptance bar)" {
     try std.testing.expect(state.players[0].y != before_y);
     try std.testing.expectEqual(@as(u32, 30), state.header.tick);
 }
+
+// ─── N-MAP · named maps in the core ──────────────────────────────────────
+
+test "named maps: the codegen ran and every map has geometry" {
+    // Vacuity guard for the whole lane: if maps_gen.zig were emitted empty
+    // (or the codegen silently skipped a file), every assertion below about
+    // a SPECIFIC map would still need to fail before anyone noticed.
+    try std.testing.expect(root.world.named_map_count() >= 6);
+}
+
+test "named maps: loading vessel-nexus fills statics AND spawns" {
+    var state: root.world_state.WorldState = undefined;
+    state.static_count = 0;
+    const id = "vessel-nexus";
+    const n = root.world.world_state_load_named_map(&state, id.ptr, id.len);
+    try std.testing.expect(n > 0);
+    try std.testing.expectEqual(n, state.static_count);
+
+    // Spawns must land in the SAME table world_init_roster reads, or a
+    // native world would build its map and then stack every player at the
+    // origin.
+    const archetypes = [_]u8{ 0, 0 };
+    _ = root.world.world_init_roster(&state, &archetypes, 2, 99);
+    try std.testing.expect(state.players[0].x != 0 or state.players[0].y != 0);
+    try std.testing.expect(
+        state.players[0].x != state.players[1].x or state.players[0].y != state.players[1].y,
+    );
+}
+
+test "named maps: an unknown id loads NOTHING rather than a default map" {
+    var state: root.world_state.WorldState = undefined;
+    state.static_count = 7;
+    const id = "no-such-map";
+    try std.testing.expectEqual(
+        @as(u32, 0),
+        root.world.world_state_load_named_map(&state, id.ptr, id.len),
+    );
+    // Untouched — substituting geometry would turn a replay desync into a
+    // mystery instead of a clean failure.
+    try std.testing.expectEqual(@as(u32, 7), state.static_count);
+}
+
+test "named maps: one_way is set for thin platforms and clear for floors" {
+    var state: root.world_state.WorldState = undefined;
+    const id = "skyseam";
+    const n = root.world.world_state_load_named_map(&state, id.ptr, id.len);
+    try std.testing.expect(n > 0);
+
+    var thin_one_way: u32 = 0;
+    var thick_solid: u32 = 0;
+    var i: u32 = 0;
+    while (i < n) : (i += 1) {
+        if (state.one_way[i] == 1) {
+            // The rule is `kind == platform && height <= 24`; whatever the
+            // kind was, a one-way static must satisfy the height half.
+            try std.testing.expect(state.statics[i].h <= 24);
+            thin_one_way += 1;
+        } else if (state.statics[i].h > 24) {
+            thick_solid += 1;
+        }
+    }
+    // Both halves present, so neither branch is vacuous on this map.
+    try std.testing.expect(thin_one_way > 0);
+    try std.testing.expect(thick_solid > 0);
+}
