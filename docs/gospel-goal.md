@@ -513,6 +513,20 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       prove bit-identity before that is true). Cost: the native harness
       must write per-tick inputs exactly as `serverWasmHost.step` does, so
       that path is the thing to get right, not world construction.
+      **Init dumper DONE 2026-08-09 (7642134):**
+      `bun server/tools/dump-replay-init.ts server/.replays/*.jjr` →
+      11/11 replays, 99,200 bytes each, named maps included.
+      **The input contract, read off `serverWasmHost.writeInputsIntoMemory`
+      so N0.3 starts from facts instead of guesses:** players are ordered by
+      SORTED player id; per player, `aimX` at byte 32, `aimY` at 40, `keys`
+      (u32) at 268, `prevKeys` (u32) at 272, stride `PLAYER_ENTITY_SIZE`,
+      base `statePtr + HEADER_SIZE + 8`. Natively none of that byte math is
+      needed — the same `WorldState` struct is in scope, so write
+      `state.players[i]` fields directly and let the compiler agree with the
+      packer. The one genuinely unresolved question, and the divergence risk
+      to settle FIRST: what the live host feeds a player who has no input
+      frame on a given tick (`matchHost`'s per-tick assembly), because a
+      wrong answer there diverges silently rather than loudly.
 - [ ] **0.4 Cross-check gate.** Same hash cadence from the wasm path
       (reuse the parity harness); comparator runs both over every
       archived replay. **Bit-identical across all replays**, comparator
