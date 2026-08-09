@@ -37,6 +37,10 @@ import { ShellController } from "./shell/ShellController";
 import { installEmailGate } from "./shell/emailGate";
 // One source of naming — venue-goal Pillar 6.1.
 import { VENUE_CTA, VENUE_TITLE, ARENA_TITLE } from "./venueNames";
+// Doors 1.8 — one class presentation, shared with the venue station.
+import { buildClassPicker } from "./game/ui/classPicker";
+import { characters } from "./game/data/characters";
+import { sanitizeCharacterId } from "./net/playerCharacter";
 import {
   clearInMatch,
   resumableMatch,
@@ -342,6 +346,20 @@ app.innerHTML = `
     <div class="shell-frame">
       <p class="shell-kicker">VESSEL</p>
       <h2>Settings</h2>
+      <!-- Doors 1.8 — class selection ON THE MAIN PATH. The rich picker
+           already existed at the venue loadout station, but reaching it
+           meant walking to a totem; since 1.1 landed players in the venue
+           by default and 1.6 can queue them for the bell on arrival, a
+           player could fight forever as the default class without ever
+           seeing it. Settings is two keystrokes from anywhere (Menu/Esc),
+           so the choice now follows the player instead of sitting in one
+           corner of one room. Same module, same persisted key, kept in
+           step by the jakesjam:class-change event. -->
+      <div class="shell-section">
+        <h3>Class</h3>
+        <div data-settings-character-picker></div>
+        <p class="shell-hint">Your class picks your body, your kit and your ability catalog. Change it any time — it applies to your next bout.</p>
+      </div>
       <div class="shell-section">
         <h3>Audio</h3>
         <label>
@@ -549,22 +567,20 @@ app.innerHTML = `
             Accent
             <input data-player-color type="color" value="#50e3c2" />
           </label>
-          <label>
-            Class
-            <!-- Class era P1 (docs/classes-goal.md): option VALUES are the
-                 sim/wire-stable archetype ids; the labels speak the LOCKED
-                 persona display names (docs/classes-goal.md § Naming,
-                 2026-07-17) — never the dev-id class words. This dropdown
-                 and the venue loadout station's class row are two views of
-                 ONE selection (localStorage jakesjam.playerCharacter —
-                 LobbyController persists, both read). -->
-            <select data-player-character>
-              <option value="balanced">Geometrician</option>
-              <option value="sprinter">Interstice</option>
-              <option value="heavy">Kindled</option>
-              <option value="shielded">Syzygist</option>
-            </select>
-          </label>
+          <!-- Doors 1.8 — ONE class presentation, on the main path. This
+               was a bare <select> over the same four archetypes the venue
+               loadout station rendered as rich tiles (sigil + locked
+               persona name + true-today kit line): same choice, two visual
+               languages, and the good one reachable only by walking to a
+               totem most players never found. Since Doors 1.1 made the
+               venue the default landing and 1.6 can queue you on arrival, a
+               player can reach a fight without passing the station at all.
+               LobbyController mounts the shared picker
+               (game/ui/classPicker.ts) into this node. Still two views of
+               ONE selection (localStorage jakesjam.playerCharacter), kept
+               in step by the jakesjam:class-change event. (No backticks in
+               here — this markup lives inside a template literal.) -->
+          <div data-player-character-picker></div>
         </form>
         <!-- hidden practice hook for legacy LobbyController (practice is on HOME) -->
         <button data-practice type="button" hidden>Practice</button>
@@ -781,6 +797,39 @@ const musicVolumeInput = queryRequired<HTMLInputElement>("[data-music-volume]");
 const musicMutedInput = queryRequired<HTMLInputElement>("[data-music-muted]");
 const sfxVolumeInput = queryRequired<HTMLInputElement>("[data-sfx-volume]");
 const sfxMutedInput = queryRequired<HTMLInputElement>("[data-sfx-muted]");
+
+// Doors 1.8 — the same class picker the venue loadout station renders,
+// mounted in Settings so the choice is reachable from anywhere instead of
+// only by walking to a totem. Two views, ONE persisted value: each one
+// announces its writes with `jakesjam:class-change` and repaints on the
+// other's, so neither goes stale inside a session.
+{
+  const mount = queryRequired<HTMLElement>("[data-settings-character-picker]");
+  const picker = buildClassPicker({
+    title: "CHOOSE YOUR CLASS",
+    options: characters.map((c) => ({
+      id: c.id as string,
+      name: c.name,
+      classId: c.classId,
+      summary: c.kitSummary,
+      kitComing: c.kitComing,
+    })),
+    selectedId: sanitizeCharacterId(localStorage.getItem("jakesjam.playerCharacter")),
+    onSelect: (id) => {
+      const characterId = sanitizeCharacterId(id);
+      localStorage.setItem("jakesjam.playerCharacter", characterId);
+      window.dispatchEvent(
+        new CustomEvent("jakesjam:class-change", { detail: { characterId } }),
+      );
+    },
+  });
+  mount.appendChild(picker.el);
+  window.addEventListener("jakesjam:class-change", (event) => {
+    const characterId = (event as CustomEvent<{ characterId?: string }>).detail
+      ?.characterId;
+    if (characterId) picker.setSelected(sanitizeCharacterId(characterId));
+  });
+}
 
 const shell = new ShellController({
   dom: {

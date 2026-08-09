@@ -18,6 +18,9 @@ import {
 import { prefetchCustomMap } from "../../net/mapClient";
 import { readStoredCosmetics } from "../cosmetics/vesselCosmeticsStore";
 import { characters } from "../data/characters";
+// Doors 1.8 — one class presentation, shared with the venue station.
+import { buildClassPicker, type ClassPickerHandle } from "./classPicker";
+import { sanitizeCharacterId } from "../../net/playerCharacter";
 
 const CUSTOM_MAP_PREFIX = "custom:";
 const CUSTOM_MAP_CODE_RE = /^[A-Z0-9]{6}$/;
@@ -50,7 +53,10 @@ export class LobbyController {
   private readonly statusLine: HTMLElement;
   private readonly nameInput: HTMLInputElement;
   private readonly colorInput: HTMLInputElement;
-  private readonly characterSelect: HTMLSelectElement;
+  /** Doors 1.8 — the shared class picker replaced a bare <select> here, so
+   *  the selection lives in a field instead of in DOM `.value`. */
+  private readonly classPicker: ClassPickerHandle;
+  private selectedCharacterId: CharacterId;
   private readonly codeInput: HTMLInputElement;
   private readonly practiceButton: HTMLButtonElement;
   private readonly createButton: HTMLButtonElement;
@@ -90,7 +96,7 @@ export class LobbyController {
     this.statusLine = queryRequired(root, "[data-status]");
     this.nameInput = queryRequired(root, "[data-player-name]");
     this.colorInput = queryRequired(root, "[data-player-color]");
-    this.characterSelect = queryRequired(root, "[data-player-character]");
+    const classPickerMount = queryRequired<HTMLElement>(root, "[data-player-character-picker]");
     this.codeInput = queryRequired(root, "[data-room-code]");
     this.practiceButton = (root.querySelector("[data-practice]") as HTMLButtonElement | null) ??
       document.createElement("button");
@@ -134,7 +140,34 @@ export class LobbyController {
       localStorage.getItem(perPlayerNameKey) ??
       `Player ${this.playerId.slice(-4)}`;
     this.colorInput.value = localStorage.getItem(PLAYER_COLOR_KEY) ?? this.colorInput.value;
-    this.characterSelect.value = localStorage.getItem(PLAYER_CHARACTER_KEY) ?? DEFAULT_CHARACTER;
+    // Doors 1.8 — mount the SAME picker the venue loadout station uses.
+    this.selectedCharacterId = sanitizeCharacterId(
+      localStorage.getItem(PLAYER_CHARACTER_KEY),
+    ) as CharacterId;
+    this.classPicker = buildClassPicker({
+      title: "CLASS",
+      options: characters.map((c) => ({
+        id: c.id as string,
+        name: c.name,
+        classId: c.classId,
+        summary: c.kitSummary,
+        kitComing: c.kitComing,
+      })),
+      selectedId: this.selectedCharacterId,
+      onSelect: (id) => {
+        this.selectedCharacterId = sanitizeCharacterId(id) as CharacterId;
+        localStorage.setItem(PLAYER_CHARACTER_KEY, this.selectedCharacterId);
+        // Announce so the venue station (the other view of this one value)
+        // does not go stale within a session — the same event the station
+        // fires when IT is the one that changed.
+        window.dispatchEvent(
+          new CustomEvent("jakesjam:class-change", {
+            detail: { characterId: this.selectedCharacterId },
+          }),
+        );
+      },
+    });
+    classPickerMount.appendChild(this.classPicker.el);
     this.restoreRoomCodeFromUrl();
     this.restoreCustomMapCodeFromUrl();
     this.restoreChaosModifiers();
@@ -196,9 +229,6 @@ export class LobbyController {
     this.colorInput.addEventListener("input", () => {
       localStorage.setItem(PLAYER_COLOR_KEY, this.colorInput.value);
     });
-    this.characterSelect.addEventListener("change", () => {
-      localStorage.setItem(PLAYER_CHARACTER_KEY, this.characterId);
-    });
     // Class era P1: the venue loadout station's class row writes the SAME
     // persisted value this dropdown reads (two views, one selection). The
     // station announces its writes so an already-constructed dropdown
@@ -207,8 +237,9 @@ export class LobbyController {
     window.addEventListener("jakesjam:class-change", (event) => {
       const characterId = (event as CustomEvent<{ characterId?: string }>).detail
         ?.characterId;
-      if (characterId && characterId !== this.characterSelect.value) {
-        this.characterSelect.value = characterId;
+      if (characterId && characterId !== this.selectedCharacterId) {
+        this.selectedCharacterId = sanitizeCharacterId(characterId) as CharacterId;
+        this.classPicker.setSelected(this.selectedCharacterId);
       }
     });
     for (const input of this.chaosInputs) {
@@ -247,8 +278,7 @@ export class LobbyController {
   }
 
   private get characterId(): CharacterId {
-    const value = this.characterSelect.value as CharacterId;
-    return value || DEFAULT_CHARACTER;
+    return this.selectedCharacterId || DEFAULT_CHARACTER;
   }
 
   private async createRoom() {

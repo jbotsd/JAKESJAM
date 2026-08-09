@@ -529,7 +529,9 @@ export class CardDraftOverlay {
    *  is unchanged; every other surface now inherits the SAME element
    *  instead of reinventing it. */
   private makeClassRow(config: ClassRowConfig): HTMLDivElement {
-    return buildClassPicker(config);
+    // The station has no cross-surface sync need (it rebuilds on open), so
+    // it takes the element and drops the handle.
+    return buildClassPicker(config).el;
   }
 
   /** Builds the (initially empty) class ability catalog section — heading

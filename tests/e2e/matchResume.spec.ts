@@ -118,7 +118,11 @@ test.describe("Doors 1.7 — refresh mid-match", () => {
       .poll(async () => await resumeMarker(page), { timeout: 10_000 })
       .toBeNull();
 
-    await page.goto("/?gate=off");
+    // `?splash=1` deliberately, not a bare URL: Doors 1.1 made the VENUE
+    // the default landing, so "no splash" stopped meaning "did not resume"
+    // and this assertion would be reporting on 1.1 instead of on 1.7. The
+    // escape hatch gives a surface where the two outcomes differ again.
+    await page.goto("/?splash=1&gate=off");
     await page.waitForSelector(GAME_CANVAS, { timeout: 30_000 });
     // Give boot the same budget the resume path would have had.
     await page.waitForTimeout(3_000);
@@ -127,7 +131,8 @@ test.describe("Doors 1.7 — refresh mid-match", () => {
 
   test("a stale marker is not resumed", async ({ page }) => {
     await asReturningVisitor(page);
-    await page.goto("/?gate=off");
+    // `?splash=1` for the same reason as the test above (Doors 1.1).
+    await page.goto("/?splash=1&gate=off");
     await page.waitForSelector(GAME_CANVAS, { timeout: 30_000 });
     // Older than RESUME_WINDOW_MS (8 s) — the run is gone; boot must not
     // pretend otherwise.

@@ -45,11 +45,23 @@ export type ClassRowConfig = {
   onSelect: (id: string) => void;
 };
 
+export type ClassPickerHandle = {
+  /** Detached element — the caller mounts it. */
+  el: HTMLDivElement;
+  /**
+   * Repaint for a selection made ELSEWHERE (the venue station and the
+   * settings form are two views of one persisted value, so a write on one
+   * must not leave the other stale). Does not fire `onSelect` — this is
+   * "someone else already did it", not a new choice.
+   */
+  setSelected(id: string): void;
+};
+
 /**
- * Build the picker. Returns a detached element the caller mounts; keeps its
- * own selection state so the tiles repaint without a re-render from above.
+ * Build the picker. Keeps its own selection state so tiles repaint without
+ * a re-render from above.
  */
-export function buildClassPicker(config: ClassRowConfig): HTMLDivElement {
+export function buildClassPicker(config: ClassRowConfig): ClassPickerHandle {
   const wrap = document.createElement("div");
   wrap.dataset.classRow = "true";
   Object.assign(wrap.style, CLASS_ROW_WRAP_STYLE);
@@ -131,7 +143,14 @@ export function buildClassPicker(config: ClassRowConfig): HTMLDivElement {
   }
 
   wrap.append(title, row);
-  return wrap;
+  return {
+    el: wrap,
+    setSelected: (id: string) => {
+      if (id === selectedId || !tiles.has(id)) return;
+      selectedId = id;
+      for (const [tileId, t] of tiles) paintTile(t, tileId === selectedId);
+    },
+  };
 }
 
 const CLASS_ROW_WRAP_STYLE: Partial<CSSStyleDeclaration> = {

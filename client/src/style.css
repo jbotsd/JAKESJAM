@@ -1277,7 +1277,20 @@ button.btn-danger:hover:not(:disabled) {
   inset: 0;
   z-index: var(--shell-z-layer);
   display: flex;
-  align-items: center;
+  /* NOT `align-items: center` — that is the classic flexbox trap on an
+     `overflow: auto` container: once the content is taller than the layer,
+     centring pushes the TOP of the frame above the scroll origin and it
+     becomes permanently unreachable (you can scroll down, never up). The
+     Doors 1.8 e2e caught it the moment a Class section made Settings tall
+     enough to overflow at 1280x800: the first control in the panel was
+     visible, enabled, and un-clickable — "element is outside of the
+     viewport" forever.
+
+     `flex-start` + `margin: auto` on the frame keeps the panel centred
+     when it fits AND fully scrollable when it does not. Fixes every shell
+     layer (settings, clips, credits, pause), not just the one that
+     surfaced it. */
+  align-items: flex-start;
   justify-content: center;
   padding: 24px 16px;
   background: rgba(5, 8, 15, 0.72);
@@ -1307,6 +1320,10 @@ button.btn-danger:hover:not(:disabled) {
 
 .shell-frame {
   width: min(420px, 100%);
+  /* Pairs with .shell-layer's `align-items: flex-start` — auto margins
+     centre the frame while it fits and yield to the scroll container the
+     moment it does not, so a tall panel never loses its own top. */
+  margin: auto;
   padding: 22px 20px;
   /* Cut, not molded — same chamfer language as .splash-stage/button. */
   clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
