@@ -34,7 +34,8 @@ Numeric gates (published browser-game bars — Poki/CrazyGames):
 | Gate | Target | Today (measured 2026-08-05) |
 |---|---|---|
 | Conversion-to-play (load → ≥1 min played) | ≥70% (80% = exceptional) | unmeasured; journey has 5 gates + ≥5 clicks before the lobby |
-| URL → first shot fired | <15 s returning / <30 s first visit | ~60–140 s worst case (median bell wait ~50 s); ~15 s best via `?world=1` |
+| URL → **in the world** | (precursor to the row below) | **~1.0 s median, first visit AND returning** (measured 2026-08-09, localhost) |
+| URL → first shot fired | <15 s returning / <30 s first visit | front door now ~1 s; remaining distance is the BELL, not the boot — see note |
 | Critical-path payload | <10 MB | **3.64 MB on the landing** (was 12.12 MB — fixed 2026-08-09) |
 | First kill | <60 s | unguaranteed (default-class player vs mixed bots) |
 | Play-again rate after first cycle | ≥50% | unmeasured; cycle ends in a modal |
@@ -1035,6 +1036,25 @@ Zig (that's E3's conversation) · Steam before N3.
 ---
 
 ## STATUS — ground truth, newest first
+
+- 2026-08-09 (v) · **URL → in the world: ~1.0 s median** (3/3 first-visit
+  0.9–1.2 s, 3/3 returning 1.1–1.2 s). `tools/time-to-world.mjs`, defined
+  as "the local player has an entity in authoritative state" — not
+  "canvas appeared" and not "socket opened", both of which happen while
+  you are still nobody. Against a journey the doc last measured at
+  "~60–140 s worst case", that is the ident, the splash, the callsign
+  prompt and the walk all being gone.
+  - **Two caveats, both load-bearing.** This is localhost, so it excludes
+    the tunnel's latency — the honest claim is "the client and boot path
+    are no longer the bottleneck", not "a stranger in Berlin sees this".
+    The 3.64 MB payload makes a real-network figure plausible but
+    unmeasured. And **"in the world" is the VENUE, not a fight**: you are
+    standing in the room with an entity, hitting dummies. The distance to
+    an actual bout is the bell wait, which is Decision 2's taper
+    (1.5b, built dark), not a boot-path problem any more.
+  - So the row splits: the front door is solved, the bell is not. Worth
+    keeping separate on the board rather than averaging them into one
+    number that hides which half is broken.
 
 - 2026-08-09 (u) · **Landing payload 12.12 MB → 3.64 MB.** 8.5 MB, 70% of
   the critical path, removed — and the north-star row goes from
