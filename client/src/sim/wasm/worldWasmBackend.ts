@@ -187,7 +187,7 @@ function runWasmStepSync(
   writeTargetScoreIntoMemory();
   writeScoresIntoMemory(state);
   writeLoadoutsIntoMemory(state);
-  writePlayerInputsFromGlobal();
+  writePlayerInputsFromGlobal(state);
   // Hangout flag (Track E1d) — a per-STEP input, written unconditionally
   // every call so a shared wasm instance stepping a lobby world and a
   // combat world interleaved can never leak one mode into the other.
@@ -412,7 +412,7 @@ export function applyWasmWorldStepSync(
   return runWasmStepSync(state, dt_ms, opts).state;
 }
 
-function writePlayerInputsFromGlobal(): void {
+function writePlayerInputsFromGlobal(state: WorldState): void {
   const stash = (
     globalThis as {
       __jakesjam_wasm_inputs__?: ReadonlyMap<
@@ -422,7 +422,15 @@ function writePlayerInputsFromGlobal(): void {
     }
   ).__jakesjam_wasm_inputs__;
   if (!stash) return;
-  writePlayerInputsIntoMemory(stash);
+  writePlayerInputsIntoMemory(stash, packedPlayerOrder(state));
+}
+
+/** The packed player array's order — the only correct index space for an
+ *  input patch. Same comparator packWorldState uses. */
+function packedPlayerOrder(state: WorldState): string[] {
+  return Object.values(state.players)
+    .map((p) => p.id as string)
+    .sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -500,6 +508,13 @@ export function writePlayerInputsIntoMemory(
     string,
     { keys: number; prevKeys: number; aimX: number; aimY: number }
   >,
+  /** Every player in the packed state, in packWorldState's order. REQUIRED:
+   *  see the server twin's doc (serverWasmHost.writeInputsIntoMemory) for
+   *  the measured bug this argument exists to prevent. On the client the
+   *  failure is even more visible — prediction usually has a frame for the
+   *  LOCAL player only, so a subset-relative index writes the local input
+   *  into whichever player happens to sort first. */
+  packedOrder: readonly string[],
 ): void {
   if (!cachedSim || !cachedEx) return;
   const sim = cachedSim;
@@ -518,12 +533,12 @@ export function writePlayerInputsIntoMemory(
   // current_keys + prev_keys live at +268 / +272.
   const CURR_OFF = 268;
   const PREV_OFF = 272;
-  const sortedIds = [...inputs.keys()].sort();
-  for (let i = 0; i < sortedIds.length; i++) {
-    const pid = sortedIds[i]!;
-    const v = inputs.get(pid);
-    if (!v) continue;
-    const playerOff = playersStart + i * PLAYER_ENTITY_SIZE;
+  for (const [pid, v] of inputs) {
+    // Index by the player's slot in the PACKED state, never by position
+    // within this tick's input subset.
+    const slot = packedOrder.indexOf(pid);
+    if (slot < 0) continue;
+    const playerOff = playersStart + slot * PLAYER_ENTITY_SIZE;
     view.setFloat64(playerOff + AIMX_OFF, v.aimX, true);
     view.setFloat64(playerOff + AIMY_OFF, v.aimY, true);
     view.setUint32(playerOff + CURR_OFF, v.keys >>> 0, true);

@@ -346,7 +346,16 @@ class ServerWasmHost {
     this.writeLaunchPadsIntoMemory();
     this.writeSlopesIntoMemory();
     this.writeSpawnPointsIntoMemory();
-    this.writeInputsIntoMemory();
+    // The packed player array's order is the ONLY correct index space for
+    // an input patch, and it comes from the state — not from whichever
+    // players happen to have a frame this tick. Same comparator packWorldState
+    // uses (`id.localeCompare`), deliberately, because these two orderings
+    // being "obviously the same" is exactly how they drifted apart.
+    this.writeInputsIntoMemory(
+      Object.values(state.players)
+        .map((p) => p.id as string)
+        .sort((a, b) => a.localeCompare(b)),
+    );
     // Hangout flag (Track E1d) — a per-STEP input, deliberately NOT a
     // cached setter like the config writes above: this singleton is shared
     // by every MatchHost on the process (the always-on venue lobby AND
@@ -577,7 +586,28 @@ class ServerWasmHost {
     this.ex.world_state_set_spawn_points(spawnScratchPtr, count);
   }
 
-  private writeInputsIntoMemory(): void {
+  /**
+   * Patch this tick's inputs into the packed player entities.
+   *
+   * `packedOrder` is every player in the state, sorted the way
+   * packWorldState sorted them. It is REQUIRED, and the reason is a real bug
+   * this had until 2026-08-09: the loop used to walk `cachedInputs`' own
+   * sorted keys and write to slot `i` of THAT list. matchHost only includes
+   * players who have a frame this tick (`if (!frame) continue`), so the
+   * moment one player's input was missing — jitter, a bot that didn't think,
+   * a mid-join — the subset index stopped matching the slot index and one
+   * player's keys landed in another player's entity.
+   *
+   * Measured before the fix (wasmInputRouting.test.ts): with inputs for
+   * "zzz_last" only, over 400 ticks, zzz_last moved 0.000 px and its
+   * neighbour "aaa_first", pressing nothing, moved 1304.649 px.
+   *
+   * wasm-path only — the TS step takes `inputsByPlayer` keyed by id and does
+   * no index math. A strong candidate for the "live play kept surfacing
+   * symptoms under Zig authority that never reproduced under TS" note in
+   * matchHost's header, which is what reverted the May 2026 flip.
+   */
+  private writeInputsIntoMemory(packedOrder: readonly string[]): void {
     if (!this.cachedInputs || !this.ex || this.statePtr === null) return;
     const view = new DataView(this.ex.memory.buffer);
     const playersStart = this.statePtr + HEADER_SIZE + 8;
@@ -592,12 +622,14 @@ class ServerWasmHost {
     const AIMY_OFF = 5 * 8;
     const CURR_OFF = 268;
     const PREV_OFF = 272;
-    const sortedIds = [...this.cachedInputs.keys()].sort();
-    for (let i = 0; i < sortedIds.length; i++) {
-      const pid = sortedIds[i]!;
-      const v = this.cachedInputs.get(pid);
-      if (!v) continue;
-      const playerOff = playersStart + i * PLAYER_ENTITY_SIZE;
+    for (const [pid, v] of this.cachedInputs) {
+      // Index by the player's slot in the PACKED state, never by position
+      // within this tick's input subset.
+      const slot = packedOrder.indexOf(pid);
+      // An input for someone not in the packed state (evicted between
+      // accept and step) is dropped rather than written to slot -1.
+      if (slot < 0) continue;
+      const playerOff = playersStart + slot * PLAYER_ENTITY_SIZE;
       view.setFloat64(playerOff + AIMX_OFF, v.aimX, true);
       view.setFloat64(playerOff + AIMY_OFF, v.aimY, true);
       view.setUint32(playerOff + CURR_OFF, v.keys >>> 0, true);
