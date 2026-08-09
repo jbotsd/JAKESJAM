@@ -512,13 +512,16 @@ against current code before marking.
    Noted honestly: no single test carries this acceptance line's exact
    wording ("scene state across enqueue-during-draft") — the PASSED
    verdict rests on the combination above, not one dedicated test.
-4. OPEN — no orphan ceremonies: not directly tested. The two-host
-   separation (lobby clients on /ws/lobby, arena clients on /ws/world —
-   Pillar 1) makes it structurally implausible for a lobby-only client
-   to receive a MATCH WINNER/`MatchResultsOverlay` frame for a fight it
-   wasn't in (no code path pushes arena WorldState to a lobby socket),
-   but there is no dedicated regression test pinning this claim — marked
-   OPEN rather than PASSED on architecture alone.
+4. PASSED 2026-08-09 (f64661b) — no orphan ceremonies, now pinned by
+   `server/src/__tests__/venueNoOrphanCeremony.test.ts` rather than resting
+   on architecture. A capturing lobby socket sits through a real arena
+   cycle-end (`recycle()`) with the lobby loop LEFT RUNNING, and no frame it
+   receives carries a resolved round winner or an arena bot id. A second
+   test pins the premise (the lobby's round never resolves) so this cannot
+   go quietly useless. Recorded: the first version stopped the lobby loop
+   like the neighbouring tests do and captured exactly one `hello` — it
+   passed while observing nothing, which is why it now asserts it saw real
+   snapshots first.
 5. PASSED — elastic bots: bot count adjusts toward `max(0,
    WORLD_BOT_FLOOR − humansFighting)` (default 4, cap 6, env override)
    ONLY at the countdown-entry edge (`adjustElasticBots`) and on fresh
