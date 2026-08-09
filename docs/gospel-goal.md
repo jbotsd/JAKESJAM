@@ -231,9 +231,26 @@ now cut the cruellest half of that chain.
       touch now exposes.
 - [ ] **1.5b Round-cap taper when humans are queued.** ⚠ **DECISION 2**
       (cadence) — untouched by 1.5a on purpose; build flag-dark.
-- [ ] **1.6 `?fight` fast lane + `venueNames.ts`** (venue-goal 6.3/6.1).
-      Today's fastest path (`?world=1` slipping under the email gate) is
-      an accident, not a design.
+- [x] 1.6 `?fight` fast lane + `venueNames.ts` — DONE 2026-08-09
+      (0aa1261 + 3b8bebd). Queueing is sim-event driven
+      (`launch-requested` from the bell totem), so the fast lane adds a
+      TRIGGER, not a second queue path: it routes through the same
+      `toggleQueue`, so the callsign gate (a deep link must not be a way
+      around S2.C.3) and the duo branch hold identically. `ensureQueued`
+      guards on membership because toggleQueue is a TOGGLE — calling it
+      blindly on attach would queue then UNqueue a reconnecting player,
+      the same "silently dropped from the queue" class 1.3/1.4 just
+      closed (pinned by a test). `?world=1` / `/world` alias per P6.3.
+      Deliberately NOT fast-laned: `?venue=1` and the bare 1.1 default —
+      committing a first-timer to a bout before anything taught them the
+      bell is Phase 3 onboarding's call, not this item's. `venueNames.ts`
+      owns the words (splash CTA, callsign kicker, arena feed line, both
+      document titles, all four NEXT BELL captions); P6.1's grep half
+      already passed — all 24 remaining "Hot Lobby" hits are comments
+      plus one test name, zero user-visible. Deviation recorded (L8):
+      BELL_COPY stays in `bellCountdown.ts` where its tests live.
+      Gates: server 358/358 TS + 358/358 strict-wasm, client 1958/0,
+      both typechecks clean.
 - [x] 1.7 Refresh-mid-match recovery — DONE 2026-08-09 (b5adbe2 +
       2318025). The server grace and the stable player id both already
       existed; only boot's *intent* was missing. sessionStorage marker,
