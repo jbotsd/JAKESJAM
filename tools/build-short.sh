@@ -114,10 +114,29 @@ FILTER="
 # as duplicate branding, so this overlay carries ONE legible CTA line only.
 
 # The hook: frame one, high contrast, fades out so it never fights the payoff.
+#
+# Written via textfile= rather than text=. drawtext's own escaping cannot be
+# made reliable through two layers of quoting — an apostrophe in a hook
+# ("you're in the arena") silently killed the whole render. A file plus
+# expansion=none means the hook is taken as literal bytes: apostrophes,
+# colons, percent signs and commas all just work.
 if [ -n "$HOOK" ]; then
-  ESC_HOOK=$(printf '%s' "$HOOK" | sed "s/'/\\\\'/g; s/:/\\\\:/g; s/%/\\\\%/g")
+  # At fontsize 64 in Space Grotesk Bold, ~24 characters is the widest line
+  # that still fits 1080px. Longer runs off both edges and the post is
+  # wasted, so say so loudly rather than shipping a clipped hook.
+  while IFS= read -r line; do
+    n=${#line}
+    if [ "$n" -gt 24 ]; then
+      echo "[short] WARNING: hook line is ${n} chars (>24) and will overflow 1080px:" >&2
+      echo "[short]          \"${line}\"" >&2
+      echo "[short]          break it with \\n, or shorten it." >&2
+    fi
+  done <<< "$HOOK"
+  HOOK_FILE=$(mktemp "${TMPDIR:-/tmp}/jj-hook.XXXXXX")
+  trap 'rm -f "$HOOK_FILE"' EXIT
+  printf '%s' "$HOOK" > "$HOOK_FILE"
   FILTER="${FILTER},
-  drawtext=fontfile=${FONT_HOOK}:text='${ESC_HOOK}':fontsize=64:
+  drawtext=fontfile=${FONT_HOOK}:textfile=${HOOK_FILE}:expansion=none:fontsize=64:
     fontcolor=${BONE}:borderw=6:bordercolor=black:line_spacing=16:
     x=(w-text_w)/2:y=${HOOK_Y}:
     alpha='if(lt(t,0.2),t/0.2,if(gt(t,${HOOK_DUR}-0.4),max(0,(${HOOK_DUR}-t)/0.4),1))'"
