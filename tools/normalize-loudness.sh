@@ -12,6 +12,12 @@
 # -14 LUFS / -1.5 dBTP is the usual social target. A feed where one clip is
 # 14 dB quieter than the next gets scrolled past, whatever is in frame.
 #
+# alimiter needs level=disabled. Its `level` option defaults to TRUE, which
+# auto-levels the limited output back up to full scale — so the limiter does
+# its job and then immediately undoes it. Left at the default, every file in
+# the first narrated set came out pinned at 0.0 dBFS, i.e. clipping, despite
+# asking for a -1.5 dBTP ceiling.
+#
 # Video is stream-copied — this only ever touches audio.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -42,7 +48,7 @@ for f in "$@"; do
   gain=$(awk -v c="$cur" -v t="$I" 'BEGIN{printf "%.2f", t - c}')
   tmp="${f%.mp4}.norm.mp4"
   "$FFMPEG" -hide_banner -loglevel error -i "$f" \
-    -af "volume=${gain}dB,alimiter=level_in=1:level_out=1:limit=$(awk -v tp="$TP" 'BEGIN{printf "%.4f", 10^(tp/20)}'):attack=5:release=50" \
+    -af "volume=${gain}dB,alimiter=level_in=1:level_out=1:limit=$(awk -v tp="$TP" 'BEGIN{printf "%.4f", 10^(tp/20)}'):attack=1:release=50:level=disabled" \
     -c:v copy -c:a aac -b:a 192k -movflags +faststart -y "$tmp"
   mv "$tmp" "$f"
 
