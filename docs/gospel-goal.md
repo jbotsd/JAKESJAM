@@ -1093,8 +1093,14 @@ cross-compile; on-box today (`extra/raylib 6.0`).
       being observed. Both modes share `stepper.findSlot` (made public
       rather than re-guessed) so "which player is this input for" has a
       single answer.
-      Draws stay baked-tier procedural — rectangles and discs — which is
-      enough to recognise the match and not a frame more. That is the
+      Draws stay baked-tier procedural — rectangles and discs. Now
+      covering arena, destructibles, projectiles, fire patches (at their
+      REAL radius, since the size is why someone walked around it),
+      players, nameplates and health pips. **Satellites are deliberately
+      NOT drawn:** they store angle + orbit_radius relative to an owner,
+      so placing them needs an owner-id lookup, and guessing would put
+      orbiting dots in the wrong place — worse than leaving them out.
+      That plus a HUD line (tick / round / alive / projectiles) is the
       remaining scope on this row: it is a viewer, not the game.
       (original row below)
 - [ ] ~~**2.1 Frame loop + world render.**~~ Fixed-tick sim (the server's

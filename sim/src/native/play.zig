@@ -127,6 +127,15 @@ fn shouldContinue(ctx_opaque: ?*anyopaque) bool {
     return !ctx.closed;
 }
 
+fn aliveCount(state: *const WorldState) u32 {
+    var n: u32 = 0;
+    var i: u32 = 0;
+    while (i < state.player_count) : (i += 1) {
+        if (state.players[i].flags.alive) n += 1;
+    }
+    return n;
+}
+
 /// ONE world-draw, used by both modes.
 ///
 /// Smooth mode used to carry its own cut-down copy (statics and players
@@ -173,6 +182,26 @@ fn drawWorld(state: *const WorldState, ctx: *RenderCtx, lerp: ?struct { prev: *c
             @intFromFloat(ctx.worldToScreenY(pr.y)),
             @max(1.5, 4 * ctx.scale),
             .{ .r = 255, .g = 230, .b = 140, .a = 255 },
+        );
+    }
+
+    // Fire patches — a replay that omits them shows players dying to
+    // nothing. Real radius, not a fixed dot: the patch's SIZE is why
+    // someone walked around it or didn't.
+    //
+    // Satellites are NOT drawn yet. They store angle + orbit_radius
+    // relative to an owner rather than an absolute position, so drawing
+    // them needs an owner lookup by id — more than this slice, and
+    // guessing a position would put orbiting dots in the wrong place,
+    // which is worse than leaving them out.
+    var fi: u32 = 0;
+    while (fi < state.fire_count) : (fi += 1) {
+        const f = state.fires[fi];
+        c.DrawCircle(
+            @intFromFloat(ctx.worldToScreenX(f.x)),
+            @intFromFloat(ctx.worldToScreenY(f.y)),
+            @max(2, @as(f32, @floatCast(f.radius)) * ctx.scale),
+            .{ .r = 255, .g = 140, .b = 60, .a = 110 },
         );
     }
 
@@ -228,6 +257,18 @@ fn drawWorld(state: *const WorldState, ctx: *RenderCtx, lerp: ?struct { prev: *c
                 else
                     c.Color{ .r = 210, .g = 230, .b = 250, .a = 235 },
             );
+            // Health pip. Without it you can see someone die but never see
+            // them LOSING, which is the part of a replay worth watching.
+            // Width is fixed in SCREEN space so it stays readable at any
+            // camera zoom.
+            if (pl.flags.alive) {
+                const bw: f32 = 34;
+                const frac: f32 = @floatCast(@min(1.0, @max(0.0, pl.health / 100.0)));
+                const bx = @as(i32, @intFromFloat(sx - bw / 2));
+                const by = @as(i32, @intFromFloat(sy - r)) - 4;
+                c.DrawRectangle(bx, by, @intFromFloat(bw), 3, .{ .r = 30, .g = 36, .b = 48, .a = 220 });
+                c.DrawRectangle(bx, by, @intFromFloat(bw * frac), 3, .{ .r = 120, .g = 230, .b = 150, .a = 240 });
+            }
         }
     }
 }
@@ -247,8 +288,8 @@ fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
     var buf: [128]u8 = undefined;
     const label = std.fmt.bufPrintZ(
         &buf,
-        "tick {d}  players {d}  proj {d}  x{d}",
-        .{ tick, state.player_count, state.projectile_count, ctx.speed },
+        "tick {d}  round {d}  alive {d}/{d}  proj {d}  x{d}",
+        .{ tick, state.header.round_index, aliveCount(state), state.player_count, state.projectile_count, ctx.speed },
     ) catch "tick ?";
     c.DrawText(label, 16, 16, 20, .{ .r = 210, .g = 225, .b = 245, .a = 255 });
     c.EndDrawing();
