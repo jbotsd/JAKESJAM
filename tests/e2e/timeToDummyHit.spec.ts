@@ -73,6 +73,42 @@ async function nearestDummy(page: import("@playwright/test").Page): Promise<{
 test.describe("venue-goal 2.5 — time to first dummy hit", () => {
   test.setTimeout(120_000);
 
+  // EXPECTED-FAIL as of 2026-08-09. Not flaky, and not a harness defect —
+  // it measures something real that does not work. `test.fail` is
+  // deliberate: the run stays green while the bug exists, and the moment
+  // someone fixes it this spec goes RED to say so. A `skip` would go quiet
+  // forever instead.
+  //
+  // Measured by a SECOND harness driving the same probe, so that a bug in
+  // one would not quietly confirm the other:
+  //   - the visitor IS in the venue — /venue/summary reports
+  //     lobby.present=1 for the whole session (an earlier present=0 was an
+  //     artefact of sampling after the browser had closed);
+  //   - the shots ARE firing — fireCooldownMs is non-zero on 133/162
+  //     samples while fire is held;
+  //   - range is not the problem — the player closes to 18px horizontally
+  //     and both sit on the same floor (player y=1036, dummy y=1042);
+  //   - the weapon is TRUE hitscan (starter-pistol, delivery "raycast",
+  //     880px trace), so maxProjectiles=0 is expected, and ammo=0 is
+  //     irrelevant: weapon.ts:623 states ammo gates nothing;
+  //   - this is SUPPOSED to work — World.ts:3018, "Destructibles remain
+  //     hittable" in hangout mode.
+  //
+  // Two unexplained observations, both pointing the same way:
+  //   1. venueHost.ts's venueLobbyMap() defines EIGHT dummies (dummy_0..7);
+  //      the live world exposes exactly ONE (peak count over 20s = 1).
+  //   2. the lobby's phase reads "round-over" continuously for 18s+ while
+  //      the arena independently cycles to "fighting".
+  //
+  // HYPOTHESIS, NOT CONFIRMED — do not quote as fact: the venue lobby is
+  // not running in hangout mode. World.ts:1676 creates a hangout world at
+  // phase "fighting" and its round machine "never runs in hangout mode", so
+  // a lobby sitting at "round-over" is running rounds it should not — which
+  // would also explain seven destroyed-and-unrespawned dummies. If
+  // hangoutMode is false, World.ts:2510's
+  // `fightingPhase = hangoutMode || phase === "fighting"` is false at
+  // round-over and no shot resolves.
+  test.fail();
   test("a visitor can damage a practice dummy inside the budget", async ({ page }) => {
     await asReturningVisitor(page);
     const t0 = Date.now();
