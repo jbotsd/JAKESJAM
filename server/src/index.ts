@@ -21,6 +21,7 @@ import { MatchRegistry } from "./matchRegistry.ts";
 import { WorldHost } from "./worldHost.ts";
 import { VenueHost, VENUE_LOBBY_MATCH_ID } from "./venueHost.ts";
 import type { MatchSocketData } from "./matchHost.ts";
+import { getWasmFallbackTicks } from "./matchHost.ts";
 import { serverWasmHost } from "./serverWasmHost.ts";
 import { PlayerId, type VesselCosmetics } from "@sim/types.ts";
 import {
@@ -284,6 +285,21 @@ function serveOnPort(port: number) {
           // attached). Cheap: a sort over <=3600 buffered floats, only run
           // when something actually requests /health.
           perf: worldHost.tickTimingStats(),
+          // gospel-goal E2 instrument. `authority` is what this process was
+          // ASKED to run; `wasmFallbackTicks` is what it actually ran. A
+          // flipped host reporting authority "wasm" with a rising fallback
+          // count is silently stepping TS — the one failure mode the flip
+          // must not hide (L8). The headless soak polls this; after the
+          // flip, so does anyone watching the live host.
+          sim: {
+            authority:
+              process.env.USE_WASM_STEP_WORLD === "1" ||
+              process.env.USE_WASM_STEP_WORLD === "true"
+                ? "wasm"
+                : "ts",
+            wasmReady: serverWasmHost.isReady(),
+            wasmFallbackTicks: getWasmFallbackTicks(),
+          },
         }),
         { headers: { "content-type": "application/json", ...corsHeaders } },
       );

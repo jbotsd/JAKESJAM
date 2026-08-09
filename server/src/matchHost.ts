@@ -106,6 +106,32 @@ const EMISSIONS_DISABLED = process.env.EMISSIONS === "off";
  *  Delete after the Phase 4 gate passes. */
 const ABILITIES_DISABLED = process.env.ABILITIES === "off";
 
+/** gospel-goal E2 evidence lever. The per-tick wasm→TS fallback below is a
+ *  correct SAFETY behaviour live (a thrown tick must not kill the match)
+ *  but it is a terrible EVIDENCE behaviour: a suite or a soak can run
+ *  entirely on TS while reporting green under `USE_WASM_STEP_WORLD=1`,
+ *  which is exactly what happened before 2026-08-09 (294 fallback ticks,
+ *  cause: a test reset the serverWasmHost singleton and never restored
+ *  it). `WASM_STRICT=1` turns the silent degrade into a throw so the E2
+ *  gate proves wasm authority instead of assuming it. NEVER set this on
+ *  the live host — the fallback is the kill-switch that keeps a match
+ *  alive. Use it for `bun test`, the headless soak, and CI. */
+const WASM_STRICT =
+  process.env.WASM_STRICT === "1" || process.env.WASM_STRICT === "true";
+
+/** Count of ticks that fell back from wasm to TS this process. Zero is the
+ *  only acceptable value for an E2 soak; live, a non-zero value means the
+ *  Zig authority silently stopped being authoritative and the recorded
+ *  replay is no longer single-backend. Exported so the soak harness, ops
+ *  and tests can assert on it rather than grepping stderr (L8). */
+let wasmFallbackTicks = 0;
+export function getWasmFallbackTicks(): number {
+  return wasmFallbackTicks;
+}
+export function __resetWasmFallbackTicksForTests(): void {
+  wasmFallbackTicks = 0;
+}
+
 /** Input-key sanitization: bits 0..13 are known (Left..Dash + ability
  *  slots 1-3, bit 13 reserved/unused); everything above is stripped so a
  *  client can't smuggle out-of-band signals through the input frame. */
@@ -1656,6 +1682,16 @@ export class MatchHost {
           matchComplete: result.matchComplete,
         };
       } catch (err) {
+        wasmFallbackTicks++;
+        // WASM_STRICT turns the safety fallback into a hard failure so an
+        // E2 gate run cannot report green while silently stepping on TS.
+        // Live never sets it — see the constant's doc.
+        if (WASM_STRICT) {
+          throw new Error(
+            `[matchHost] WASM_STRICT: wasm step threw and fallback is disabled (tick ${wasmFallbackTicks}): ${err instanceof Error ? err.message : String(err)}`,
+            { cause: err },
+          );
+        }
         console.warn(
           `[matchHost] wasm step threw; falling back to TS for this tick: ${err instanceof Error ? err.message : String(err)}`,
         );

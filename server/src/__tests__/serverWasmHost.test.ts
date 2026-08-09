@@ -10,7 +10,7 @@
 // Mirrors client wasmHost.test.ts pattern but uses Bun's
 // WebAssembly directly (loadServerSim already does this).
 
-import { describe, expect, test, beforeAll } from "bun:test";
+import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { serverWasmHost } from "../serverWasmHost";
 import {
   EntityId,
@@ -362,7 +362,7 @@ describe("serverWasmHost — B3 contract", () => {
     await serverWasmHost.preload();
   });
 
-  test("__resetForTests clears caches + flips isReady false", () => {
+  test("__resetForTests clears caches + flips isReady false", async () => {
     serverWasmHost.setStatics([{ x: 0, y: 0, w: 1, h: 1 }], [0]);
     serverWasmHost.writeInputs(
       new Map([["p", { keys: 0, prevKeys: 0, aimX: 0, aimY: 0 }]]),
@@ -373,5 +373,22 @@ describe("serverWasmHost — B3 contract", () => {
     expect(serverWasmHost.getStaticsSnapshot()).toBeNull();
     expect(serverWasmHost.getInputsSnapshot()).toBeNull();
     expect(serverWasmHost.isReady()).toBe(false);
+    // Restore — see the afterAll below for why leaving it dead is not a
+    // local-only sin.
+    await serverWasmHost.preload();
+  });
+
+  // `serverWasmHost` is a process-wide SINGLETON and `bun test` runs every
+  // file in ONE process, so a reset that is never restored leaks into every
+  // test file ordered after this one: their MatchHosts pin `simBackend`
+  // "ts" (isReady() false at construction), and any host that had already
+  // pinned "wasm" throws "step() called before ready" every tick and
+  // silently falls back. That made `USE_WASM_STEP_WORLD=1 bun test` report
+  // green while 294 ticks ran on TS — a hollow gate for gospel-goal E2,
+  // whose first evidence row is "full server suite green under wasm step".
+  // Restoring here is what makes that row mean what it says.
+  afterAll(async () => {
+    serverWasmHost.__resetForTests();
+    await serverWasmHost.preload();
   });
 });
