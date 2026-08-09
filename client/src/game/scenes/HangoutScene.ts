@@ -568,7 +568,17 @@ export class HangoutScene extends Phaser.Scene {
       setActiveStateGetter(() => this.loop?.getRenderState() ?? null);
       setActiveLocalPlayerIdGetter(() => this.localPlayerId as string);
       transport.onClose((reason) => {
-        this.setStatus(`Disconnected: ${reason}`);
+        // Doors 3.5 (silent-failure sweep) — this used to read
+        // "Disconnected: <reason>" and stop there: a dead end with no
+        // action, on the surface that is now the LANDING (Doors 1.1), so
+        // a dropped socket was the last thing a first-time visitor saw.
+        // Naming the recovery costs nothing, and the recovery is real:
+        // Doors 1.7's resume marker means a reload inside the server's
+        // 10 s grace re-attaches to the SAME entity — same run, no bell
+        // re-queue — and outside it you simply land back in the venue.
+        // A clickable retry would be better still; recorded as the
+        // remaining half of this row rather than half-built here.
+        this.setStatus(`Disconnected: ${reason} — reload to rejoin`);
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown error";

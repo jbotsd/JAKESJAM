@@ -377,10 +377,30 @@ teaches the loop.
       - Bots come from `/health` (`world.bots`), not `/venue/summary`
         which has no bot count — deliberately avoided a server change so
         the E2 soak's freeze clock kept running.
-- [ ] **3.5 Silent-failure sweep** — callsign-gate no-op at the bell
-      totem (`venueHost.ts:604-611`), 1 s blank venue feed, lobby
-      disconnect with no retry affordance, venue visitors unable to reach
-      the pause menu (`main.ts:1836`).
+- [~] **3.5 Silent-failure sweep** — audited item by item 2026-08-09
+      rather than swept, because two of the four were already dead:
+      - [x] **venue visitors unable to reach the pause menu** — ALREADY
+        FIXED (the `matchMode !== "lobby"` guard, 2026-07-20); the row was
+        stale. Verified empirically, not by reading the comment: Esc from
+        the venue opens the pause panel (`pause:true`) and does NOT
+        misroute to the private-room panel.
+      - [x] **lobby disconnect with no retry affordance** — FIXED
+        2026-08-09. It read `Disconnected: <reason>` and stopped: a dead
+        end on what is now the LANDING (Doors 1.1), so a dropped socket
+        was the last thing a first-time visitor saw. Now names the
+        recovery, and the recovery is real — Doors 1.7 means a reload
+        inside the 10 s grace re-attaches to the SAME entity. Verified by
+        killing the host under a live browser: "Disconnected: code:1006 —
+        reload to rejoin". Remaining polish: a clickable retry instead of
+        instructing a reload.
+      - [ ] **callsign-gate no-op at the bell totem**
+        (`venueHost.ts:604-611`) — untouched: `server/src` is inside the
+        E2 soak freeze. Note it may now be unreachable anyway, since
+        `isSharedWorldInvite` auto-names bare-URL arrivals (Doors 1.1) —
+        confirm before building.
+      - [ ] **1 s blank venue feed** — not reproduced yet; the feed shows
+        "Connecting to hangout…" then real status, which is honest. Needs
+        a cold-cache repro before it is worth a fix.
 
 ### Phase 4 — SOUND AND SPECTACLE (texture; upgrades but does not gate)
 
