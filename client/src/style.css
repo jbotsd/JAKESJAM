@@ -1992,6 +1992,65 @@ button.btn-danger:hover:not(:disabled) {
   min-width: 0;
 }
 
+/* Doors 2.3 — the personal-best strip at cycle end. Same physics as the
+   Discord toast above (fixed, bottom-centred via inset+auto margins, NOT
+   translateX, for the reason documented there) but stacked higher so the
+   two can never occupy the same pixels: the email ask can fire at the
+   same moment when Decision 1 is ratified to post-fight. Gold rather
+   than the toast's indigo — this is EARNED, and chassis grammar reserves
+   gold for that. */
+.pb-toast {
+  position: fixed;
+  z-index: 71;
+  bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px 16px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 10px 16px;
+  border: 1px solid rgba(201, 168, 76, 0.5);
+  clip-path: var(--chamfer-sm);
+  background: rgba(11, 15, 24, 0.96);
+  color: rgba(215, 221, 228, 0.85);
+  font-size: 0.82rem;
+  opacity: 1;
+  transition: opacity 420ms ease, transform 420ms ease;
+}
+
+.pb-toast--out {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.pb-toast-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pb-toast-item b {
+  font-family: "Space Mono", "Courier New", monospace;
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  color: #f0d489;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pb-toast {
+    transition: opacity 420ms ease;
+  }
+  .pb-toast--out {
+    transform: none;
+  }
+}
+
 .discord-toast-link {
   flex-shrink: 0;
   padding: 6px 12px;

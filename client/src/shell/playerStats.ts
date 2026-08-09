@@ -56,19 +56,33 @@ export function recordDeath(): void {
   save(s);
 }
 
-export function recordStreak(streak: number): void {
+/**
+ * Returns TRUE when this streak beat the stored best — Doors 2.3 needs to
+ * know, and this function was already computing it and throwing it away.
+ * A personal best is the cheapest "one more round" trigger there is, and
+ * unlike a win it is still available to someone who just lost.
+ */
+export function recordStreak(streak: number): boolean {
   const s = loadPlayerStats();
+  // A first-ever streak is not a "record" worth announcing — there was
+  // nothing to beat. You have to beat something to be told about it.
+  const isRecord = streak > s.bestStreak && s.bestStreak > 0;
   if (streak > s.bestStreak) {
     s.bestStreak = streak;
     save(s);
   }
+  return isRecord;
 }
 
-export function recordMatch(won: boolean): void {
+/** What was notable about finishing this match (Doors 2.3). */
+export function recordMatch(won: boolean): { firstEver: boolean; firstWin: boolean } {
   const s = loadPlayerStats();
+  const firstEver = s.matches === 0;
+  const firstWin = won && s.matchWins === 0;
   s.matches += 1;
   if (won) s.matchWins += 1;
   save(s);
+  return { firstEver, firstWin };
 }
 
 /** The splash panel's line items — label/value pairs in display order. */

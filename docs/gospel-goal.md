@@ -334,9 +334,25 @@ the sim-side halves land in Zig.
       Ceremony discipline (Overwatch field-study lesson): it fills the
       recycle interval that already exists (12 s ceiling) and NEVER
       delays the next bell; any input skips.
-- [ ] **2.3 Personal-record surfacing every round-end** — best streak,
-      new PB, "first win as Geometrician". Cheapest proven "one more
-      round" trigger, and it works for losers. Feeds off 2.1 run data.
+- [~] **2.3 Personal-record surfacing** — client-side slice DONE
+      2026-08-09. The item says it feeds off Pillar 4's sim run record,
+      which does not exist and is frozen — but `playerStats` has tracked
+      bests locally all along, so the trigger ships now and gets richer
+      later. `recordStreak` was already computing "did this beat the
+      best" and throwing it away; it returns it now, and `recordMatch`
+      reports first-ever / first-win. A gold strip at cycle end
+      (`pb-toast`, non-blocking, self-dismissing — ui-axioms bans modal
+      celebration as hard as modal tutorials) rides the same
+      CYCLE_COMPLETED signal Doors 1.2 added.
+      - **The rule that matters: an unremarkable cycle says NOTHING.** A
+        strip that fires every time is one nobody reads, and then the one
+        that mattered goes unread too. Pinned by test.
+      - **And it works for losers** — a personal best is the one thing a
+        last-place finisher can still be truthfully handed, which is the
+        entire reason the row exists.
+      - Still open: per-ROUND surfacing (no client round-end signal
+        exists yet) and class-scoped records ("first win as
+        Geometrician") — both need 2.1's run record. Recorded, not faked.
 - [ ] **2.4 Pillar 2/3 residuals** — lobby presence floor (see 3.1),
       orphan-ceremony regression test, the unmeasured dummy-hit-<8 s
       half of venue 2.5, ready-totem linger debounce.

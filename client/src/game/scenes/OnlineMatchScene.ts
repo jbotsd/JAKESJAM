@@ -33,6 +33,7 @@ import { ClipRecorder } from "../highlights/ClipRecorder";
 import { isClipsEnabled } from "../highlights/clipConsent";
 import { emitClipUploaded, emitCycleCompleted, ShellEvents } from "../../shell/events";
 import { recordKill, recordDeath, recordStreak, recordMatch } from "../../shell/playerStats";
+import { cycleNotables, showPersonalBests } from "../../shell/personalBest";
 import { pickDeathTip, type DeathTipSignal } from "../highlights/deathTip";
 import {
   crystalRoundsCards,
@@ -443,6 +444,10 @@ export class OnlineMatchScene extends Phaser.Scene {
   private cardDraftOverlay?: CardDraftOverlay;
   private buildChangeToast?: BuildChangeToast;
   private matchResultsOverlay?: MatchResultsOverlay;
+  /** Doors 2.3 — set when a kill streak beat the stored personal best
+   *  during THIS cycle. Read once at the results screen. */
+  private cycleBeatStreak = false;
+  private cycleBestStreak = 0;
   private matchHasEnded = false;
 
   /** Stored on renderArena so spawnPlatformBlastTint can iterate platforms. */
@@ -1852,7 +1857,16 @@ export class OnlineMatchScene extends Phaser.Scene {
       if (event.t !== "player-killed") continue;
       if (event.killerId === this.localPlayerId && event.victimId !== this.localPlayerId) {
         recordKill();
-        recordStreak(this.killStreakCount.get(this.localPlayerId) ?? 0);
+        // Doors 2.3 — remember whether this beat the stored best; the
+        // cycle-end surface reads it. Kept as a field rather than
+        // recomputed later because playerStats has ALREADY been updated
+        // by then, so "did it beat the record" is unanswerable after the
+        // fact.
+        const streakNow = this.killStreakCount.get(this.localPlayerId) ?? 0;
+        if (recordStreak(streakNow)) {
+          this.cycleBeatStreak = true;
+          this.cycleBestStreak = streakNow;
+        }
         funnel("first_kill"); // Track P1 — the <60 s first-kill gate
       }
       if (event.victimId === this.localPlayerId) {
@@ -3126,7 +3140,20 @@ export class OnlineMatchScene extends Phaser.Scene {
     if (winnerScore < resolveModeConfig(state.chaosModifierIds).targetScore) return;
     this.matchHasEnded = true;
     // Persistent player record (splash stats panel) — one match, won or not.
-    recordMatch(winnerPlayerId === this.localPlayerId);
+    const won = winnerPlayerId === this.localPlayerId;
+    const firsts = recordMatch(won);
+    // Doors 2.3 — the "one more round" trigger, and the reason it is here
+    // rather than on the win path: a personal best is the one thing a
+    // last-place finisher can still truthfully be handed.
+    showPersonalBests(
+      cycleNotables({
+        won,
+        beatStreak: this.cycleBeatStreak,
+        streak: this.cycleBestStreak,
+        firstEver: firsts.firstEver,
+        firstWin: firsts.firstWin,
+      }),
+    );
     // The round-over banner and death overlay are only gated from FUTURE
     // updates by matchHasEnded (see updateHudSystem) — neither is ever
     // explicitly cleared, so whatever they last drew ("TO YOU", or a
