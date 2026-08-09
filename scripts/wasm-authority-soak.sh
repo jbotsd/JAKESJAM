@@ -61,11 +61,20 @@ REGION=soak PORT="$PORT" OPS_PORT="$OPS_PORT" PORT_SEARCH_RANGE=1 \
   USE_WASM_STEP_WORLD=1 \
   setsid bun --cwd server src/index.ts >"$LOG" 2>&1 &
 SERVER_PID=$!
+# Pidfile so an orphan is DISCOVERABLE. `setsid` detaches the host on
+# purpose (so cleanup can kill the whole tree), which also means it survives
+# the script being killed from outside — the trap below never runs then.
+# That happened on 2026-08-09: the run was stopped at 94% and left a live
+# server on this port. Recovery is now:
+#   kill $(cat .host-logs/soak-<stamp>.pid)
+PIDFILE="$LOG_DIR/soak-$STAMP.pid"
+printf '%s\n' "$SERVER_PID" >"$PIDFILE"
 
 cleanup() {
   trap - EXIT INT TERM
   kill -TERM "-$SERVER_PID" 2>/dev/null || kill -TERM "$SERVER_PID" 2>/dev/null || true
   wait 2>/dev/null || true
+  rm -f "${PIDFILE:-}" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
