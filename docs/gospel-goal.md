@@ -801,13 +801,24 @@ Zig (that's E3's conversation) · Steam before N3.
     Chromium against a `USE_WASM_STEP_WORLD=1` host and asserts the local
     player moves on hold-D — passing, with the host reporting
     `wasmFallbackTicks: 0` afterwards.
-  - **Agreed on holding the flip**, and the join bug below is the right
-    reason. Worth connecting: while writing the e2e I saw a client's x jump
-    -1800 px on the venue→arena transition and worked around it by
-    measuring in the venue. Given that lane's finding ("ADMITTED" while
-    `/health` says `humans=0`), that jump is probably the same bug seen from
-    the other side, not the coordinate change I assumed. Whoever holds the
-    join lane should have it.
+  - **RETRACTED, same session (d6bc0a2): I claimed independent
+    corroboration of the join bug and was wrong.** I read these on my own
+    wasm host — `admitted 1 entrant(s)` followed by `[matchHost world]
+    evicted … after 10000ms reconnect grace` and `match complete with no
+    humans` — and wrote them up as a second sighting. They are the tail of
+    my OTHER e2e runs, whose browsers closed at test end; an eviction 10 s
+    after a client legitimately disconnects is the grace working. Log lines
+    are not a repro. Built the actual repro instead
+    (`tests/e2e/arenaJoin.spec.ts`, `test.fail()` first) and it **PASSED**:
+    on :8388 under wasm authority the handoff holds — `/health` counts the
+    human and still counts them 15 s after the bell, past the grace. Kept
+    as a regression test, since nothing else covered venue→bell→arena
+    end-to-end. Follows that the -1800 px jump was the arena's own spawn
+    coordinates after all, not a dropped client.
+    **This says nothing about the :8088 sighting** — that lane's evidence
+    stands on its own and the flip stays held for it. It only removes a
+    false second data point that would have pointed a bisect at the wasm
+    path.
 
 - 2026-08-09 (i) · **E2 EVIDENCE GATE FULLY SATISFIED — flip deliberately
   held, see below.** The 2 h 10 m headless bot-only soak under wasm
