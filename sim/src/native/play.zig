@@ -127,20 +127,18 @@ fn shouldContinue(ctx_opaque: ?*anyopaque) bool {
     return !ctx.closed;
 }
 
-fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
-    const ctx: *RenderCtx = @ptrCast(@alignCast(ctx_opaque.?));
-
-    // Draw one frame per `speed` ticks. A 3600-tick replay at 1:1 is a
-    // full minute of watching; being able to skim it matters more than
-    // smoothness for a proof-of-innocence run.
-    if (ctx.speed > 1 and tick % ctx.speed != 0) return;
-    ctx.frames_drawn += 1;
-    ctx.track(state);
-
-    c.BeginDrawing();
+/// ONE world-draw, used by both modes.
+///
+/// Smooth mode used to carry its own cut-down copy (statics and players
+/// only). Two draw paths is how a viewer ends up showing different worlds
+/// depending on a flag — the destructibles were already missing — so there
+/// is now one, and `lerp` is the only difference between the callers.
+///
+/// `lerp` supplies interpolated player positions when the frame-driven
+/// loop has them; null means draw the state as-is.
+fn drawWorld(state: *const WorldState, ctx: *RenderCtx, lerp: ?struct { prev: *const Lerpable, curr: *const Lerpable, a: f32 }) void {
     c.ClearBackground(.{ .r = 8, .g = 10, .b = 18, .a = 255 });
 
-    // Statics — the arena itself.
     var i: u32 = 0;
     while (i < state.static_count) : (i += 1) {
         const a = state.statics[i];
@@ -150,13 +148,10 @@ fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
             @intFromFloat(ctx.worldToScreenY(a.y)),
             @intFromFloat(@as(f32, @floatCast(a.w)) * ctx.scale),
             @intFromFloat(@max(1, @as(f32, @floatCast(a.h)) * ctx.scale)),
-            // One-ways drawn lighter: the distinction is load-bearing for
-            // reading a replay ("why did they fall through that?").
             if (one_way) c.Color{ .r = 40, .g = 52, .b = 78, .a = 255 } else c.Color{ .r = 28, .g = 36, .b = 56, .a = 255 },
         );
     }
 
-    // Destructibles.
     var d: u32 = 0;
     while (d < state.destructible_count) : (d += 1) {
         const e = state.destructibles[d];
@@ -170,10 +165,9 @@ fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
         );
     }
 
-    // Projectiles.
-    var p: u32 = 0;
-    while (p < state.projectile_count) : (p += 1) {
-        const pr = state.projectiles[p];
+    var pi: u32 = 0;
+    while (pi < state.projectile_count) : (pi += 1) {
+        const pr = state.projectiles[pi];
         c.DrawCircle(
             @intFromFloat(ctx.worldToScreenX(pr.x)),
             @intFromFloat(ctx.worldToScreenY(pr.y)),
@@ -182,18 +176,22 @@ fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
         );
     }
 
-    // Players. Dead ones are drawn hollow rather than omitted — a rig
-    // vanishing and a rig dying look identical otherwise, and telling
-    // them apart is most of what you watch a replay for.
     var q: u32 = 0;
     while (q < state.player_count) : (q += 1) {
         const pl = state.players[q];
-        const sx = ctx.worldToScreenX(pl.x);
-        const sy = ctx.worldToScreenY(pl.y);
+        var wx = pl.x;
+        var wy = pl.y;
+        if (lerp) |l| {
+            if (q < l.curr.n) {
+                wx = l.prev.x[q] + (l.curr.x[q] - l.prev.x[q]) * l.a;
+                wy = l.prev.y[q] + (l.curr.y[q] - l.prev.y[q]) * l.a;
+            }
+        }
+        const sx = ctx.worldToScreenX(wx);
+        const sy = ctx.worldToScreenY(wy);
         const r = @max(3, 16 * ctx.scale);
         if (pl.flags.alive) {
             c.DrawCircle(@intFromFloat(sx), @intFromFloat(sy), r, .{ .r = 120, .g = 220, .b = 255, .a = 255 });
-            // Aim stub — the direction the sim thinks they are facing.
             const ax = ctx.worldToScreenX(pl.aim_x);
             const ay = ctx.worldToScreenY(pl.aim_y);
             const dx = ax - sx;
@@ -210,14 +208,6 @@ fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
             c.DrawCircleLines(@intFromFloat(sx), @intFromFloat(sy), r, .{ .r = 90, .g = 100, .b = 120, .a = 255 });
         }
 
-        // gospel N2.6 first slice — nameplates. Without them a replay is
-        // six identical dots and you cannot follow anyone, which is most
-        // of what watching one is for. The id is already in the state; the
-        // renderer just has to say it.
-        //
-        // Bots are labelled, matching the browser's "BOT · NAME" promise
-        // and the Settings copy that now states it as fact — an unlabelled
-        // bot in the native viewer would make that sentence false.
         if (pl.id_len > 0) {
             var name_buf: [40]u8 = undefined;
             const raw_id = pl.id_bytes[0..@min(pl.id_len, 24)];
@@ -234,13 +224,26 @@ fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
                 @as(i32, @intFromFloat(sy - r)) - 16,
                 12,
                 if (is_bot)
-                    c.Color{ .r = 200, .g = 121, .b = 255, .a = 235 } // violet, per the bot-identity rule
+                    c.Color{ .r = 200, .g = 121, .b = 255, .a = 235 }
                 else
                     c.Color{ .r = 210, .g = 230, .b = 250, .a = 235 },
             );
         }
     }
+}
 
+fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
+    const ctx: *RenderCtx = @ptrCast(@alignCast(ctx_opaque.?));
+
+    // Draw one frame per `speed` ticks. A 3600-tick replay at 1:1 is a
+    // full minute of watching; being able to skim it matters more than
+    // smoothness for a proof-of-innocence run.
+    if (ctx.speed > 1 and tick % ctx.speed != 0) return;
+    ctx.frames_drawn += 1;
+    ctx.track(state);
+
+    c.BeginDrawing();
+    drawWorld(state, ctx, null);
     var buf: [128]u8 = undefined;
     const label = std.fmt.bufPrintZ(
         &buf,
@@ -248,7 +251,6 @@ fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
         .{ tick, state.player_count, state.projectile_count, ctx.speed },
     ) catch "tick ?";
     c.DrawText(label, 16, 16, 20, .{ .r = 210, .g = 225, .b = 245, .a = 255 });
-
     c.EndDrawing();
 }
 
@@ -347,32 +349,10 @@ fn runSmooth(
         ctx.track(state);
 
         c.BeginDrawing();
-        c.ClearBackground(.{ .r = 8, .g = 10, .b = 18, .a = 255 });
-        var i: u32 = 0;
-        while (i < state.static_count) : (i += 1) {
-            const st = state.statics[i];
-            c.DrawRectangle(
-                @intFromFloat(ctx.worldToScreenX(st.x)),
-                @intFromFloat(ctx.worldToScreenY(st.y)),
-                @intFromFloat(@as(f32, @floatCast(st.w)) * ctx.scale),
-                @intFromFloat(@max(1, @as(f32, @floatCast(st.h)) * ctx.scale)),
-                .{ .r = 28, .g = 36, .b = 56, .a = 255 },
-            );
-        }
-        var q: u32 = 0;
-        while (q < curr.n) : (q += 1) {
-            if (!curr.alive[q]) continue;
-            // The interpolation itself: draw BETWEEN the last two sim
-            // states rather than at the newest one.
-            const lx = prev.x[q] + (curr.x[q] - prev.x[q]) * a;
-            const ly = prev.y[q] + (curr.y[q] - prev.y[q]) * a;
-            c.DrawCircle(
-                @intFromFloat(ctx.worldToScreenX(lx)),
-                @intFromFloat(ctx.worldToScreenY(ly)),
-                @max(3, 16 * ctx.scale),
-                .{ .r = 120, .g = 220, .b = 255, .a = 255 },
-            );
-        }
+        // Same draw path as the proof mode — the ONLY difference is the
+        // interpolation source. Smooth mode previously had its own
+        // cut-down copy that omitted destructibles and projectiles.
+        drawWorld(state, ctx, .{ .prev = &prev, .curr = &curr, .a = a });
         var buf: [128]u8 = undefined;
         const label = std.fmt.bufPrintZ(&buf, "tick {d}  alpha {d:.2}  SMOOTH (not the proof)", .{ tick, a }) catch "?";
         c.DrawText(label, 16, 16, 20, .{ .r = 210, .g = 225, .b = 245, .a = 255 });
