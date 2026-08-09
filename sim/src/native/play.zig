@@ -36,13 +36,82 @@ const WIN_H = 720;
 /// Everything the draw hook needs. Passed as an opaque ctx pointer
 /// through the stepper, which knows nothing about raylib.
 const RenderCtx = struct {
-    /// World units per screen pixel, derived from the arena once.
+    /// Screen pixels per world unit.
     scale: f32 = 1,
     off_x: f32 = 0,
     off_y: f32 = 0,
     speed: u32 = 1,
     frames_drawn: u64 = 0,
     closed: bool = false,
+
+    /// Follow the action instead of fitting the whole arena.
+    ///
+    /// vessel-nexus is 3000 world units wide; fitted to 1280 px that is
+    /// 0.43 px per unit, which renders a player as a 7px dot and makes a
+    /// replay unreadable. The camera tracks the centroid of living
+    /// players — not a single player, because a replay has no "you".
+    follow: bool = true,
+    /// Zoom used when following. 1 px per world unit reads well at 1280x720.
+    follow_scale: f32 = 1,
+    /// Smoothed camera centre in world units. Smoothed because a centroid
+    /// jumps hard when someone dies or respawns, and a hard cut mid-fight
+    /// looks like a rendering bug rather than a camera.
+    cam_x: f64 = 0,
+    cam_y: f64 = 0,
+    cam_ready: bool = false,
+    /// Arena extent, for clamping the camera inside the world.
+    world_w: f64 = 1280,
+    world_h: f64 = 720,
+
+    /// Re-aim the camera at the living centroid. Called once per DRAWN
+    /// frame, not per tick, so smoothing is in frames and stays stable
+    /// when --speed skips ticks.
+    fn track(self: *RenderCtx, state: *const WorldState) void {
+        if (!self.follow) return;
+        var sx: f64 = 0;
+        var sy: f64 = 0;
+        var n: f64 = 0;
+        var i: u32 = 0;
+        while (i < state.player_count) : (i += 1) {
+            if (!state.players[i].flags.alive) continue;
+            sx += state.players[i].x;
+            sy += state.players[i].y;
+            n += 1;
+        }
+        // Everyone dead (between rounds) — hold the last framing rather
+        // than snapping to the origin, which would read as a glitch.
+        if (n == 0) return;
+        const tx = sx / n;
+        const ty = sy / n;
+        if (!self.cam_ready) {
+            self.cam_x = tx;
+            self.cam_y = ty;
+            self.cam_ready = true;
+        } else {
+            const k = 0.12; // ~8 frames to close most of the gap
+            self.cam_x += (tx - self.cam_x) * k;
+            self.cam_y += (ty - self.cam_y) * k;
+        }
+
+        // Clamp so the camera never shows outside the arena; a viewer
+        // staring at void cannot tell "empty region" from "broken map".
+        const half_w = @as(f64, WIN_W) / 2 / self.follow_scale;
+        const half_h = @as(f64, WIN_H) / 2 / self.follow_scale;
+        if (self.world_w > half_w * 2) {
+            self.cam_x = @min(@max(self.cam_x, half_w), self.world_w - half_w);
+        } else {
+            self.cam_x = self.world_w / 2;
+        }
+        if (self.world_h > half_h * 2) {
+            self.cam_y = @min(@max(self.cam_y, half_h), self.world_h - half_h);
+        } else {
+            self.cam_y = self.world_h / 2;
+        }
+
+        self.scale = self.follow_scale;
+        self.off_x = @as(f32, WIN_W) / 2 - @as(f32, @floatCast(self.cam_x)) * self.scale;
+        self.off_y = @as(f32, WIN_H) / 2 - @as(f32, @floatCast(self.cam_y)) * self.scale;
+    }
 
     fn worldToScreenX(self: *const RenderCtx, x: f64) f32 {
         return @as(f32, @floatCast(x)) * self.scale + self.off_x;
@@ -66,6 +135,7 @@ fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
     // smoothness for a proof-of-innocence run.
     if (ctx.speed > 1 and tick % ctx.speed != 0) return;
     ctx.frames_drawn += 1;
+    ctx.track(state);
 
     c.BeginDrawing();
     c.ClearBackground(.{ .r = 8, .g = 10, .b = 18, .a = 255 });
@@ -152,6 +222,132 @@ fn drawTick(state: *const WorldState, tick: u64, ctx_opaque: ?*anyopaque) void {
     c.EndDrawing();
 }
 
+/// Snapshot of just what the renderer interpolates. Copying the whole
+/// WorldState per tick would be 128 KB of memcpy at 60 Hz for no reason —
+/// only positions move between frames.
+const Lerpable = struct {
+    x: [16]f64 = @splat(0),
+    y: [16]f64 = @splat(0),
+    alive: [16]bool = @splat(false),
+    n: u32 = 0,
+
+    fn capture(state: *const WorldState) Lerpable {
+        var l = Lerpable{ .n = @min(state.player_count, 16) };
+        var i: u32 = 0;
+        while (i < l.n) : (i += 1) {
+            l.x[i] = state.players[i].x;
+            l.y[i] = state.players[i].y;
+            l.alive[i] = state.players[i].flags.alive;
+        }
+        return l;
+    }
+};
+
+/// SMOOTH MODE — the frame-driven loop the real shell will use.
+///
+/// This is the other half of "fixed-tick sim decoupled from render": the
+/// FRAME owns the clock (shell.StepClock), pulls however many fixed sim
+/// steps the elapsed time owes, and draws once at a lerp between the last
+/// two sim states. On a 144 Hz display that is 144 smooth frames over 60
+/// sim ticks; the tick-locked path above would show 60.
+///
+/// It is deliberately NOT the hash-proof path, and says so at runtime.
+/// The proof needs exactly one stepper shared with jjsim; this loop steps
+/// the sim itself, so a matching hash here would be two implementations
+/// agreeing rather than one being observed. Keeping them separate is the
+/// point — if a future change makes the proof run through this loop, the
+/// proof quietly stops meaning anything.
+fn runSmooth(
+    gpa: std.mem.Allocator,
+    state_buf: []u8,
+    init_bytes: []const u8,
+    replay: *const jjr.Replay,
+    ctx: *RenderCtx,
+) !void {
+    _ = gpa;
+    @memcpy(state_buf[0..@sizeOf(WorldState)], init_bytes);
+    const state: *WorldState = @ptrCast(@alignCast(state_buf.ptr));
+
+    var clock = shell.StepClock{};
+    var prev = Lerpable.capture(state);
+    var curr = prev;
+    var tick: u64 = 0;
+    var cursor: usize = 0;
+    const total = replay.header.total_ticks;
+
+    std.debug.print("smooth mode: frame-driven, interpolated — NOT the hash proof\n", .{});
+
+    while (!c.WindowShouldClose() and tick < total) {
+        const owed = clock.stepsFor(@as(f64, @floatCast(c.GetFrameTime())) * 1000.0 * @as(f64, @floatFromInt(ctx.speed)));
+        var s: u32 = 0;
+        while (s < owed and tick < total) : (s += 1) {
+            tick += 1;
+            var q: usize = 0;
+            while (q < state.player_count) : (q += 1) {
+                state.players[q].current_keys = 0;
+            }
+            // Same slot matching the passport uses — shared helper, not a
+            // second guess at which player an input belongs to.
+            while (cursor < replay.inputs.len and replay.inputs[cursor].at_tick < tick) cursor += 1;
+            while (cursor < replay.inputs.len and replay.inputs[cursor].at_tick == tick) {
+                const in = replay.inputs[cursor];
+                if (stepper.findSlot(state, state.player_count, in.player_id)) |slot| {
+                    const pl = &state.players[slot];
+                    pl.aim_x = in.aim_x;
+                    pl.aim_y = in.aim_y;
+                    pl.current_keys = @truncate(in.keys);
+                }
+                cursor += 1;
+            }
+            prev = curr;
+            _ = sim.world.step_world(state, shell.STEP_MS);
+            curr = Lerpable.capture(state);
+        }
+
+        const a = @as(f32, @floatCast(clock.alpha()));
+        ctx.frames_drawn += 1;
+        ctx.track(state);
+
+        c.BeginDrawing();
+        c.ClearBackground(.{ .r = 8, .g = 10, .b = 18, .a = 255 });
+        var i: u32 = 0;
+        while (i < state.static_count) : (i += 1) {
+            const st = state.statics[i];
+            c.DrawRectangle(
+                @intFromFloat(ctx.worldToScreenX(st.x)),
+                @intFromFloat(ctx.worldToScreenY(st.y)),
+                @intFromFloat(@as(f32, @floatCast(st.w)) * ctx.scale),
+                @intFromFloat(@max(1, @as(f32, @floatCast(st.h)) * ctx.scale)),
+                .{ .r = 28, .g = 36, .b = 56, .a = 255 },
+            );
+        }
+        var q: u32 = 0;
+        while (q < curr.n) : (q += 1) {
+            if (!curr.alive[q]) continue;
+            // The interpolation itself: draw BETWEEN the last two sim
+            // states rather than at the newest one.
+            const lx = prev.x[q] + (curr.x[q] - prev.x[q]) * a;
+            const ly = prev.y[q] + (curr.y[q] - prev.y[q]) * a;
+            c.DrawCircle(
+                @intFromFloat(ctx.worldToScreenX(lx)),
+                @intFromFloat(ctx.worldToScreenY(ly)),
+                @max(3, 16 * ctx.scale),
+                .{ .r = 120, .g = 220, .b = 255, .a = 255 },
+            );
+        }
+        var buf: [128]u8 = undefined;
+        const label = std.fmt.bufPrintZ(&buf, "tick {d}  alpha {d:.2}  SMOOTH (not the proof)", .{ tick, a }) catch "?";
+        c.DrawText(label, 16, 16, 20, .{ .r = 210, .g = 225, .b = 245, .a = 255 });
+        c.EndDrawing();
+    }
+
+    std.debug.print("smooth: {d} ticks, {d} frames drawn, {d} steps dropped to the spiral cap\n", .{
+        tick,
+        ctx.frames_drawn,
+        clock.dropped_steps,
+    });
+}
+
 pub fn main() !void {
     var gpa_state = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa_state.deinit();
@@ -160,6 +356,8 @@ pub fn main() !void {
     var replay_path: ?[]const u8 = null;
     var speed: u32 = 1;
     var headless_check = false;
+    var fit_arena = false;
+    var smooth = false;
 
     var args = try std.process.argsWithAllocator(gpa);
     defer args.deinit();
@@ -171,6 +369,10 @@ pub fn main() !void {
             if (args.next()) |v| speed = std.fmt.parseInt(u32, v, 10) catch 1;
         } else if (std.mem.eql(u8, a, "--headless-check")) {
             headless_check = true;
+        } else if (std.mem.eql(u8, a, "--fit")) {
+            fit_arena = true;
+        } else if (std.mem.eql(u8, a, "--smooth")) {
+            smooth = true;
         }
     }
     defer if (replay_path) |rp| gpa.free(rp);
@@ -229,13 +431,22 @@ pub fn main() !void {
         max_x = @max(max_x, state.statics[si].x + state.statics[si].w);
         max_y = @max(max_y, state.statics[si].y + state.statics[si].h);
     }
-    var ctx = RenderCtx{ .speed = @max(1, speed) };
+    var ctx = RenderCtx{ .speed = @max(1, speed), .follow = !fit_arena };
+    ctx.world_w = max_x;
+    ctx.world_h = max_y;
+    // --fit keeps the old whole-arena framing; useful for checking map
+    // geometry, useless for watching a fight.
     ctx.scale = @min(
         @as(f32, WIN_W) / @as(f32, @floatCast(max_x)),
         @as(f32, WIN_H) / @as(f32, @floatCast(max_y)),
     );
     ctx.off_x = 0;
     ctx.off_y = 0;
+
+    if (smooth) {
+        try runSmooth(gpa, state_buf, init_bytes, &replay, &ctx);
+        return;
+    }
 
     const rendered = try stepper.run(gpa, state_buf, init_bytes, &replay, .{
         .every = 0,

@@ -196,7 +196,11 @@ pub fn run(
     };
 }
 
-fn findSlot(
+/// Public so a shell can apply replay inputs through the SAME slot
+/// matching the passport uses. Sharing the helper is the point: two
+/// implementations of "which player is this input for" would diverge on
+/// exactly the cases that matter (a mid-match joiner, a recycled slot).
+pub fn findSlot(
     state: *const WorldState,
     player_count: usize,
     id: []const u8,

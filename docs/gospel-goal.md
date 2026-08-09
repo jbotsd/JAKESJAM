@@ -1074,11 +1074,28 @@ cross-compile; on-box today (`extra/raylib 6.0`).
       Also fixed en route: `stepper.Options.every = 0` panicked on
       `tick % 0`. Zero now means "final sample only", which is what anyone
       writing it means.
-      STILL OPEN for this row: interpolated presentation (draws are
-      per-tick, so a 144 Hz display shows 60 Hz stutter) and a real
-      camera (currently a fixed fit-the-arena transform, no follow).
-      Draws are baked-tier procedural — rectangles and discs — which is
-      enough to recognise the match and not a frame more.
+      **Camera: DONE.** Follows the living centroid (a replay has no
+      "you"), smoothed because a centroid jumps hard on a death, and
+      clamped inside the arena so a viewer never stares at void and
+      wonders if the map is broken. `--fit` keeps the old whole-arena
+      framing for checking geometry. Fitting vessel-nexus's 3000 units to
+      1280 px was 0.43 px/unit — a player was a 7 px dot and the replay
+      was unreadable.
+      **Interpolation: DONE, and deliberately in a SEPARATE mode.**
+      `--smooth` is the frame-driven loop the real shell needs: the frame
+      owns the clock (`shell.StepClock` — its first real consumer), pulls
+      however many fixed steps the elapsed time owes, and draws at a lerp
+      between the last two sim states. Measured: 30489 ticks over 3812
+      frames, 0 steps lost to the spiral cap.
+      It is NOT the hash-proof path and says so at runtime, because the
+      proof needs ONE stepper shared with jjsim — a matching hash from
+      this loop would be two implementations agreeing rather than one
+      being observed. Both modes share `stepper.findSlot` (made public
+      rather than re-guessed) so "which player is this input for" has a
+      single answer.
+      Draws stay baked-tier procedural — rectangles and discs — which is
+      enough to recognise the match and not a frame more. That is the
+      remaining scope on this row: it is a viewer, not the game.
       (original row below)
 - [ ] ~~**2.1 Frame loop + world render.**~~ Fixed-tick sim (the server's
       tick) decoupled from render; interpolated presentation; camera.
