@@ -401,10 +401,20 @@ teaches the loop.
       (`lobby-vfx-parity-goal.md:451-458`).
 - [ ] **4.6 Live killfeed** (small; the ceremony and clips both want it).
       Data side lands in Zig per D-law.
-- [ ] **4.7** `100vh`→`100dvh` at `style.css:103,219,367,1324`;
-      short-desktop added as a canonical QA viewport; write the
-      sizing-on-fleek rule into ui-axioms (enforced, but exists nowhere
-      as text).
+- [x] 4.7 — DONE 2026-08-09. `dvh` pairs at all four viewport-sized rules
+      (`.app-shell` plus the three panel caps; line numbers in the old
+      item were stale). `html.kiosk` deliberately stays `vh` — fixed
+      display, no retracting URL bar — annotated at the rule so a future
+      grep does not read it as missed. The sizing rule is now written
+      down: `ui-axioms.md` § "The canonical viewport pass".
+      - **Writing it down immediately caught the drift it was meant to
+        prevent**: ui-axioms already named a four-viewport set
+        (390×844 / 844×390 / 820×1180 / 1440×900) that OMITTED short
+        desktop — the one viewport that caught the Doors 0.5 fold bug —
+        while the e2e specs used a different four that omitted phone
+        LANDSCAPE. Reconciled to one canonical five, and
+        `lobbyFirst.spec.ts` now loops that exact set (passing, and the
+        newly-added landscape frame was looked at, not just asserted).
 
 ### Phase 5 — PROVE IT → see TRACK P (runs continuously)
 

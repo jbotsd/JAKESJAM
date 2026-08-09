@@ -274,8 +274,37 @@ Every in-match touch button, its class, states, and placement law. Source: `Touc
 | Active slots 1–4 | `tc-btn--slot` `--slot1..4` (+`--slot-ready`) | hidden until drafted, dormant→ready (cooldown), tap-pulse | row right of EMIT; 2×2 fold ≤900px landscape / column above EMIT portrait | 2026-07-17 |
 
 Laws: slots appear ONLY as drafted (no dead zones on an undrafted layout); a lit response to a
-dead press is forbidden (ready-gated flash); the four-viewport screenshot pass
-(390×844 / 844×390 / 820×1180 / 1440×900) is the merge gate for placement changes.
+dead press is forbidden (ready-gated flash); the **canonical viewport pass** below is the merge
+gate for placement changes.
+
+### The canonical viewport pass ("sizing on fleek")
+
+Written down 2026-08-09 (gospel-goal Doors 4.7). The rule was enforced for months and existed
+nowhere as text, so it drifted — this very section used to name a four-viewport set that omitted
+short desktop, the one viewport that actually caught the Doors 0.5 fold bug (LOBBY and the button
+row clipped at the fold on 1280×700 while every phone size was healthy).
+
+**No UI change is "done" until it has been SEEN at all five:**
+
+| # | Viewport | Why it is in the set |
+|---|---|---|
+| 1 | 393×852 | phone portrait — the majority device, tightest vertical budget |
+| 2 | 852×393 | phone landscape — touch-control band competes with the HUD |
+| 3 | 820×1180 | tablet — exposes stretched-not-scaled layouts |
+| 4 | **1280×700** | **short desktop** — laptop with browser chrome; catches fold clipping nothing else does |
+| 5 | 1920×1080 | full desktop — what everything is authored at, so it proves nothing on its own |
+
+Two rules travel with it:
+
+- **Seen, not asserted.** A passing selector is not a passing layout; capture the screenshot and
+  look at it. `tests/e2e/lobbyFirst.spec.ts` is the worked example — it loops the set, checks the
+  canvas did not collapse and that `scrollWidth - clientWidth <= 1` (the `100vw`+scrollbar trap),
+  and attaches every frame.
+- **Prefer `dvh` over `vh` for anything sized against the viewport.** On a phone `vh` is the
+  LARGEST viewport (URL bar retracted), so a `100vh` box hides its own bottom edge under browser
+  chrome — exactly where touch controls and CTAs live. Ship the pair
+  (`height: 100vh; height: 100dvh;`) so the first line is the fallback. The one deliberate
+  exception is `html.kiosk`, annotated at the rule in `style.css`.
 
 ---
 

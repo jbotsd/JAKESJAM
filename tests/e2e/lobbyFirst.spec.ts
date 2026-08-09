@@ -7,7 +7,7 @@
 //
 // These prove the three things that can silently regress: the default
 // landing, the escape hatches that must still reach the old door, and
-// that the landing is not broken on the four canonical viewports (L7
+// that the landing is not broken at any canonical viewport (L7
 // sizing-on-fleek — this changes what every first-time visitor sees).
 //
 //   PORT=8288 SERVE_CLIENT_DIR=$PWD/client/dist bun --cwd server src/index.ts
@@ -21,10 +21,16 @@ import { attachConsole } from "./visualHarness";
 const GAME_CANVAS = "canvas:not(.ident-shader)";
 const SHOTS = "tests/e2e/.artifacts/lobby-first";
 
-/** The four canonical viewports (L7). Short-desktop is in the set because
- *  it is the one that actually caught the Doors 0.5 fold bug. */
+/** The canonical viewport pass (L7), as written down in
+ *  `docs/ui-axioms.md` § "The canonical viewport pass" — FIVE, not four.
+ *  Phone landscape joined the set on 2026-08-09 when the rule was finally
+ *  put in text and the doc and the tests were found disagreeing about it;
+ *  short desktop is in because it is the one that actually caught the
+ *  Doors 0.5 fold bug. If this list and that table ever diverge again,
+ *  the table wins and this is the bug. */
 const VIEWPORTS = [
   { name: "phone", width: 393, height: 852 },
+  { name: "phone-landscape", width: 852, height: 393 },
   { name: "tablet", width: 820, height: 1180 },
   { name: "short-desktop", width: 1280, height: 700 },
   { name: "desktop", width: 1920, height: 1080 },
@@ -91,7 +97,7 @@ test.describe("Doors 1.1 — lobby-first landing", () => {
       .toBe(true);
   });
 
-  test("the landing survives all four canonical viewports", async ({ page }, testInfo) => {
+  test("the landing survives every canonical viewport", async ({ page }, testInfo) => {
     await mkdir(SHOTS, { recursive: true });
     for (const vp of VIEWPORTS) {
       await page.setViewportSize({ width: vp.width, height: vp.height });

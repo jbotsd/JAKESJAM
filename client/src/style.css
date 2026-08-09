@@ -137,6 +137,11 @@ html.kiosk body.kiosk-show-cursor {
 }
 html.kiosk #app {
   width: 100vw;
+  /* Deliberately `vh`, not `dvh` (Doors 4.7 converted the others): the
+     kiosk is a fixed full-screen stream display with no retracting URL
+     bar, so the two are identical here and `vh` is the stabler of the
+     pair. Annotated so a future grep for 100vh does not read it as a
+     site that was missed. */
   height: 100vh;
 }
 /* Phaser canvas fills the viewport hard */
@@ -253,7 +258,14 @@ input[type="color"] {
 .app-shell {
   position: relative;
   width: 100vw;
+  /* Doors 4.7 — `vh` on a phone is the LARGEST viewport (URL bar
+     retracted), so a 100vh shell is taller than what you can see and its
+     bottom edge hides under the browser chrome. That is exactly where the
+     touch controls and the CTA sit. `dvh` tracks the visible box.
+     Paired declaration, not a replacement: the vh line stays as the
+     fallback for anything without dvh, and dvh wins where supported. */
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: var(--bg-deep);
 }
@@ -402,6 +414,7 @@ input[type="color"] {
   gap: 20px;
   width: min(360px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   overflow-y: auto;
   overflow-x: hidden;
   padding: 28px 24px;
@@ -805,6 +818,7 @@ button.btn-danger:hover:not(:disabled) {
   .lobby-panel {
     width: calc(100vw - 16px);
     max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
     padding: 20px 16px;
     /* clip-path chamfer inherited from the base rule — a border-radius
        override here used to silently re-round it on mobile only. */
@@ -1398,6 +1412,7 @@ button.btn-danger:hover:not(:disabled) {
   box-shadow: none !important;
   width: min(1560px, calc(100vw - 32px)) !important;
   max-height: calc(100vh - 24px) !important;
+  max-height: calc(100dvh - 24px) !important;
   overflow: auto !important;
   top: 50% !important;
   left: 50% !important;
