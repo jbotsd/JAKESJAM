@@ -838,6 +838,34 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (m) · **P1 funnel instrument + "stationary > 1 s" as a
+  machine-checked invariant** (70698be, 1ade76d).
+  - **P1:** all eight funnel steps now fire once per session with elapsed ms
+    from page load, on the existing batched/capped telemetry queue. The
+    report splits ALL from EXTERNAL-only, because ~90% of sessions are
+    Jake's own machine — an unsplit funnel measures the developer, the same
+    mistake the signup count made. Needs a dist rebuild + real visitors
+    before it says anything, and it prints that rather than printing zeros
+    as findings.
+  - **The invariant found that my own S1 fix was incomplete**, which is the
+    point of promoting a footage finding to a gate. Three harness attempts
+    produced confident WRONG reds first (bots got no input because the
+    brains live on WorldHost's interval; then `think()` no-ops while the
+    host loop is stopped; then every phase was sampled and it "found" the
+    2.9 s round COUNTDOWN). Only after gating to the fighting phase did it
+    measure the game.
+  - **RESIDUAL, recorded not hidden (L8):** worst mid-fight stillness is now
+    ~1.6 s, from a DIFFERENT path than the filmed bug — the ENGAGED branch
+    lets `moveDir` be 0 while a bot holds its standoff range, and unstick
+    only fires when the bot intended to move. The gate is set at 2 s to
+    encode what actually holds; closing the last 0.6 s means a micro-strafe
+    for held-position bots, which is a combat-feel change and a follow-up
+    rather than something smuggled in behind a threshold. Measured
+    improvement: 7.7 s → 1.6 s.
+  - Not deployed: the funnel needs a dist rebuild and the bot/server fixes
+    need a :8088 restart, both of which are held while the join-bug lane
+    owns that host.
+
 - 2026-08-09 (o) · **The flip is now one command — and mechanising it
   exposed why it keeps not happening.** `scripts/e2-flip.sh` (f3de8f8)
   captures the live host's exact environment, relaunches it identically
