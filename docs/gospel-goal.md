@@ -1170,7 +1170,30 @@ cross-compile; on-box today (`extra/raylib 6.0`).
       data from the core (Doors 4.6's landing site). Class-identity
       legibility per the chassis axioms (colour stays earned:
       cyan/gold/white).
-- [ ] **2.7 Asset pack.** Deterministic packer (a Bun script is fine —
+- [x] **2.7 Asset pack.** DONE 2026-08-10. `bun run pack:assets` →
+      `sim/assets.jjpk` (13 assets, 8.85 MB): SFX, music, and any TTF/OTF
+      fonts. Read back by `sim/src/native/pack.zig` — index parse, slices
+      into the caller's buffer, no allocation and no decoding, because
+      raylib's loaders take bytes and the pack's job ends at "here are the
+      right bytes". Nothing in the reader can fetch anything: offline
+      means offline, which is the actual requirement.
+      **Determinism is verified, not assumed:** entries sorted by name
+      (readdir order is filesystem-dependent), padding explicitly zeroed,
+      no timestamps or build-machine paths in the file. `--verify`
+      rebuilds in memory and compares byte-for-byte: OK.
+      Every entry carries an FNV-1a of its content and `verifyAll()`
+      checks them, because a pack is exactly the artefact a bad deploy
+      half-copies and "the SFX sounds wrong" is a miserable way to find
+      out. A hash mismatch is a DISTINCT error from truncation — a short
+      file is a bad copy, a changed file is something else.
+      Checked against the real pack, not just synthetic ones: 13/13 hashes
+      verify and `sfx/bruh.wav` comes back with a valid `RIFF` header, so
+      the offsets are right rather than merely self-consistent.
+      **The .woff2 fonts are deliberately NOT packed** (N1.1 finding:
+      raylib cannot load them). A pack full of files the shell cannot open
+      is worse than an empty one — it looks solved.
+      (original row below)
+- [ ] ~~**2.7 Asset pack.**~~ Deterministic packer (a Bun script is fine —
       it's a build tool, not the artifact): fonts + SFX + music manifest
       → one pack file with content hashes. No network fetch at runtime;
       offline means offline.

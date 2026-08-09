@@ -81,3 +81,8 @@ tools/.promo-session-out/
 # tracked, or the spike is unreproducible.
 sim/vendor/*
 !sim/vendor/README.md
+
+# N2.7 asset pack — a build OUTPUT (8.8MB of audio already tracked
+# elsewhere). Reproduce with `bun run pack:assets`; verify an existing
+# one byte-for-byte with `--verify`.
+sim/assets.jjpk

@@ -172,6 +172,15 @@ pub fn build(b: *std.Build) void {
         .target = test_target,
         .optimize = optimize,
     });
+    // The asset-pack reader is pure parsing — no raylib, no display — so
+    // it belongs in `test` like the shell clock.
+    const pack_test_module = b.createModule(.{
+        .root_source_file = b.path("src/native/pack.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
+    const pack_tests = b.addTest(.{ .root_module = pack_test_module });
+
     // The shell skeleton's pure half (the fixed-timestep clock) is a
     // normal test module — it links nothing, so it belongs in `test`
     // alongside the rest, unlike the spike.
@@ -194,6 +203,7 @@ pub fn build(b: *std.Build) void {
     const native_tests = b.addTest(.{ .root_module = native_test_module });
     test_step.dependOn(&b.addRunArtifact(native_tests).step);
     test_step.dependOn(&b.addRunArtifact(shell_tests).step);
+    test_step.dependOn(&b.addRunArtifact(pack_tests).step);
 
     const msgpack_test_module = b.createModule(.{
         .root_source_file = b.path("src/native/msgpack.zig"),
