@@ -1112,10 +1112,12 @@ Zig (that's E3's conversation) · Steam before N3.
   outside its field of view. Zero fallback ticks and a correct venue are
   independent claims; only the first was measured.
 
-- [ ] **E2-b' Soak should poll the LOBBY's phase too.** (Descoped from the
-      retracted E2-b.) Not a blocker, but the soak still only watches the
-      arena, so a hangout-only divergence would be invisible to it. Now
-      cheap: `/venue/summary` exposes `lobby.phase`.
+- [x] **E2-b' Soak polls the LOBBY's phase too.** DONE 2026-08-09. New
+      `lobby_phase` CSV column; a non-"fighting" reading aborts the run.
+      An EMPTY reading deliberately does NOT abort — that means the server
+      predates the field, which is a gap in observation rather than a
+      defect, and failing on it would only teach people to ignore the
+      check.
 
 - 2026-08-09 (final) · **Closing gate at HEAD, all green** — zig
   **172/172** (9/9 steps), client **1983 pass / 3 skip / 0 fail**,
