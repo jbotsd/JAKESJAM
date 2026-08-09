@@ -189,11 +189,30 @@ fn drawWorld(state: *const WorldState, ctx: *RenderCtx, lerp: ?struct { prev: *c
     // nothing. Real radius, not a fixed dot: the patch's SIZE is why
     // someone walked around it or didn't.
     //
-    // Satellites are NOT drawn yet. They store angle + orbit_radius
-    // relative to an owner rather than an absolute position, so drawing
-    // them needs an owner lookup by id — more than this slice, and
-    // guessing a position would put orbiting dots in the wrong place,
-    // which is worse than leaving them out.
+    // Satellites orbit their owner: the entity stores angle +
+    // orbit_radius, never a world position, so the position has to be
+    // derived. Owner resolution goes through the SAME stepper.findSlot
+    // the replay path uses — a second id-matching rule would put a
+    // satellite on the wrong player exactly when it matters (a recycled
+    // slot, a mid-match joiner). An unowned or unresolvable satellite is
+    // skipped rather than drawn at the origin.
+    var sa: u32 = 0;
+    while (sa < state.satellite_count) : (sa += 1) {
+        const st = state.satellites[sa];
+        if (st.has_owner == 0 or st.owner_id_len == 0) continue;
+        const owner_id = st.owner_id_bytes[0..st.owner_id_len];
+        const slot = stepper.findSlot(state, state.player_count, owner_id) orelse continue;
+        const ow = state.players[slot];
+        const wx = ow.x + @cos(st.angle) * st.orbit_radius;
+        const wy = ow.y + @sin(st.angle) * st.orbit_radius;
+        c.DrawCircleLines(
+            @intFromFloat(ctx.worldToScreenX(wx)),
+            @intFromFloat(ctx.worldToScreenY(wy)),
+            @max(2, 7 * ctx.scale),
+            .{ .r = 180, .g = 255, .b = 220, .a = 220 },
+        );
+    }
+
     var fi: u32 = 0;
     while (fi < state.fire_count) : (fi += 1) {
         const f = state.fires[fi];

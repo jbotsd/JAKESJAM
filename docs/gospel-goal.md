@@ -1096,10 +1096,13 @@ cross-compile; on-box today (`extra/raylib 6.0`).
       Draws stay baked-tier procedural — rectangles and discs. Now
       covering arena, destructibles, projectiles, fire patches (at their
       REAL radius, since the size is why someone walked around it),
-      players, nameplates and health pips. **Satellites are deliberately
-      NOT drawn:** they store angle + orbit_radius relative to an owner,
-      so placing them needs an owner-id lookup, and guessing would put
-      orbiting dots in the wrong place — worse than leaving them out.
+      players, nameplates, health pips and satellites. Satellites orbit
+      their owner (angle + orbit_radius, never a world position), so the
+      position is derived and the owner resolved through the SAME
+      `stepper.findSlot` the replay path uses — a second id-matching rule
+      would put a satellite on the wrong player exactly when it matters
+      (recycled slot, mid-match joiner). Unresolvable owners are skipped
+      rather than drawn at the origin.
       That plus a HUD line (tick / round / alive / projectiles) is the
       remaining scope on this row: it is a viewer, not the game.
       (original row below)
