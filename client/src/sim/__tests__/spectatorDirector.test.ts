@@ -127,3 +127,72 @@ describe("spectatorDirector", () => {
     expect(d.z).toBeLessThan(1.15); // pulled out
   });
 });
+
+describe("idle dwell cap (footage S2)", () => {
+  // docs/clip-sheets/study-2026-08-05-jul31-replay.md, HIGH: "every S1 statue
+  // run is also a director choice — the auto-camera framed the idle bot alone
+  // for the full run each time" (6-8 s). pairScore weights speed, but
+  // closeness (x1.6) plus low HP can clear the duel threshold with ZERO
+  // movement, and the single-survivor branch frames a player regardless of
+  // motion, so nothing capped how long stillness could hold the camera.
+
+  test("the camera does not hold a motionless subject past ~1.5 s", () => {
+    const state = bareState({ p1: player("p1", 400, 500) });
+    let d = createDirectorState();
+    d = advance(d, state, [], 200); // >3 s of a perfectly still lone player
+    // It must have let go of the subject — either a wide shot, or nothing
+    // held as focus. Before the cap this stayed a duel on p1 forever.
+    const releasedFocus = d.focusA === null;
+    expect(releasedFocus || d.mode === "overview").toBe(true);
+  });
+
+  test("it cuts to whoever is moving, and never stares longer than the cap", () => {
+    // A still pair that still scores as a "duel" (close + both hurt) plus one
+    // player sprinting elsewhere. This is the filmed situation: the camera
+    // preferred the motionless pair because pairScore weights closeness
+    // (x1.6) and low HP over speed.
+    const state = bareState({
+      still_a: player("still_a", 400, 500, { health: 30 }),
+      still_b: player("still_b", 460, 500, { health: 30 }),
+      runner: player("runner", 1800, 500, { vx: 320, vy: 0 }),
+    });
+    let d = createDirectorState();
+    let framesOnRunner = 0;
+    let stillStreak = 0;
+    let worstStillStreak = 0;
+    for (let i = 0; i < 600; i++) {
+      d = advance(d, state, [], 1);
+      if (d.focusA === "runner") {
+        framesOnRunner += 1;
+        stillStreak = 0;
+      } else {
+        stillStreak += 1;
+        worstStillStreak = Math.max(worstStillStreak, stillStreak);
+      }
+    }
+    // The camera must spend real time on the action…
+    expect(framesOnRunner).toBeGreaterThan(120); // >2 s of 10 s
+    // …and must never hold the motionless pair for anything like the 6-8 s
+    // that was filmed. The cap is 1.5 s; allow the dwell that follows a cut
+    // plus a frame of slack.
+    expect(worstStillStreak).toBeLessThan(Math.round(3.4 * 60));
+
+    // NOT yet solved, and deliberately not asserted: full action-weighted
+    // SCORING, so a sprinting player simply outranks a motionless pair
+    // instead of having to wait for the cap. That is a pairScore rebalance
+    // with feel consequences (docs/clip-sheets S2 called for "action-weighted
+    // scoring AND a dwell cap"); this test pins the cap half.
+  });
+
+  test("a moving subject is never cut away from", () => {
+    // The cap must not become a metronome: genuine action holds the camera.
+    const state = bareState({
+      a: player("a", 400, 500, { vx: 240 }),
+      b: player("b", 520, 500, { vx: -210 }),
+    });
+    let d = createDirectorState();
+    d = advance(d, state, [], 300);
+    expect(d.mode).toBe("duel");
+    expect(d.idleTicks).toBe(0);
+  });
+});

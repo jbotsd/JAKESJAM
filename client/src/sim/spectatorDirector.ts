@@ -41,6 +41,14 @@ export type DirectorState = {
   killY: number;
   killTicks: number;
   ready: boolean;
+  /** Consecutive ticks the FRAMED subject(s) have been ~motionless.
+   *  Footage finding S2 (docs/clip-sheets/study-2026-08-05-jul31-replay.md,
+   *  HIGH): the director framed an idle bot alone for 6-8 s at a stretch.
+   *  `pairScore` does weight speed, but closeness (x1.6) plus low HP can
+   *  clear the duel threshold with ZERO movement, and the single-survivor
+   *  branch frames a player regardless of motion — so nothing capped how
+   *  long a still subject could hold the camera. */
+  idleTicks: number;
 };
 
 export const DIRECTOR_VIEW_W = 1920;
@@ -58,6 +66,14 @@ const MIN_DWELL_TICKS = Math.round(1.6 * TICK_HZ);
 const DUEL_RANGE = 780;
 const CHAOS_CLUSTER = 920;
 const PAIR_SCORE_CLOSE = 520;
+/** Speed (px/s) below which a framed subject counts as motionless. Generous
+ *  — this is "is anything happening", not "is it perfectly still". */
+const IDLE_SPEED = 26;
+/** How long the camera may hold a motionless subject before it must cut
+ *  (footage S2). 1.5 s: longer than the natural pauses between exchanges,
+ *  well under the 6-8 s dwells that were filmed, and above MIN_DWELL_TICKS
+ *  so it can never fight ordinary mode stickiness. */
+const IDLE_DWELL_CAP = Math.round(1.5 * TICK_HZ);
 
 export function createDirectorState(): DirectorState {
   return {
@@ -72,6 +88,7 @@ export function createDirectorState(): DirectorState {
     killY: 0,
     killTicks: 0,
     ready: false,
+    idleTicks: 0,
   };
 }
 
@@ -333,6 +350,105 @@ export function stepSpectatorDirector(
     focusB = null;
   }
 
+  // FOOTAGE S2 — the idle dwell cap. Measure the subject(s) this frame
+  // WOULD hold; if the camera has been sitting on stillness past the cap,
+  // cut. A kill hold is exempt: that beat is the one time a motionless
+  // frame is the point.
+  const framedSpeed = (() => {
+    const ids = [focusA, focusB].filter((id): id is string => id !== null);
+    if (ids.length > 0) {
+      let sum = 0;
+      for (const id of ids) {
+        const p = alive.find((q) => q.id === id);
+        if (p) sum += Math.hypot(p.vx, p.vy);
+      }
+      return sum;
+    }
+    // No focus (overview/chaos): measure whether ANYTHING in the match is
+    // moving. Reporting "infinitely lively" here instead made the cap
+    // oscillate — it cut to overview, immediately forgot the room was
+    // still, re-picked the same motionless subject, and cut again every
+    // 1.5 s. A metronome is not better direction than a stare.
+    let max = 0;
+    for (const p of alive) max = Math.max(max, Math.hypot(p.vx, p.vy));
+    return max;
+  })();
+  let nextIdle = framedSpeed < IDLE_SPEED ? dir.idleTicks + 1 : 0;
+  // Set when the cap re-aims at a different SUBJECT. The normal dwell is
+  // keyed on MODE, and a cut from "duel on a statue" to "duel on the
+  // runner" does not change the mode — so without this the very next frame
+  // re-picked the statue (pairScore rewards closeness + low HP over motion)
+  // and the cut lasted a single frame.
+  let capForcedDwell = false;
+  if (wantMode !== "kill" && nextIdle > IDLE_DWELL_CAP) {
+    // Prefer cutting to whoever is actually doing something; if nobody is,
+    // a wide shot is the honest frame — and it reads as a deliberate
+    // establishing beat instead of a stare.
+    const liveliest = alive.reduce<Alive | null>((best, p) => {
+      const sp = Math.hypot(p.vx, p.vy);
+      if (sp < IDLE_SPEED) return best;
+      if (!best || sp > Math.hypot(best.vx, best.vy)) return p;
+      return best;
+    }, null);
+    if (liveliest && liveliest.id !== focusA) {
+      wantMode = "duel";
+      tx = liveliest.x + liveliest.vx * 0.1;
+      ty = liveliest.y + liveliest.vy * 0.06;
+      halfW = 420;
+      halfH = 300;
+      focusA = liveliest.id;
+      focusB = null;
+      // Real action found — the cap did its job, start the clock over.
+      nextIdle = 0;
+      capForcedDwell = true;
+    } else {
+      wantMode = "overview";
+      tx = overview.x;
+      ty = overview.y;
+      halfW = overview.halfW;
+      halfH = overview.halfH;
+      focusA = null;
+      focusB = null;
+      // Deliberately NOT resetting nextIdle: nothing is happening, so HOLD
+      // the wide shot instead of bouncing back to a still subject.
+    }
+    // Clear the sticky dwell so the cut actually happens this frame.
+    dir = { ...dir, dwellTicks: 0 };
+  }
+
+  // SUBJECT stickiness (footage S2's other half). The dwell above protects
+  // the MODE, not the subject, so "duel on the runner" -> "duel on the
+  // statue" was never blocked: pairScore rewards closeness and low HP over
+  // motion, so the frame after any cut the camera drifted straight back to
+  // whoever was standing closest to a wounded neighbour. Rule: while a dwell
+  // is active, never trade a MOVING subject for a still one.
+  if (
+    dir.ready &&
+    dir.dwellTicks > 0 &&
+    wantMode === "duel" &&
+    dir.mode === "duel" &&
+    dir.focusA &&
+    focusA !== dir.focusA
+  ) {
+    const held = alive.find((p) => p.id === dir.focusA);
+    const proposedSpeed = focusA
+      ? (() => {
+          const p = alive.find((q) => q.id === focusA);
+          return p ? Math.hypot(p.vx, p.vy) : 0;
+        })()
+      : 0;
+    if (held && Math.hypot(held.vx, held.vy) >= IDLE_SPEED && proposedSpeed < IDLE_SPEED) {
+      const b = dir.focusB ? alive.find((p) => p.id === dir.focusB) : undefined;
+      focusA = held.id;
+      focusB = b ? b.id : null;
+      tx = b ? (held.x + b.x) / 2 : held.x + held.vx * 0.1;
+      ty = b ? (held.y + b.y) / 2 : held.y + held.vy * 0.06;
+      halfW = b ? Math.max(Math.abs(held.x - b.x) / 2 + 280, 340) : 420;
+      halfH = b ? Math.max(Math.abs(held.y - b.y) / 2 + 220, 240) : 300;
+      nextIdle = 0;
+    }
+  }
+
   // Mode stickiness: don't switch mid-dwell unless kill or clearly better duel.
   if (dir.ready && dir.dwellTicks > 0 && wantMode !== "kill" && dir.mode !== "kill") {
     if (wantMode !== dir.mode) {
@@ -372,6 +488,8 @@ export function stepSpectatorDirector(
   if (!dir.ready || (wantMode !== dir.mode && dir.dwellTicks <= 0)) {
     nextDwell = MIN_DWELL_TICKS;
   }
+  // A subject-only cut needs its own dwell, or it lasts one frame (above).
+  if (capForcedDwell) nextDwell = MIN_DWELL_TICKS;
 
   const wantZ = zoomToFit(halfW, halfH);
   // Snap on first frame; thereafter exp-smooth (cinematic hand).
@@ -407,6 +525,7 @@ export function stepSpectatorDirector(
     killY: dir.killY,
     killTicks: dir.killTicks,
     ready: true,
+    idleTicks: nextIdle,
   };
 }
 
