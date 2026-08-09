@@ -2393,7 +2393,19 @@ if (resumePlace) {
   }, 0);
 } else if (urlParams.get("replay")) {
   // Replay playback / offline render (ReplayScene) — no netcode, no lobby.
-  shell.goto("home");
+  //
+  // `shell.goto("home")` used to run here (since ReplayScene shipped in
+  // 82b13c7) and it SHOWS the splash — so watch mode drew the whole menu
+  // on top of the replay you came to watch. Measured 2026-08-09:
+  // `[data-splash]` hidden=false, visible=true, twelve seconds in. The
+  // headless clip pipeline never noticed because it captures the CANVAS,
+  // not the page; a human opening `?replay=<file>` sees the wordmark,
+  // the callsign field and the Lobby button over the footage.
+  //
+  // A replay surface is a match surface as far as chrome is concerned:
+  // splash away, match chrome on. Practice is the honest mode here —
+  // there is no netcode and no roster, exactly like the practice range.
+  shell.setMatchMode("practice");
   document.title = "JAKESJAM — Replay";
   setTimeout(() => {
     game.scene.stop(SceneKeys.MainMenu);
