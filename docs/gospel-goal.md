@@ -838,6 +838,31 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (o) · **The flip is now one command — and mechanising it
+  exposed why it keeps not happening.** `scripts/e2-flip.sh` (f3de8f8)
+  captures the live host's exact environment, relaunches it identically
+  plus `USE_WASM_STEP_WORLD=1`, verifies `/health` reports
+  authority=wasm + wasmReady, observes, and **rolls back automatically**
+  on the first fallback tick, a dark `/health`, or wasmReady going false.
+  `--rollback` is immediate. It refuses on: humans in the world (L6), no
+  PASSing soak verdict, or a soak that STARTED before the newest sim
+  commit. It deliberately does not set `WASM_STRICT` (live, the fallback
+  IS the kill-switch) and does not touch cloudflared (verified sibling
+  process — a server restart does not drop play.elyad.io).
+  - **THE REAL BLOCKER, stated plainly: the sim is changing faster than a
+    soak can validate it.** The gate compares soak start against the last
+    commit touching `sim/src` / `server/src` / `client/src/sim`. Right
+    now: soak started 17:57, newest sim commit 18:50 — so this soak is
+    already invalid too, exactly as the 15:45 one was. **A 2 h soak can
+    never go green while sim surfaces are committed to every ~30 min.**
+    The flip does not need more engineering; it needs a ~2 h FREEZE on
+    those paths, one clean soak, then this script. That is a scheduling
+    decision, not a machine one.
+  - The first version of this script had the stale-evidence hole it was
+    written to close: it compared the VERDICT's mtime, which is written
+    2+ h after the run starts, so a mid-soak commit would have looked
+    older than it and passed. Now it parses the start time from the
+    filename.
 - 2026-08-09 (n) · **THE JOIN BUG IS GONE — verified on HEAD, so the last
   non-evidence blocker on the E2 flip is cleared.** `bun
   tools/bell-probe.mjs` against an isolated HEAD host (worktree build,
