@@ -1053,6 +1053,34 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (zzzz) · **WASM AUTHORITY BREAKS THE VENUE LOBBY'S HANGOUT
+  MODE — and it is live right now.** Same client build, same map, two
+  servers differing only in authority:
+
+  | authority | venue lobby phase |
+  |---|---|
+  | TS (`USE_WASM_STEP_WORLD=0`) | **fighting** — correct |
+  | wasm (`=1`, i.e. the live host) | **round-over** — impossible in hangout |
+
+  Hangout mode is defined to start at "fighting" (World.ts:1676) and never
+  run the round machine. Under wasm it runs one. Given the `.env.local`
+  find above, the live host has been serving the venue this way for ~29 h.
+  Suspect `world_state_set_hangout_mode` / `g_hangout_mode` not being set
+  or not being honoured on the wasm path for the lobby host
+  (matchHost.ts:487–507).
+
+  This is a **blocker for ratifying E2**, and it is exactly the class of
+  thing the soak could not see: the soak watched the ARENA world and
+  counted fallback ticks, so a hangout-only behavioural divergence was
+  outside its field of view. Zero fallback ticks and a correct venue are
+  independent claims; only the first was measured.
+
+- [ ] **E2-b Venue hangout parity under wasm (blocks the flip).** Get the
+      lobby to phase "fighting" under wasm authority and keep it there,
+      then add the parity assertion the soak lacks — poll the LOBBY's
+      phase, not just the arena's, so this cannot regress unobserved
+      again.
+
 - 2026-08-09 (final) · **Closing gate at HEAD, all green** — zig
   **172/172** (9/9 steps), client **1983 pass / 3 skip / 0 fail**,
   data-warehouse **30/0**, server **369/0** under an explicit
