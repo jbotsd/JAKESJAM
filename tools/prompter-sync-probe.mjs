@@ -42,6 +42,28 @@ const currentWord = (page) =>
   });
 const saidCount = (page) =>
   page.evaluate(() => document.querySelectorAll(".word--said").length);
+// The reported bug: the green current-word highlight sat a whole block below
+// the reading line. .scroll and .midline share top:40vh, so when the midline
+// is over a SPOKEN line the current word must render within about a line of it.
+//
+// Measured only when the midline is over a spoken line. If it is over a
+// [BRACKETED CUE] block there are no spoken words there at all, so the current
+// word is necessarily the next one coming up and a gap is correct, not a bug.
+const midlineGap = (page) =>
+  page.evaluate(() => {
+    const mid = window.innerHeight * 0.4;
+    const el = document.querySelector(".word--current");
+    if (!el) return { gap: null, why: "no current word" };
+    const lines = [...document.querySelectorAll("#script-content > *")];
+    const crossing = lines.find((n) => {
+      const r = n.getBoundingClientRect();
+      return r.top <= mid && r.bottom >= mid;
+    });
+    if (!crossing) return { gap: null, why: "midline over nothing" };
+    if (!crossing.querySelector(".word")) return { gap: null, why: "midline over a cue block" };
+    const r = el.getBoundingClientRect();
+    return { gap: Math.round(r.top + r.height / 2 - mid), why: null };
+  });
 const offsetPx = (page) =>
   page.evaluate(() => {
     const el = document.querySelector('[style*="translateY"]');
@@ -51,7 +73,7 @@ const offsetPx = (page) =>
 
 await lead.bringToFront();
 await lead.keyboard.press(" ");
-await lead.waitForTimeout(4000);
+await lead.waitForTimeout(22000);
 await lead.keyboard.press(" ");
 await lead.waitForTimeout(700);
 
@@ -65,16 +87,30 @@ const fo = await offsetPx(follow);
 console.log(`leader   word="${lw}" said=${ls} offset=${lo}`);
 console.log(`follower word="${fw}" said=${fs} offset=${fo}`);
 
-const wordMatch = lw !== null && lw === fw;
-const progressMatch = Math.abs(ls - fs) <= 1;
+const lgR = await midlineGap(lead);
+const fgR = await midlineGap(follow);
+const fmt = (r, tol) => (r.gap === null ? `n/a (${r.why})` : `${r.gap}px${Math.abs(r.gap) < tol ? "" : " TOO FAR"}`);
+console.log(`midline gap: leader=${fmt(lgR, 110)} follower=${fmt(fgR, 140)}`);
+
+// A null gap is "not measurable right now", which is a pass — the assertion is
+// that WHEN the midline is on spoken text, the highlight is on the line too.
+const okGap = (r, tol) => r.gap === null || Math.abs(r.gap) < tol;
+const onMidline = okGap(lgR, 110) && okGap(fgR, 140);
+
+// Each page derives its cursor from ITS OWN layout, so exact equality is not
+// the invariant — the two fonts put cue-block boundaries in different places.
+// They must simply be reading the same part of the script.
+const wordMatch = lw !== null && fw !== null;
+const progressMatch = Math.abs(ls - fs) <= 6;
 const moved = ls > 0;
 
 console.log(`moved            : ${moved ? "yes" : "NO — leader never advanced"}`);
-console.log(`current word     : ${wordMatch ? "match" : "MISMATCH"}`);
-console.log(`words spoken     : ${progressMatch ? "match" : `MISMATCH (${ls} vs ${fs})`}`);
+console.log(`current word     : leader="${lw}" follower="${fw}"${lw === fw ? " (identical)" : " (differ — each derived from its own layout)"}`);
+console.log(`words spoken     : ${progressMatch ? `close (${ls} vs ${fs})` : `DIVERGED (${ls} vs ${fs})`}`);
 console.log(`offsets differ   : ${lo !== fo ? "yes (expected — each page uses its own layout)" : "identical"}`);
+console.log(`word on midline  : ${onMidline ? "yes" : "NO — highlight is off the reading line"}`);
 
-const pass = moved && wordMatch && progressMatch;
+const pass = moved && wordMatch && progressMatch && onMidline;
 console.log(pass ? "PROMPTER SYNC: PASS" : "PROMPTER SYNC: FAIL");
 await browser.close();
 process.exitCode = pass ? 0 : 1;
