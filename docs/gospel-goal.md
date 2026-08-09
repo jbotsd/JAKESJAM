@@ -1004,6 +1004,18 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (s) · **Composite L7 sweep — 5/5 viewports clean.** Every UI
+  change tonight was checked in isolation and passed; that is not the
+  same as checking them together. The Settings panel grew a Controls
+  section, the venue grew a legend and an encounter glyph, the splash
+  strip changed shape, and two transient strips now share the bottom of
+  the screen. `tools/viewport-sweep.mjs` walks the canonical five over
+  BOTH changed surfaces and fails on the two things a screenshot cannot
+  tell you — a collapsed canvas and horizontal overflow — plus a
+  page-error check and a count of the Controls rows. All five clean, and
+  the tightest case (Settings at 393 px, where the new section lands) was
+  looked at rather than only asserted.
+
 - 2026-08-09 (r) · **THE LIVE HOST IS A DAY STALE, and that changes how
   the flip must be done.** `/health` on :8088 has no `sim` block, so the
   running process predates today's ENTIRE server lane — the input-routing
