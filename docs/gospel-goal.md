@@ -823,7 +823,32 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
 
 ### Interlock lanes (Track E work Track N needs; they land per L1, once)
 
-- [ ] **N-BOT · Bot brain into the core.** Port `worldBots.ts` +
+- [~] **N-BOT · Bot brain into the core.** FIRST SLICE DONE 2026-08-09 —
+      the NAV half (`botArenaNav.ts`, 208 lines) is ported to
+      `sim/src/bot_nav.zig` with a parity gate. Its own header said "PURE:
+      no Math.random, no Date, no host", which is why it went first: every
+      function is decidable from its arguments, so parity is a direct
+      comparison instead of a lockstep sim.
+      `botNavParity.test.ts` drives BOTH implementations over four real
+      named maps with a position grid — 1724 assertions on LOS, cover
+      flanks, hop targets, megaScale, dirTowardX and the compiled
+      cover/ledge counts.
+      Mutation-measured rather than assumed: inverting the flank side
+      fails 3 tests. Scaling the flank score by 1.0001 does NOT — that is
+      a property of the data (candidates never score within 0.05) rather
+      than a hole, and it is written into the test header so nobody reads
+      "mutation-tested" as "every mutation dies". Ranking between
+      near-equal candidates stays weakly covered.
+      **Also caught:** `pub const x = @import(...)` in root.zig is NOT
+      enough to emit a module's `export fn`s — root has an explicit
+      `comptime { _ = ...; }` block and a new module must be added to it or
+      its exports silently vanish from sim.wasm while every Zig test still
+      passes.
+      STILL OPEN: `worldBots.ts` itself (765 lines — targeting, mode
+      machine, per-bot memory, the stateful half). That is the rest of
+      N-BOT and needs seeded lockstep parity, not argument comparison.
+      (original row below)
+- [ ] ~~**N-BOT · Bot brain into the core.**~~ Port `worldBots.ts` +
       `botArenaNav.ts` (~900 lines) to `sim/src/bot.zig` with parity
       tests against the TS brain (same seed, same decisions, N seeds × M
       ticks). Simultaneously Doors 3.2's landing site. Required for N2;
