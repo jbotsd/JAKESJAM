@@ -425,9 +425,34 @@ teaches the loop.
         missing manifest as "synth fallback everywhere" by design. Do not
         silence it with a HEAD request or an empty manifest; that would
         hide a true statement. It goes away when the pack lands.
-- [ ] **4.5 Lobby VFX parity completion** — Geometrician lance
-      inconclusive, Syzygist tether + all-4 cast-tells not attempted
-      (`lobby-vfx-parity-goal.md:451-458`).
+- [~] **4.5 Lobby VFX parity** — swept 2026-08-09, and the blocker is
+      gone. The open rows were gated on "the loadout-station equip flow,
+      a real prerequisite" — Doors 1.8 made class ONE selection at
+      `jakesjam.playerCharacter`, so `tools/lobby-vfx-capture.mjs` picks
+      a chassis directly instead of walking a rig to a station. All four
+      captured firing in the venue, frames in
+      `tests/e2e/.artifacts/lobby-vfx/`:
+      - [x] **Syzygist tether — RENDERS** (was "not attempted"). Visible
+        looping construct beside the rig, HUD "Tethered Charge".
+      - [x] **Kindled ward — RENDERS.** Golden shield construct, HUD
+        "Kindled Ward", 125 HP.
+      - [x] **Interstice blade — RENDERS.** Cyan blade, HUD "Slipstream",
+        85 HP.
+      - [ ] **Geometrician lance — DOES NOT RENDER.** No longer
+        "inconclusive": ten burst frames at ~45 ms across the whole cast,
+        aimed at the practice dummy, with fire confirmed reaching the sim
+        (the rig turns and the muzzle lights). Frame sizes vary <0.7%, so
+        nothing was drawn. **Likely cause, and it is already on the
+        board:** the lance is a raycast (HARD class rule — never a
+        projectile), and the E1 residual list records "zero-damage
+        cosmetic hit-confirm events dropped on the wasm hangout path".
+        A beam whose VFX rides a hit-confirm would vanish in exactly the
+        PvP-immune lobby. Fix sits in the hangout event path — inside the
+        E2 freeze, so recorded rather than attempted.
+      - [ ] cast-tells for all 4 — not separately isolated; the charge
+        frames are captured (`*-charge.png`) but distinguishing a tell
+        from the construct needs a per-class expectation the doc does not
+        yet state.
 - [ ] **4.6 Live killfeed** (small; the ceremony and clips both want it).
       Data side lands in Zig per D-law.
 - [x] 4.7 — DONE 2026-08-09. `dvh` pairs at all four viewport-sized rules
