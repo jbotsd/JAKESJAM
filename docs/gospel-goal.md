@@ -395,24 +395,24 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
   `worldStateBridge`; the core has `world_state_set_spawn_points` but no
   full native constructor — shells currently *hand the sim a world*
   (hence N0.5).
-- **Replay format is on our side:** `.jjr` = header + protocol version +
-  RNG seed + input stream, never WorldState. Native re-sim needs no
-  format work.
+- **Replay format is on our side, with one asterisk:** `.jjr` = header +
+  protocol version + RNG seed + input stream, never WorldState — so a
+  re-sim needs no *semantic* work. It IS raw msgpack with no magic bytes
+  and no framing, so it needed a decoder (written 2026-08-09,
+  `sim/src/native/msgpack.zig`). 10 archived files, 100 MB.
 - **Assets:** `assets/sfx-memes/` 27 MB canonical recordings +
   `client/public/` 57 MB. Needs a packer and decoders, not new art.
 - **The TS sim mirror does not need porting** — it retires under E3.
 
 ### N0 — PORT PASSPORT (**unblocked NOW**, exempt from the E2 wait)
 
-- [ ] **0.1 Native build target.** `zig build native` produces an
-      x86_64-linux executable linking the existing sim modules (the
-      native test module in `build.zig` is the template — promotion, not
-      invention). ReleaseFast + Debug both build.
-- [ ] **0.2 `.jjr` reader in Zig.** Header (schema version, protocol
-      version, seed, match-start roster, mid-match roster deltas) +
-      input chunks. Round-trips every file in `server/.replays/` (12
-      files, ~100 MB); unknown schema versions fail loud with the
-      version printed.
+- [x] **0.1 Native build target** — DONE 2026-08-09 (f7b5796).
+      `zig build native` → `jjsim`; `zig build run-native -- <args>`.
+- [x] **0.2 `.jjr` reader in Zig** — DONE 2026-08-09 (f7b5796).
+      msgpack pull-decoder + header/inputs/rosterEvents reader; unknown
+      formatVersion is a hard error; replays with
+      `backendFallbackTicks > 0` are flagged unusable as passport
+      fixtures. **10/10 archived replays parse, 0 failed.**
 - [ ] **0.3 Headless stepper + hash stream.** Step from seed + inputs,
       emit the existing state hash every N ticks (default 60).
       Full-match step of the largest replay (21.9 MB) completes;
@@ -645,6 +645,45 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (d) · **E2 gate hardened + N0.1/N0.2 landed.** Commits
+  c05f5ca (gate), 5c51b3e (soak harness), f7b5796 (native harness).
+  - **The E2 gate was hollow and is now real.** `USE_WASM_STEP_WORLD=1
+    bun test` reported green while **294 ticks silently fell back to
+    TS**: serverWasmHost is a process-wide singleton, `bun test` runs
+    every file in one process, and serverWasmHost.test.ts's last case
+    reset it without restoring. Fixed + backstopped; fallback ticks are
+    now COUNTED and exported, `WASM_STRICT=1` turns the silent degrade
+    into a throw for gate runs (never live — the fallback is the
+    kill-switch), and `/health` carries
+    `sim.{authority,wasmReady,wasmFallbackTicks}` so a flipped host
+    shows the one failure mode the flip must not hide. Gates now:
+    **353/353 under strict-wasm, wasm, and TS; 0 fallback ticks; tsc
+    clean; zig 165/165.** Also: `server`'s test script ran 306 tests
+    while the recorded gate ran 349 — script widened to match.
+  - **CORRECTION to 2026-08-09 (a) and to the 08-05 (d) caveat: E2 has
+    already been run live, with humans, and it held.** The three
+    2026-07-31 replays record `simBackend: "wasm"` in their headers —
+    which is the SERVER's `matchHost.simBackend`, i.e. the host had
+    USE_WASM_STEP_WORLD set that day — with **0 backendFallbackTicks
+    across all three**, 2–4 players each (bot-only matches skip replay
+    persist, so these had real humans). The earlier "backend=wasm was
+    only the client swap-module layer" reading was wrong. E2's risk is
+    therefore materially lower than the doc assumed; the current host
+    simply lost the flag on a later restart.
+  - **2 h 10 m bot-only soak RUNNING** under wasm authority on
+    :8188/:8189 (never the live ports). Healthy at 6 min: 0 fallback
+    ticks, wasmReady true, RSS 90 → 108 MB early-fill.
+  - **N0.1 DONE** — `zig build native` → `jjsim`, the same sim module
+    the test step already compiled, running native.
+  - **N0.2 DONE** — `.jjr` is raw msgpack with no framing, so the
+    doc's "needs no format work" was wrong: it needed a decoder.
+    Written (pull-based, no allocation for traversal), plus the replay
+    reader. **10/10 archived replays parse, 0 failed** (the doc said 12
+    files; there are 10, 100 MB).
+  - **N-MAP is largely already done** — `sim/src/data/map_gen.zig` (737
+    lines) already has `generateArena(seed)` + `world_state_generate_arena`
+    / `gen_arena_geometry` exports. The remaining TS is named maps and
+    the wrapper, not the generator. Re-scope the lane before working it.
 - 2026-08-09 (c) · **CONSOLIDATED — one goal doc.** `open-doors-goal.md`
   (Track D detail) and `native-desktop-goal.md` (Track N detail) merged
   into this file and reduced to stubs; laws unified (the native NL1-NL6
