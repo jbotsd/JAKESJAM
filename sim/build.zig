@@ -146,6 +146,16 @@ pub fn build(b: *std.Build) void {
         .target = test_target,
         .optimize = optimize,
     });
+    // The shell skeleton's pure half (the fixed-timestep clock) is a
+    // normal test module — it links nothing, so it belongs in `test`
+    // alongside the rest, unlike the spike.
+    const shell_test_module = b.createModule(.{
+        .root_source_file = b.path("src/native/shell.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
+    const shell_tests = b.addTest(.{ .root_module = shell_test_module });
+
     // Stepper tests need the sim itself (hash primitives + step_world).
     const stepper_test_module = b.createModule(.{
         .root_source_file = b.path("src/native/stepper.zig"),
@@ -157,6 +167,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(stepper_tests).step);
     const native_tests = b.addTest(.{ .root_module = native_test_module });
     test_step.dependOn(&b.addRunArtifact(native_tests).step);
+    test_step.dependOn(&b.addRunArtifact(shell_tests).step);
 
     const msgpack_test_module = b.createModule(.{
         .root_source_file = b.path("src/native/msgpack.zig"),

@@ -2,12 +2,23 @@
 
 ## Status
 
-Accepted (2026-08-09), spike-gated. This is the `native-desktop-goal.md`
-N1 decision. It supersedes that doc's original three-spike plan (sokol
-vs SDL3 vs raylib) with one spike plus a named fallback — the doc's N1
-section is amended to match. Acceptance is confirmed when the N1.2 spike
-meets its bar; if it fails, the fallback is SDL3 under the triggers in
-"Switch triggers" below, with no re-litigation of the other candidates.
+**CONFIRMED (2026-08-10).** Accepted 2026-08-09 spike-gated; the spike
+has since run and met every item on its bar, so this is no longer
+provisional. Full result in `docs/n1-spike-result.md`; the headline is
+500 additive-blended shapes at frame **p99 1.48 ms** against a 16.67 ms
+budget, plus TTF text, a canonical SFX decoded from file, mouse and
+gamepad — all through `@cImport` on `raylib.h` with no third-party
+bindings.
+
+SDL3 remains the named fallback under "Switch triggers" below, and those
+triggers stay live. One of them was checked directly by the spike: GL 3.3
+was stable across ~2500 frames on this box, so the GL-instability trigger
+has NOT fired.
+
+This is the `native-desktop-goal.md` N1 decision. It supersedes that
+doc's original three-spike plan (sokol vs SDL3 vs raylib) with one spike
+plus a named fallback — the doc's N1 section is amended to match. No
+re-litigation of the other candidates.
 
 This ADR **reverses an initial same-day recommendation of SDL3**. The
 reversal reasons are recorded in full below so the argument is settled
@@ -207,6 +218,17 @@ run the N0 passport to prove the game did not change.
 - Audio, text and input all sit behind the shell wall, so a future swap
   touches no sim code and no test that matters to game behavior.
 - Nothing here affects N0, which is unblocked today and shell-agnostic.
+- **Linking on this box (found by the spike, 2026-08-10):** Zig 0.15.2
+  cannot link the system `crt1.o` — GCC 16 emits an `.sframe` section
+  whose `R_X86_64_PC64` relocation Zig's linker rejects outright. The fix
+  is to pin `glibc_version` on the build target so Zig supplies its own
+  start files, which puts it in cross-compile mode and then requires an
+  explicit `/usr/lib` library path for GL/X11. Both halves are in
+  `sim/build.zig`. This is a property of THIS machine's toolchain, not of
+  raylib, and is explicitly not a reason to move the Zig pin.
+- **Asset gap (found by the spike):** the repo's brand faces ship as
+  `.woff2`, which raylib cannot load. The native shell needs TTF/OTF cuts
+  of Space Grotesk / Space Mono / Noto Serif Display, or a woff2 decoder.
 - **Toolchain footgun, unrelated to the pick but fatal to spike data:**
   `/usr/bin/zig` on this box is 0.16.0 and only the repo's mise shim
   resolves the pinned 0.15.2. A spike built from a scratch directory
