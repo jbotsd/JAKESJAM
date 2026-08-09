@@ -96,9 +96,23 @@ weakest thing against the "best game in the world" bar (footage first).
 - **L5 · Fan-out discipline.** Worktree-per-writer, branch
   `track-x/...`, merge `--no-edit`, delete after. Single-writer files:
   `world.zig`, `cards.ts`, `main.ts`, `style.css`, `sim/build.zig`,
-  `sim/native/shell.zig`. Worktrees need node_modules symlinks (root +
-  client + server). `sim.wasm` is gitignored — `zig build` after pulling
-  Zig changes or wasm suites fail stale.
+  `sim/native/shell.zig`, **`docs/gospel-goal.md`** (added 2026-08-09
+  after two agents wrote its STATUS on the same afternoon and got away
+  with it only because their edits happened to land on different lines).
+  Worktrees need node_modules symlinks (root + client + server).
+  `sim.wasm` is gitignored — `zig build` after pulling Zig changes or
+  wasm suites fail stale.
+- **L5a · One goal, one runner.** This doc is an ENDLESS goal: "pick the
+  next weakest thing" is its whole control flow. Two agents running it
+  against the same checkout therefore race by construction — they pick
+  from one queue, write one STATUS, rebuild one `dist`, and restart one
+  host. Fan-out is still encouraged, but a second writer gets a SCOPED
+  brief ("Doors 1.8 only, per this doc"), its own worktree, and its own
+  branch; it does not run the goal and does not write STATUS. The
+  session running the goal owns STATUS, merges, `dist` rebuilds and
+  :8088 restarts. Evidence this is not theoretical: on 2026-08-09 a
+  second session's in-flight `main.ts` edit broke the client bundle
+  while the first was mid-verification, and both wrote the same doc.
 - **L6 · Live-host discipline.** Server sim changes require a :8088
   restart to be live (check ops for humans first). The ops console is
   LAN-only :8089 — never route it through the public port. Client
