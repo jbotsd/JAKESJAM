@@ -3,7 +3,7 @@
 // See docs/netcode-architecture.md "Message Protocol".
 
 import { decode, encode } from "@msgpack/msgpack";
-import type { InputSeq, SimEvent, Tick, VesselCosmetics, WorldState } from "../sim/types.js";
+import type { InputSeq, SimEvent, Tick, VesselCosmetics, WorldMode, WorldState } from "../sim/types.js";
 import type { SpectatorCamPose } from "../sim/spectatorDirector.js";
 import type { DeltaPayload } from "./snapshotDelta.js";
 
@@ -167,6 +167,21 @@ export type ServerHello = {
   mapId: string;
   yourPlayerId: string;
   allPlayers: PlayerLobbyInfo[];
+  /**
+   * The host's WorldMode, STATED rather than guessed.
+   *
+   * The client used to infer this from the matchId (`startsWith
+   * ("hangout_")`), which silently got the VENUE LOBBY wrong: its id is
+   * plain `"lobby"` (venueHost.ts's VENUE_LOBBY_MATCH_ID), so every
+   * visitor's default landing surface predicted in "combat" against a
+   * server running "hangout". The client's round machine then advanced the
+   * lobby to phase "round-over" — a state hangout mode exists to make
+   * impossible.
+   *
+   * Optional so an older server that never sends it still connects; the
+   * client falls back to the old inference in that case.
+   */
+  mode?: WorldMode;
 };
 
 /**

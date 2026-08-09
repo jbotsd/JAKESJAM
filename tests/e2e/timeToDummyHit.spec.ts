@@ -94,20 +94,27 @@ test.describe("venue-goal 2.5 — time to first dummy hit", () => {
   //   - this is SUPPOSED to work — World.ts:3018, "Destructibles remain
   //     hittable" in hangout mode.
   //
-  // Two unexplained observations, both pointing the same way:
-  //   1. venueHost.ts's venueLobbyMap() defines EIGHT dummies (dummy_0..7);
-  //      the live world exposes exactly ONE (peak count over 20s = 1).
-  //   2. the lobby's phase reads "round-over" continuously for 18s+ while
-  //      the arena independently cycles to "fighting".
+  // NARROWED 2026-08-09, later the same evening. An earlier version of this
+  // comment blamed the SERVER lobby not being in hangout mode. That was
+  // wrong, and is recorded here rather than quietly deleted:
+  //   - the server DOES create the lobby as hangout — venueHost.ts:429
+  //     passes mode:"hangout" through matchHost.ts:464 into World.create;
+  //   - the "seven missing dummies" was interest culling, not loss.
+  //     InterestGrid.ts:117 culls destructibles by proximity and
+  //     matchHost's respawnDestructibles() rebuilds all eight, so a client
+  //     seeing one nearby dummy is correct behaviour;
+  //   - the SIM is not at fault either. hangoutDestructibleTargets.test.ts
+  //     now covers the hitscan path that nothing covered before: the
+  //     starter pistol damages a dummy in hangout mode, and a dummy behind
+  //     the shooter correctly stays untouched.
   //
-  // HYPOTHESIS, NOT CONFIRMED — do not quote as fact: the venue lobby is
-  // not running in hangout mode. World.ts:1676 creates a hangout world at
-  // phase "fighting" and its round machine "never runs in hangout mode", so
-  // a lobby sitting at "round-over" is running rounds it should not — which
-  // would also explain seven destroyed-and-unrespawned dummies. If
-  // hangoutMode is false, World.ts:2510's
-  // `fightingPhase = hangoutMode || phase === "fighting"` is false at
-  // round-over and no shot resolves.
+  // So the break is at the INTEGRATION level, and the surviving lead is the
+  // CLIENT-side world: __simPhase reports "round-over" continuously in the
+  // venue, where hangout mode should pin it to "fighting" (World.ts:1676)
+  // and the round machine should never run at all. Worth checking first
+  // whether the client gates sending fire on its local phase, and whether
+  // the mode reaches the client's createRuntime (clientLoop.ts:956 does
+  // accept one) for the LOBBY connection specifically.
   test.fail();
   test("a visitor can damage a practice dummy inside the budget", async ({ page }) => {
     await asReturningVisitor(page);

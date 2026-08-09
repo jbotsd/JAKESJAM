@@ -2214,6 +2214,10 @@ export class MatchHost {
         mapId: this.map.id,
         yourPlayerId: ws.data.playerId,
         allPlayers: Array.from(this.playerInfo.values()),
+        // STATE the mode instead of letting the client guess it from the
+        // match id — that guess got the venue lobby (id "lobby") wrong for
+        // every visitor. See ServerHello.mode.
+        mode: this.mode,
       }),
     );
   }

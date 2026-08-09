@@ -18,6 +18,7 @@ import type {
   InputFrame,
   PlayerEntity,
   SimEvent,
+  WorldMode,
   WorldState,
 } from "../sim/types.js";
 import {
@@ -952,7 +953,12 @@ export class ClientLoop {
     // (harmless — hangout's void-plane respawn-in-place is a server-only
     // divergence corrected on the next snapshot — but matching it exactly
     // avoids even a one-snapshot mispredict if a player ever falls off).
-    const mode = this.matchId.startsWith("hangout_") ? "hangout" : "combat";
+    // Prefer what the server SAYS; fall back to the old id-sniff only for
+    // servers too old to send it. The sniff was wrong for the venue lobby
+    // (id "lobby", not "hangout_*"), so every visitor's landing surface
+    // predicted in combat mode and ran a round machine hangout forbids.
+    const mode: WorldMode =
+      message.mode ?? (this.matchId.startsWith("hangout_") ? "hangout" : "combat");
     this.runtime = createRuntime(resolveMap(message.mapId), mode);
     this.onHello?.(message);
     this.start();
