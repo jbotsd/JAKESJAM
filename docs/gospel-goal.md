@@ -1053,6 +1053,38 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (zzz) · **SOAK PASSED. E2's machine evidence is complete; the
+  flip is now blocked only on E2-a and a deploy.**
+
+  `soak-20260809-200855` — 7827 s (2 h 11 m), wasm authority, 4 bots, 259
+  samples, 10 full match cycles:
+
+  | metric | result |
+  |---|---|
+  | fallback ticks (max over run) | **0** |
+  | rows with `wasmReady=false` | **0** |
+  | divergence lines | **0** |
+  | RSS | 100.5 MB → 134.8 MB |
+  | VERDICT | **PASS** |
+
+  Zero fallback ticks across 259 samples is the claim that matters, and
+  it is only meaningful because the counter was added and proven this
+  morning — the same soak shape reported green in the past while 294
+  ticks ran on TS.
+
+  On memory: "flat" would have been the wrong word. RSS grew 34 %, but by
+  thirds the growth is **+23.9 / +9.9 / +1.6 MB** — decelerating to a
+  plateau in the final 45 minutes, which is warm-up reaching steady
+  state, not a leak. A linear 34 %/2 h would have been.
+
+  Fixed after the run, having been deliberately deferred while it ran
+  (editing a script bash is executing corrupts it by byte offset): the
+  CSV's `tick_p99_ms` column was empty for all 259 rows because the
+  extractor grepped `"p99"` and the field is `"p99Ms"`. So the soak's
+  latency column never measured anything for the whole run — the p99
+  figure of record stays the hand-measured 2.8 ms. The next soak's column
+  will populate.
+
 - 2026-08-09 (zz) · **E2 WAS ALREADY FLIPPED, AND THE KILL-SWITCH DOES NOT
   WORK.** Both verified, not inferred. This supersedes the "E2 is not
   flipped live" line below it.

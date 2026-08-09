@@ -142,7 +142,7 @@ while :; do
   FB="$(echo "$H" | grep -o '"wasmFallbackTicks":[0-9]*' | cut -d: -f2 || true)"
   RDY="$(echo "$H" | grep -o '"wasmReady":[a-z]*' | cut -d: -f2 || true)"
   MATCHES="$(echo "$H" | grep -o '"matches":[0-9]*' | cut -d: -f2 || true)"
-  P99="$(echo "$H" | grep -o '"p99":[0-9.]*' | head -1 | cut -d: -f2 || true)"
+  P99="$(echo "$H" | grep -o '"p99Ms":[0-9.]*' | head -1 | cut -d: -f2 || true)"
   FB="${FB:-0}"; RDY="${RDY:-false}"; MATCHES="${MATCHES:-0}"; P99="${P99:-}"
   # `cond && assign` is a trap under `set -e`: when cond is false the list
   # returns 1 and kills the run. Cost the first smoke test its whole loop.

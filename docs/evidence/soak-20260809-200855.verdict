@@ -1,0 +1,7 @@
+soak 20260809-200855
+ran_s=7827 target_s=7800
+authority=wasm bots=4
+rss_first_kb=100520 rss_last_kb=134788
+fallback_ticks_max=0 fallback_logged=0
+divergence_lines=0 match_cycles=10
+VERDICT=PASS
