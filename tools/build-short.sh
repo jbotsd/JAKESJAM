@@ -40,7 +40,7 @@ OBSIDIAN="0x0a0c10"; BONE="0xf2ece0"; GOLD="0xb08d3f"; TEAL="0x4fd8d8"
 # characters actually read at phone size, the arena keeps its context, and the
 # band clears both safe zones. zoom 1.0 keeps every pixel but the fighters are
 # too small to follow on a phone.
-IN=""; OUT=""; HOOK=""; ZOOM="1.55"; FROM=""; TO=""; MUSIC=""; MUSIC_START="0"
+IN=""; OUT=""; HOOK=""; ZOOM="1.55"; FROM=""; TO=""; MUSIC=""; MUSIC_START="0"; VO=""
 MARK="play.elyad.io"; HOOK_DUR="2.6"
 
 while [ $# -gt 0 ]; do
@@ -51,6 +51,7 @@ while [ $# -gt 0 ]; do
     --zoom) ZOOM="$2"; shift 2 ;;
     --from) FROM="$2"; shift 2 ;;
     --to) TO="$2"; shift 2 ;;
+    --vo) VO="$2"; shift 2 ;;
     --music) MUSIC="$2"; shift 2 ;;
     --music-start) MUSIC_START="$2"; shift 2 ;;
     --mark) MARK="$2"; shift 2 ;;
@@ -70,10 +71,37 @@ TRIM=()
 [ -n "$FROM" ] && TRIM+=(-ss "$FROM")
 [ -n "$TO" ] && TRIM+=(-to "$TO")
 
+# With narration, the VOICE sets the length and the gameplay loops to fill it.
+# Cutting the voice off to fit a 10s clip is the wrong way round — the clip is
+# wallpaper, the line is the content.
+LOOP=(); VO_DUR=""
+if [ -n "$VO" ]; then
+  [ -f "$VO" ] || { echo "--vo file not found: $VO" >&2; exit 2; }
+  VO_DUR=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$VO")
+  # +0.45s of tail so the last word is not clipped by the cut.
+  VO_DUR=$(awk -v d="$VO_DUR" 'BEGIN{printf "%.3f", d + 0.45}')
+  LOOP=(-stream_loop -1)
+  TRIM=()
+  [ -n "$FROM" ] && TRIM+=(-ss "$FROM")
+fi
+
 # Does the source actually carry audio? Host-rendered clips do (clip-goal B3
 # fixed); a raw autoplay webm may not, and -map of a missing stream is fatal.
+#
+# "Has a stream" is NOT enough. Some clips in the 07-27 batch carry a
+# perfectly valid opus track that is digital silence (-91 dB), and mixing a
+# narration against one produced a SILENT short. probe-clip.ts already treats
+# audio as "present AND non-silent" for exactly this reason; so does this.
 HAS_AUDIO=$("$FFPROBE" -v error -select_streams a -show_entries stream=index \
   -of csv=p=0 "$IN" | head -1)
+if [ -n "$HAS_AUDIO" ]; then
+  MEANDB=$("$FFMPEG" -hide_banner -i "$IN" -af volumedetect -f null - 2>&1 |
+    grep -oE "mean_volume: [-0-9.]+" | awk '{print $2}' || true)
+  if [ -n "$MEANDB" ] && awk -v v="$MEANDB" 'BEGIN{exit !(v < -60)}'; then
+    echo "[short] NOTE: source audio track is silent (${MEANDB} dB) — treating as no audio"
+    HAS_AUDIO=""
+  fi
+fi
 
 # ── the 9:16 plate ──────────────────────────────────────────────────────
 #  bg : same frame, scaled to COVER, blurred and dimmed toward obsidian
@@ -147,7 +175,23 @@ FILTER="${FILTER},fps=${FPS},format=yuv420p[v]"
 # House rule: the game's real audio is the point. Music, if any, sits UNDER
 # it via sidechain ducking — it never replaces it.
 AUDIO_IN=(); AMAP=(); ACODEC=()
-if [ -n "$MUSIC" ] && [ -n "$HAS_AUDIO" ]; then
+if [ -n "$VO" ] && [ -n "$HAS_AUDIO" ]; then
+  # Voice on top, game audio ducked underneath by the voice itself. The game
+  # sound still carries the hits; it just gets out of the way of the words.
+  AUDIO_IN=(-i "$VO")
+  FILTER="${FILTER};[1:a]aformat=channel_layouts=stereo,volume=2.6[vo];
+          [0:a]volume=0.75[game];
+          [game][vo]sidechaincompress=threshold=0.03:ratio=12:attack=15:release=280[gameduck];
+          [gameduck][vo]amix=inputs=2:duration=longest:dropout_transition=0,
+          alimiter=limit=0.95,
+          afade=t=out:st=$(awk -v d="$VO_DUR" 'BEGIN{printf "%.2f", d-0.35}'):d=0.35[a]"
+  AMAP=(-map "[a]"); ACODEC=(-c:a aac -b:a 192k)
+elif [ -n "$VO" ]; then
+  AUDIO_IN=(-i "$VO")
+  FILTER="${FILTER};[1:a]aformat=channel_layouts=stereo,volume=2.6,alimiter=limit=0.95,
+          afade=t=out:st=$(awk -v d="$VO_DUR" 'BEGIN{printf "%.2f", d-0.35}'):d=0.35[a]"
+  AMAP=(-map "[a]"); ACODEC=(-c:a aac -b:a 192k)
+elif [ -n "$MUSIC" ] && [ -n "$HAS_AUDIO" ]; then
   AUDIO_IN=(-ss "$MUSIC_START" -i "$MUSIC")
   FILTER="${FILTER};[1:a]volume=0.28,afade=t=in:st=0:d=0.3[mus];
           [0:a]volume=1.0[game];
@@ -162,12 +206,12 @@ elif [ -n "$HAS_AUDIO" ]; then
   AMAP=(-map 0:a); ACODEC=(-c:a aac -b:a 192k)
 fi
 
-echo "[short] $IN -> $OUT (zoom=${ZOOM} audio=$([ -n "$HAS_AUDIO" ] && echo game || echo none)${MUSIC:+ +music})"
-"$FFMPEG" -y "${TRIM[@]}" -i "$IN" "${AUDIO_IN[@]}" \
+echo "[short] $IN -> $OUT (zoom=${ZOOM} audio=$([ -n "$HAS_AUDIO" ] && echo game || echo none)${MUSIC:+ +music}${VO:+ +VO ${VO_DUR}s looped})"
+"$FFMPEG" -y "${LOOP[@]}" "${TRIM[@]}" -i "$IN" "${AUDIO_IN[@]}" \
   -filter_complex "$FILTER" \
   -map "[v]" "${AMAP[@]}" \
   -c:v libx264 -crf 18 -preset slow -pix_fmt yuv420p \
-  -movflags +faststart -shortest "${ACODEC[@]}" \
+  -movflags +faststart ${VO_DUR:+-t $VO_DUR} $([ -z "$VO_DUR" ] && echo -shortest) "${ACODEC[@]}" \
   "$OUT" -loglevel error
 
 "$FFPROBE" -v error -select_streams v:0 \
