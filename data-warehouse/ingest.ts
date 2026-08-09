@@ -9,6 +9,7 @@ import { Database } from "bun:sqlite";
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { isTestEmail } from "./testRows.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -119,7 +120,13 @@ function ingestSignups(): number {
   const list = JSON.parse(readFileSync(path, "utf8")) as Array<{ email: string; source: string; at: string }>;
   const insert = db.prepare(`INSERT OR REPLACE INTO signups (email, source, at) VALUES (?, ?, ?)`);
   for (const s of list) insert.run(s.email, s.source, s.at);
-  log(`signups: ${list.length} rows`);
+  // P5/L8: report the real/test split at ingest, not just a row count.
+  // A bare count is how 20 @example.com test rows became "20 email
+  // signups captured" in report.ts — while the single genuine signup,
+  // which arrived after that ingest ran and was never re-ingested, was
+  // absent from the warehouse entirely.
+  const testRows = list.filter((s) => isTestEmail(s.email)).length;
+  log(`signups: ${list.length} rows (${list.length - testRows} real, ${testRows} test)`);
   return list.length;
 }
 

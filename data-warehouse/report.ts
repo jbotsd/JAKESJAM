@@ -8,6 +8,7 @@
 import { Database } from "bun:sqlite";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { TEST_EMAIL_SQL } from "./testRows.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const db = new Database(resolve(HERE, "jakesjam.db"));
@@ -38,8 +39,32 @@ console.log(
 );
 
 section("INTERNAL: signups");
-const signupCount = row1(`SELECT COUNT(*) AS n FROM signups`);
-console.log(`${signupCount?.n ?? 0} email signups captured`);
+// P5/L8: this line used to read COUNT(*) and announce "20 email signups
+// captured" when all 20 were @example.com test rows — and the one real
+// signup was missing entirely. The funnel's single most important number
+// must never flatter itself.
+const signupSplit = row1(
+  `SELECT
+     COUNT(*) AS total,
+     SUM(CASE WHEN ${TEST_EMAIL_SQL} THEN 1 ELSE 0 END) AS test_rows
+   FROM signups`,
+) as { total: number; test_rows: number } | undefined;
+const totalSignups = signupSplit?.total ?? 0;
+const testSignups = signupSplit?.test_rows ?? 0;
+const realSignups = totalSignups - testSignups;
+console.log(
+  `${realSignups} REAL email signup${realSignups === 1 ? "" : "s"}` +
+    (testSignups > 0
+      ? `  (${testSignups} test row${testSignups === 1 ? "" : "s"} excluded of ${totalSignups} captured)`
+      : ""),
+);
+for (const r of db
+  .query(
+    `SELECT email, source, at FROM signups WHERE NOT ${TEST_EMAIL_SQL} ORDER BY at DESC LIMIT 10`,
+  )
+  .all() as Array<{ email: string; source: string; at: string }>) {
+  console.log(`  ${r.at}  ${r.email}  (${r.source})`);
+}
 
 section("INTERNAL: CRM (outreach targets)");
 const crmByCategory = db.query(`SELECT category, tier, COUNT(*) AS n FROM crm_contacts GROUP BY category, tier ORDER BY category, tier`).all();
