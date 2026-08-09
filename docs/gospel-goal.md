@@ -511,8 +511,20 @@ teaches the loop.
         "Kindled Ward", 125 HP.
       - [x] **Interstice blade — RENDERS.** Cyan blade, HUD "Slipstream",
         85 HP.
-      - [ ] **Geometrician lance — DOES NOT RENDER.** No longer
-        "inconclusive": ten burst frames at ~45 ms across the whole cast,
+      - [ ] **Geometrician lance — DOES NOT RENDER, and it is the
+        DEFAULT class.** Sharpened 2026-08-09: `balanced` → wizard →
+        Geometrician is what every new player starts as, and it is
+        hitscan (HARD class rule — never a projectile). Probing the venue
+        while firing shows **zero projectile entities ever created**,
+        which is correct for hitscan and is why a first-shot metric based
+        on projectile count reads "never fired" for a default-class
+        player. The dummy DOES take damage (measured 60 → 48), so the
+        shot is real and the damage number appears — **but the beam
+        itself draws nothing.** So a newcomer who reads the venue's own
+        "the dummies are hittable — try it" prompt, clicks, and watches
+        carefully sees a number appear out of thin air with no weapon
+        effect between them. That is a first-impression bug on the
+        landing surface, not just a VFX gap. Earlier detail: ten burst frames at ~45 ms across the whole cast,
         aimed at the practice dummy, with fire confirmed reaching the sim
         (the rig turns and the muzzle lights). Frame sizes vary <0.7%, so
         nothing was drawn. **Likely cause, and it is already on the
