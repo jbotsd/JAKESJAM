@@ -1037,6 +1037,34 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (x) · **Client frame budget on the landing, measured for the
+  first time** (`tools/landing-fps.mjs`, rAF deltas in-page):
+
+  | case | p50 | p95 | missed (>20 ms) |
+  |---|---|---|---|
+  | phone 393×852 auto | 16.7 ms | 16.7 ms | **0%** |
+  | phone 393×852 potato | 16.7 ms | 16.7 ms | **0%** |
+  | short-desktop 1280×700 | 16.7 ms | 33.4 ms | 44% |
+  | desktop 1920×1080 | 33.3 ms | 50.0 ms | 100% |
+
+  - **CAVEAT FIRST, because it decides what this means:** headless
+    Chromium rasterises in SOFTWARE. The clean scaling with pixel count
+    is what a fill-rate-bound software renderer looks like. This is a
+    RELATIVE result — "the 1080p landing is by far the heaviest case,
+    phones are comfortable" — not a claim about what a player with a GPU
+    sees. A headful run is needed before anyone panics or relaxes.
+  - My first pass reported "62% dropped" on a phone that was in fact
+    locked at a perfect 60 Hz: the threshold was `>16.67 ms`, and at a
+    60 Hz vsync deltas sit a hair above 16.67 BY DEFINITION. Moved to
+    `>20 ms`, the first delta vsync jitter cannot explain. Recording it
+    because a scary meaningless percentage in a status doc is worse than
+    no number.
+  - **Open question worth someone's time:** at 1080p the run sat pinned
+    at exactly half-rate for 10 s straight. If the global render governor
+    is meant to shed quality under sustained misses, either it did and
+    30 Hz is its floor here, or it never engaged. Not chased — it needs
+    the GPU measurement first to be worth interpreting.
+
 - 2026-08-09 (w) · **Zig authority is FAST, and my soak was silently not
   recording it.** The soak CSV's `tick_p99_ms` column has been empty for
   every row of every run tonight: the script greps `"p99"` and the field
