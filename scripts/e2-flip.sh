@@ -82,7 +82,25 @@ relaunch() { # $1 = "wasm" | "ts"
   env_file="$(mktemp)"
   tr '\0' '\n' < "/proc/$pid/environ" \
     | grep -vE '^(USE_WASM_STEP_WORLD|WASM_STRICT)=' > "$env_file"
-  if [ "$mode" = "wasm" ]; then echo "USE_WASM_STEP_WORLD=1" >> "$env_file"; fi
+  # Set the flag EXPLICITLY for both modes — never by omission.
+  #
+  # Omitting it does not mean "off". `server/.env.local` has carried
+  # USE_WASM_STEP_WORLD=1 since 2026-07-28, and Bun auto-loads .env.local
+  # from its cwd — which is `server/` on the launch line below. So the
+  # original "strip it and don't re-add" rollback relaunched straight back
+  # onto wasm and reported success: the kill-switch this script exists to
+  # provide never worked. It is invisible in /proc/<pid>/environ too, which
+  # is how the live host ran ~29 h of unobserved wasm authority while every
+  # check said "not flipped".
+  #
+  # An explicit value in the real environment beats .env.local — verified
+  # on this box: launched from server/ with USE_WASM_STEP_WORLD=0, /health
+  # reports sim.authority "ts" and wasmReady false.
+  if [ "$mode" = "wasm" ]; then
+    echo "USE_WASM_STEP_WORLD=1" >> "$env_file"
+  else
+    echo "USE_WASM_STEP_WORLD=0" >> "$env_file"
+  fi
 
   say "stopping pid $pid"
   kill -TERM "$pid" 2>/dev/null || true
@@ -106,12 +124,34 @@ relaunch() { # $1 = "wasm" | "ts"
   ( env -i "${envpairs[@]}" nohup setsid bun --cwd server src/index.ts \
       >> "$LOG_DIR/server.log" 2>&1 < /dev/null & disown ) || true
 
+  local H=""
   for _ in $(seq 1 60); do
-    [ -n "$(health)" ] && return 0
+    H="$(health)"; [ -n "$H" ] && break
     sleep 1
   done
-  say "server did not become healthy on :$PORT"
-  return 1
+  [ -n "$H" ] || { say "server did not become healthy on :$PORT"; return 1; }
+
+  # VERIFY the authority we asked for is the authority we got, instead of
+  # assuming the env var did what it says. This is the general fix for the
+  # .env.local class of bug: any future mechanism that silently overrides
+  # the flag — a wrapper script, a systemd drop-in, another dotenv file —
+  # gets caught here rather than after hours of "flipped" running that
+  # wasn't, or a "rollback" that didn't.
+  local got; got="$(field "$H" authority)"
+  if [ -z "$got" ]; then
+    say "REFUSING to claim $mode: /health has no sim.authority field."
+    say "  The server is running code older than the E2 instrument, so the"
+    say "  flip cannot be observed. Deploy current server code first."
+    return 1
+  fi
+  if [ "$got" != "$mode" ]; then
+    say "MISMATCH: asked for '$mode' authority, /health reports '$got'."
+    say "  Something outside this script is setting USE_WASM_STEP_WORLD —"
+    say "  check server/.env.local. NOT claiming success."
+    return 1
+  fi
+  say "verified: /health reports sim.authority=$got"
+  return 0
 }
 
 if [ "$ROLLBACK_ONLY" = "1" ]; then
