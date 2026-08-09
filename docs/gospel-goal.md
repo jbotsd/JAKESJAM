@@ -780,6 +780,25 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (f) · **E2 EVIDENCE GATE FULLY SATISFIED — flip deliberately
+  held, see below.** The 2 h 10 m headless bot-only soak under wasm
+  authority returned **VERDICT=PASS**: ran 7803 s, **0 fallback ticks, 0
+  divergence lines**, 8 full match cycles, RSS 90 MB → 109 MB (peak 143,
+  settled back — flat, not a leak). Evidence file
+  `.host-logs/soak-20260809-154519.{verdict,csv,log}`. With the suite row
+  (353/353 under `WASM_STRICT=1`) and the 07-31 replays (real humans, 3
+  matches, backend=wasm, 0 fallbacks), every row E2 asks for is green.
+  **The flip itself is NOT done, on purpose.** A concurrent lane is
+  isolating a join bug on that exact host — a client walking
+  venue → bell → arena is logged "ADMITTED" while `/health` reports
+  `humans=0`, then evicted after the 10 s reconnect grace. Restarting
+  :8088 mid-investigation destroys its state and conflates two variables
+  in a bisect; and E2's whole value is Zig authority *for real players*,
+  which is moot while "can a real player enter at all" is open. Nothing
+  is lost by waiting: the evidence is durable and the flip is one env var
+  plus a restart. **Sequence: land the join fix → flip → observe →
+  STATUS.**
+
 - 2026-08-09 (h) · **E2 BLOCKER FOUND AND FIXED: input reached the wrong
   player under Zig authority** (5ad59c5). This is why the flip had not
   happened yet, and it was found by reading the input contract for N0.3 —
