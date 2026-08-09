@@ -19,6 +19,7 @@ import {
 import { WorldBots } from "./worldBots.ts";
 import { STEP_MS } from "@sim/index.ts";
 import { isBotId } from "@sim/botId.ts";
+import type { CharacterArchetype } from "@sim/types.ts";
 import { PlayerId, type PlayerSpawnInfo } from "@sim/types.ts";
 import { DEFAULT_MAP_ID, isMapId, resolveMap, type MapId } from "@sim/data/maps.ts";
 import { convexClient, type ConvexId } from "./convexClient.ts";
@@ -404,13 +405,25 @@ export class WorldHost {
         for (const b of this.bots.spawnInfosFor(target)) {
           if (!this.host.hasPlayer(b.playerId)) {
             this.addBot(b.playerId, b.name, b.characterId);
+            // Retire the venue's idle copy first — the same persona
+            // standing in both rooms reads as a duplicate, not presence.
+            this.onBotRecalled?.(PlayerId(b.playerId));
           }
         }
       } else if (liveBots.length > target) {
-        // Displaced bots simply sit out (no lobby idling this sprint) —
-        // remove the roster tail so persona identities stay stable.
+        // gospel 3.1 — displaced bots go IDLE IN THE VENUE rather than
+        // vanishing. An empty antechamber is the first thing a visitor
+        // sees, and a bot that evaporates the moment humans arrive makes
+        // the room emptier exactly when it should look busiest. Roster
+        // tail order is unchanged, so persona identities stay stable.
         for (const id of liveBots.sort().slice(target)) {
+          const info = this.host.rosterInfo(PlayerId(id));
           this.host.removeRosterPlayer(PlayerId(id));
+          this.onBotDisplaced?.(
+            PlayerId(id),
+            info?.name ?? "BOT",
+            (info?.characterId as CharacterArchetype | undefined) ?? "balanced",
+          );
         }
       }
       return;
@@ -434,6 +447,24 @@ export class WorldHost {
     for (const id of liveBots) this.host.removeRosterPlayer(PlayerId(id));
     desc.forEach((b, index) => this.addBot(b.playerId, b.name, b.characterId, teamPlan[index]));
   }
+
+  /**
+   * Called when the elastic drain removes a bot from the ARENA (gospel
+   * 3.1). VenueHost installs this to re-home the bot in the lobby as idle
+   * presence. A hook rather than a direct call because worldHost must not
+   * know about the venue — the arena runs standalone in tests and in
+   * single-match servers, where this stays undefined and the old
+   * "displaced bots sit out" behaviour is exactly what happens.
+   */
+  onBotDisplaced?: (
+    playerId: PlayerId,
+    name: string,
+    characterId: CharacterArchetype,
+  ) => void;
+
+  /** Called when the arena RE-ADMITS a bot, so the venue can retire the
+   *  idle copy instead of showing the same persona in two places. */
+  onBotRecalled?: (playerId: PlayerId) => void;
 
   /** The one bot-insertion call site (structural test S2.D.4 counts every
    *  roster-insertion call in this file) — both branches of

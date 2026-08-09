@@ -404,8 +404,22 @@ teaches the loop.
       - [ ] **Persona bots idle IN THE VENUE** (the presence floor
             proper) — still open; today the venue's only inhabitants are
             the ally NPCs and the tableau.
-      - [ ] **Displaced arena bots return to the venue** instead of
-            vanishing (`worldHost.ts:353-354`) — still open.
+      - [x] **Displaced arena bots return to the venue** — DONE
+            2026-08-10. The old code said so itself ("displaced bots simply
+            sit out — no lobby idling this sprint"), and the cost was a
+            first impression: the antechamber emptied exactly when humans
+            began arriving. `worldHost` now fires `onBotDisplaced` /
+            `onBotRecalled`; VenueHost re-homes the persona in the lobby
+            with its name and chassis intact, and retires it on recall so
+            the same bot never stands in two rooms. Capped at 6 (the
+            arena's own bot cap). Hooks are OPTIONAL — the arena still runs
+            standalone with no venue attached, which most of the suite and
+            every single-match server depend on.
+            Tested against the REAL VenueHost handlers and a real lobby
+            roster; deleting the handlers fails 5 of 6. A first draft
+            tested a local re-implementation of the same rules and would
+            have passed with production deleted — noted because that is
+            the failure shape this repo keeps hitting.
       - [ ] **One FAQ line owns the policy** — still open.
 - [ ] **3.2 First-session bot ramp** (Smash Karts / Fortnite pattern) —
       a new player's first cycle is bots tuned to lose entertainingly;

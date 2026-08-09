@@ -104,6 +104,11 @@ function venueLobbyMap(): MapDefinition {
  * Fractions of vessel-nexus's map width; "anchor" is the loadout table/
  * totem position itself (unchanged from pre-tableau LOADOUT_X, totem.ts).
  */
+/** Ceiling on displaced bots idling in the venue. Six is the arena's own
+ *  bot cap, so the antechamber can never hold more personas than the fight
+ *  it feeds. */
+const MAX_IDLE_LOBBY_BOTS = 6;
+
 const LOBBY_TABLEAU_FRACTIONS = {
   badOuterLeft: 0.19,
   goodInnerLeft: 0.22,
@@ -274,6 +279,11 @@ export type VenueSummary = {
 
 export class VenueHost {
   private readonly arenaHost: WorldHost;
+  /** Bots currently idling in the venue after being displaced from the
+   *  arena (gospel 3.1). Tracked here rather than inferred from the lobby
+   *  roster so the ally NPCs — which are also `bot_`-prefixed — are never
+   *  mistaken for displaced arena personas and evicted. */
+  private readonly idleBots = new Set<string>();
   /** Eager-created: the venue's front door must never be a null world —
    *  an arriving avatar always lands somewhere (contrast WorldHost's
    *  lazy-boot, which predates the lobby-first landing). */
@@ -398,6 +408,29 @@ export class VenueHost {
     // through bell drains and recycles. admittedRecently: the bell
     // admitted them within the ticket TTL — a socket arriving late (or a
     // held one, at the drain) inserts.
+    // gospel 3.1 — a bot the arena displaces comes and stands in the venue
+    // instead of evaporating, and goes back when the arena wants it. Cap
+    // the idle population so a long series of bells cannot slowly fill the
+    // antechamber with a crowd nobody asked for.
+    this.arenaHost.onBotDisplaced = (playerId, name, characterId) => {
+      if (this.idleBots.size >= MAX_IDLE_LOBBY_BOTS) return;
+      if (this.idleBots.has(playerId as string)) return;
+      this.idleBots.add(playerId as string);
+      this.lobbyHost.addPlayer({
+        playerId,
+        characterId,
+        name,
+        color: LOBBY_ALLY_ACCENT,
+        weaponId: "starter-pistol",
+        cosmetics: { accentColor: LOBBY_ALLY_ACCENT },
+        teamId: LOBBY_PRACTICE_TEAM_ID,
+      });
+    };
+    this.arenaHost.onBotRecalled = (playerId) => {
+      if (!this.idleBots.delete(playerId as string)) return;
+      this.lobbyHost.removeRosterPlayer(playerId);
+    };
+
     this.arenaHost.holdEntrant = (playerId) =>
       this.lobbySockets.has(playerId) && !this.hasAdmission(playerId);
     this.arenaHost.admittedRecently = (playerId) => this.hasAdmission(playerId);
