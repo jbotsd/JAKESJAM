@@ -35,6 +35,8 @@ import {
 } from "./game/highlights/clipConsent";
 import { ShellController } from "./shell/ShellController";
 import { installEmailGate } from "./shell/emailGate";
+// One source of naming — venue-goal Pillar 6.1.
+import { VENUE_CTA, VENUE_TITLE, ARENA_TITLE } from "./venueNames";
 import {
   clearInMatch,
   resumableMatch,
@@ -2210,7 +2212,7 @@ function joinWorld(fastQueue = false): void {
     // trip's second half. Stopping the scene closes the arena socket.
     game.scene.stop(SceneKeys.OnlineMatch);
   }
-  document.title = "JAKESJAM — The Venue";
+  document.title = VENUE_TITLE;
   game.scene.start(SceneKeys.Hangout, {
     mode: "venue",
     localPlayerId: localPlayerId(),
@@ -2232,7 +2234,7 @@ function enterArenaFromVenue(): void {
   emitMatchStarted("world");
   armMatchResume("arena");
   game.scene.stop(SceneKeys.Hangout);
-  document.title = "JAKESJAM — The Arena";
+  document.title = ARENA_TITLE;
   game.scene.start(SceneKeys.OnlineMatch, {
     mode: "world",
     localPlayerId: localPlayerId(),
