@@ -1043,8 +1043,18 @@ Zig (that's E3's conversation) · Steam before N3.
     needs a headful measurement — until then the honest reading is "code
     path is fine, media path is unverified and worth a look", not "the
     gate is failing".
-  - `sim.wasm` is fetched TWICE (0.32 MB each) — small, but free to fix
-    and nobody had noticed.
+  - **`sim.wasm` is fetched TWICE** (0.33 MB each). Diagnosed rather than
+    guessed, and it is NOT the cause the code expects: `loader.ts`'s
+    `instantiate()` fetches once for `instantiateStreaming` and fetches
+    AGAIN on any rejection, with a comment blaming a wrong MIME — but
+    both hosts serve `Content-Type: application/wasm` correctly, so that
+    fallback is not firing. The remaining likely cause is a SECOND module
+    instance with its own `cached` singleton (a worker or a split chunk
+    each loading their own copy), which no amount of caching inside one
+    module can dedupe. Not "free to fix" as first written; the fix is in
+    `client/src/sim/wasm/loader.ts`, inside the E2 freeze. Also note the
+    host sends `Cache-Control: no-cache`, so the second fetch is not
+    free even on a warm browser.
 
 - 2026-08-09 (s) · **Composite L7 sweep — 5/5 viewports clean.** Every UI
   change tonight was checked in isolation and passed; that is not the
