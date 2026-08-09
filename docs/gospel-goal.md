@@ -780,6 +780,39 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (h) · **E2 BLOCKER FOUND AND FIXED: input reached the wrong
+  player under Zig authority** (5ad59c5). This is why the flip had not
+  happened yet, and it was found by reading the input contract for N0.3 —
+  not by any suite, and not by the soak.
+  - `packWorldState` orders players by `id.localeCompare` and writes every
+    player's `current_keys`/`prev_keys` as ZERO, leaving the caller to
+    patch them between pack and `step_world`. Both patchers (server and
+    client) indexed slot `i` by the i-th id of **this tick's input map**.
+    Hosts skip players with no frame, so on any tick where one input is
+    missing — jitter, a bot that didn't think, a mid-join — the subset
+    index stops matching the slot index and one player's keys land in
+    another player's entity.
+  - **Measured, not inferred** (`wasmInputRouting.test.ts`, 400 ticks,
+    inputs for `zzz_last` only): BEFORE — zzz_last moved 0.00 px while
+    aaa_first, holding nothing, moved 1304.65 px. AFTER — exactly
+    inverted (1304.65 / 48.00 idle drift).
+  - wasm-path only; the TS step is keyed by id and does no index math.
+    **Strong candidate for matchHost's own header note** — "live play kept
+    surfacing symptoms under Zig authority that never reproduced under
+    TS" — i.e. the reason the May 2026 flip was reverted. The client case
+    is worse: prediction usually holds a frame for the LOCAL player only,
+    so the local input was written into whichever player sorted first.
+  - **The soak could not have caught it**: its bots submit input every
+    tick, so the subset always equals the full roster and the indices
+    coincide. Real play is precisely where they diverge. Recorded because
+    it is a lesson about the gate, not just about the bug — a green soak
+    is evidence of stability, not of correctness.
+  - **Consequence for the flip:** the 2 h soak now running was started
+    before this fix, so it validated stability on code that differs from
+    HEAD. Stability is not what changed (the fix is an index
+    computation, not the fallback or memory path), but the gate says soak
+    what you flip. Plan: record this run's verdict, then re-soak HEAD
+    before flipping. NOT claiming the gate on stale code.
 - 2026-08-09 (g) · **DOORS PHASE 1 COMPLETE — every row landed; the two
   Decisions are built DARK and waiting on Jake, not on machine work.**
   1.5b (061fb28) was the last: bell taper behind `BELL_TAPER=on`,
