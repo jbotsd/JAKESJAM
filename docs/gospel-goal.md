@@ -35,7 +35,7 @@ Numeric gates (published browser-game bars — Poki/CrazyGames):
 |---|---|---|
 | Conversion-to-play (load → ≥1 min played) | ≥70% (80% = exceptional) | unmeasured; journey has 5 gates + ≥5 clicks before the lobby |
 | URL → first shot fired | <15 s returning / <30 s first visit | ~60–140 s worst case (median bell wait ~50 s); ~15 s best via `?world=1` |
-| Critical-path payload | <10 MB | ~730 KB gzip JS (eager media killed — Phase 0.4) |
+| Critical-path payload | <10 MB | **measured 2026-08-09: 2.93 MB code-only; 12.12 MB with media** (see note) |
 | First kill | <60 s | unguaranteed (default-class player vs mixed bots) |
 | Play-again rate after first cycle | ≥50% | unmeasured; cycle ends in a modal |
 
@@ -1023,6 +1023,28 @@ Zig (that's E3's conversation) · Steam before N3.
 ---
 
 ## STATUS — ground truth, newest first
+
+- 2026-08-09 (t) · **North-star payload row MEASURED — and the answer
+  depends on a question the row never asked.** It read "~730 KB gzip JS
+  (eager media killed — Phase 0.4)", which was a fact about the JS
+  bundle, not about what a visitor downloads.
+  - **Code-only critical path: 2.93 MB** (JS 2.29 MB + sim.wasm ×2 +
+    fonts + CSS), comfortably inside the <10 MB gate. This is what the
+    game needs to be playable.
+  - **With media: 12.12 MB**, over the gate — `splash-loop.mp4` 3.86 MB,
+    `menu-light.m4a` 3.80 MB, `splash-theme.m4a` 0.77 MB.
+  - **NOT a lobby-first regression** — `?splash=1` measures byte-identical
+    12.12 MB, so Doors 1.1 did not undo 0.4. Checked before reporting.
+  - **The instrument is suspect and I am saying so rather than filing a
+    bug.** Headless Chromium appears to fetch `preload="metadata"` media
+    in full; the server is NOT at fault (verified: it answers Range with
+    `206 Partial Content` and `accept-ranges: bytes`, on both the test
+    host and live). A real Chrome may pull far less. Confirming that
+    needs a headful measurement — until then the honest reading is "code
+    path is fine, media path is unverified and worth a look", not "the
+    gate is failing".
+  - `sim.wasm` is fetched TWICE (0.32 MB each) — small, but free to fix
+    and nobody had noticed.
 
 - 2026-08-09 (s) · **Composite L7 sweep — 5/5 viewports clean.** Every UI
   change tonight was checked in isolation and passed; that is not the
