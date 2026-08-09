@@ -21,6 +21,7 @@ import { MatchRegistry } from "./matchRegistry.ts";
 import { WorldHost } from "./worldHost.ts";
 import { VenueHost, VENUE_LOBBY_MATCH_ID } from "./venueHost.ts";
 import type { MatchSocketData } from "./matchHost.ts";
+import { resolveSimAuthority, warnIfAuthorityIsUntracked } from "./simAuthority.ts";
 import { getWasmFallbackTicks } from "./matchHost.ts";
 import { serverWasmHost } from "./serverWasmHost.ts";
 import { PlayerId, type VesselCosmetics } from "@sim/types.ts";
@@ -127,10 +128,10 @@ if (config.wasmPlayer) {
 // permanent lobby to TS even with a hangout-capable sim.wasm loaded. A
 // failed preload still falls back to TS (isReady() stays false), same as
 // before; this only removes the timing coin-flip.
-if (
-  process.env.USE_WASM_STEP_WORLD === "1" ||
-  process.env.USE_WASM_STEP_WORLD === "true"
-) {
+const authorityDecision = resolveSimAuthority();
+warnIfAuthorityIsUntracked(authorityDecision);
+
+if (authorityDecision.authority === "wasm") {
   await serverWasmHost.ready().catch(() => {
     // matchHost's own preload catch already warned; hosts fall back to TS.
   });
@@ -301,11 +302,12 @@ function serveOnPort(port: number) {
           // must not hide (L8). The headless soak polls this; after the
           // flip, so does anyone watching the live host.
           sim: {
-            authority:
-              process.env.USE_WASM_STEP_WORLD === "1" ||
-              process.env.USE_WASM_STEP_WORLD === "true"
-                ? "wasm"
-                : "ts",
+            // Resolved in ONE tracked place (simAuthority.ts) and reported
+            // WITH its provenance — `authority` alone was what let this
+            // host run wasm for ~29h with every check saying otherwise.
+            authority: authorityDecision.authority,
+            authoritySource: authorityDecision.source,
+            authorityFromUntrackedDotenv: authorityDecision.dotenvDeclares,
             wasmReady: serverWasmHost.isReady(),
             wasmFallbackTicks: getWasmFallbackTicks(),
           },

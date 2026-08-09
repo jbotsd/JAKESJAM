@@ -1206,7 +1206,25 @@ Zig (that's E3's conversation) · Steam before N3.
   bot-only running is corroboration. What is wrong is that it happened
   without evidence and cannot be undone by the mechanism built to undo it.
 
-- [ ] **E2-a Make authority explicit and reversible (blocks the flip).**
+- [~] **E2-a Make authority explicit and reversible.** MOSTLY DONE
+      2026-08-09. Landed: `server/src/simAuthority.ts` resolves authority
+      in ONE tracked place with a named `TRACKED_DEFAULT_AUTHORITY`;
+      `/health` now reports `authoritySource` and
+      `authorityFromUntrackedDotenv` alongside the value; the server warns
+      once at boot when an untracked dotenv is supplying it; and
+      `e2-flip.sh` sets the flag explicitly for BOTH modes and refuses to
+      claim success unless `/health` agrees. Verified on this box: the
+      effective authority is UNCHANGED (still wasm) and it now says so —
+      `authorityFromUntrackedDotenv: true`. 9 resolver tests, server
+      383/0 under both authorities.
+      **What is left is a human decision, deliberately not taken:** flip
+      `TRACKED_DEFAULT_AUTHORITY` from "ts" to "wasm" and delete the line
+      from `server/.env.local`. That one-line tracked commit IS the E2
+      ratification — reviewable and revertable, which the dotenv never
+      was. Not fired on silence (L4); the machine evidence is complete but
+      the decision is Jake's.
+
+- [ ] ~~**E2-a (original) Make authority explicit and reversible (blocks the flip).**~~
       Fix the rollback so it actually rolls back (neutralise `.env.local`
       for the launch, or launch from a cwd without it, or have the script
       assert the resulting `/health` `sim.authority` matches the mode it
