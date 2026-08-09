@@ -552,13 +552,24 @@ teaches the loop.
         frames are captured (`*-charge.png`) but distinguishing a tell
         from the construct needs a per-class expectation the doc does not
         yet state.
-- [ ] **4.6 Live killfeed** (small; the ceremony and clips both want it).
-      Data side lands in Zig per D-law. **Staleness-audited 2026-08-09 —
-      still genuinely open**: the only "killfeed" in the client is
-      HudSystem comments citing CS2's killfeed as a STYLE reference for
-      buff-icon stacking. No feed exists and nothing is wired to
-      player-killed events. Checked so the next reader does not re-grep
-      and mistake the comments for an implementation.
+- [~] **4.6 Live killfeed** — BUILT 2026-08-09, live-verification in
+      progress. `client/src/game/ui/killfeed.ts` is a pure model (10
+      tests): unattributed deaths show the victim only, a suicide
+      (killerId === victimId) collapses to the same form rather than
+      rendering "Bram eliminated Bram", executes get their own verb, 5 s
+      TTL, 4-line cap, injected time. Wired in OnlineMatchScene's
+      `handleSimEvents` so it reflects EVENTS rather than whatever the
+      renderer had a rig for, and cleared on round change.
+      Not "data side in Zig" as the old row assumed: `player-killed` is
+      already emitted by the sim, and a feed changes nothing about what
+      happens — only what is shown. L1 puts BEHAVIOUR in the core; this is
+      presentation over an existing event, so it stays client-side.
+      Observability came first because it had to: a line lives ~5 s, so a
+      screenshot can neither prove the feed works nor prove it does not —
+      the first attempt produced exactly that ambiguous frame. Now
+      `__killfeedLines()` returns null when no feed is registered and `[]`
+      when one is showing nothing, which made the state readable
+      immediately.
 - [x] 4.7 — DONE 2026-08-09. `dvh` pairs at all four viewport-sized rules
       (`.app-shell` plus the three panel caps; line numbers in the old
       item were stale). `html.kiosk` deliberately stays `vh` — fixed
