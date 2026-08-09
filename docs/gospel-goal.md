@@ -512,6 +512,25 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       state. The TS bridge keeps its packing path (parity-tested) until
       E3. Acceptance: the N0 harness can *create* a world natively and
       self-play bots without packed-state input.
+      **Scoped 2026-08-09 against the code — half of this already exists:**
+      - EXISTS: `alloc_state`/`state_size`; `world_state_generate_arena`
+        (writes statics + one_way + spawns + arena size + theme for a
+        `gen:N` seed, i.e. the whole map half for generated arenas);
+        `world_state_set_{arena_bounds,arena_size,spawn_points,statics,
+        slopes,launch_pads,target_score,hangout_mode}`;
+        `resolve_player_loadout` / `resolve_player_fire_config`; and class
+        starter bases, which crossed with E1's codegen.
+      - MISSING: the player-entity construction itself (place at spawn,
+        apply class base health/chassis, attach the resolved loadout) —
+        today that is TS's `World.create` packed through the bridge. This
+        is the actual work of 0.5, and it is bounded.
+      - **BLOCKER for 5 of the 10 archived replays:** named maps
+        (boxworks-tower, vessel-nexus, skyseam) are TS data only, so
+        native init cannot build them. 5 replays are `gen:N` seeds and are
+        reachable now. Do the passport on those FIRST and record the split
+        deliberately (L8) rather than reporting a whole-archive pass that
+        silently skipped half — the named-map geometry is N-MAP's
+        remainder, not 0.5's.
 
 ### Interlock lanes (Track E work Track N needs; they land per L1, once)
 
@@ -521,11 +540,17 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       ticks). Simultaneously Doors 3.2's landing site. Required for N2;
       also upgrades the E2 soak (sim-native bots = closer to shipped
       truth).
-- [ ] **N-MAP · Map gen into the core.** Port seeded generation + named
-      maps to `sim/src/map_gen.zig`; the server reads gen output through
-      the bridge instead of generating in TS. Required for N2 offline;
-      kills a class of "browser and desktop disagree about the arena"
-      bugs before it exists.
+- [ ] **N-MAP · Map gen into the core.** **RE-SCOPED 2026-08-09: the
+      generator is ALREADY in Zig.** `sim/src/data/map_gen.zig` (737 lines)
+      has `generateArena(seed)`, `validate`, `world_state_generate_arena`
+      and `gen_arena_geometry` — so every `gen:N` arena is core-native
+      today and the "port the generator" framing was wrong.
+      What actually remains: the NAMED maps (boxworks-tower, vessel-nexus,
+      skyseam, boxworks-practice) are TS data (`client/src/sim/data/*.ts`),
+      so nothing native can construct them. That is what blocks native
+      world-init for 5 of the 10 archived replays and what N2 offline needs
+      for its non-generated arenas. Treat this lane as "named-map data into
+      the core", not "port the generator".
 - [ ] **N-AIM · E4 aim-intent substrate.** Mouse-exact dialect ships
       first; assisted/stick arrive with gamepad. Desktop input feeds the
       same aim contract as browser input or L9 is violated.
