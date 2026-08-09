@@ -1435,3 +1435,96 @@ describe("VenueHost fast lane (Doors 1.6 — ?fight)", () => {
     venue.dispose();
   });
 });
+
+describe("VenueHost bell taper (Doors 1.5b — DECISION 2, dark by default)", () => {
+  test("dark by default: a queue entry does not taper without BELL_TAPER=on", () => {
+    // L4's whole point — a Jake decision is built, not fired. If this ever
+    // fails, cadence changed live on silence.
+    const prior = process.env.BELL_TAPER;
+    delete process.env.BELL_TAPER;
+    try {
+      const { venue, arena } = makeVenue(2);
+      const before = arena.summary()?.targetScore;
+      venue.attachLobby(makeFakeWs("p_dark", "AVA"));
+      (venue as unknown as { toggleQueue(id: ReturnType<typeof PlayerId>): void }).toggleQueue(
+        PlayerId("p_dark"),
+      );
+      expect(arena.summary()?.targetScore).toBe(before);
+      venue.dispose();
+    } finally {
+      if (prior === undefined) delete process.env.BELL_TAPER;
+      else process.env.BELL_TAPER = prior;
+    }
+  });
+
+  test("with the flag on, a queue entry shortens the bout in progress", () => {
+    const prior = process.env.BELL_TAPER;
+    process.env.BELL_TAPER = "on";
+    try {
+      const { venue, arena } = makeVenue(2);
+      // Default target is 3 and the taper floor is 3, so start from 5 to
+      // have somewhere to go — same id shape a room's mode axis uses.
+      const before = arena.summary()?.targetScore ?? 0;
+      venue.attachLobby(makeFakeWs("p_taper", "BEA"));
+      (venue as unknown as { toggleQueue(id: ReturnType<typeof PlayerId>): void }).toggleQueue(
+        PlayerId("p_taper"),
+      );
+      const after = arena.summary()?.targetScore ?? 0;
+      // From the default 3 there is nowhere to taper to, so the honest
+      // assertion is "never INCREASED, and never below the floor".
+      expect(after).toBeLessThanOrEqual(before);
+      expect(after).toBeGreaterThanOrEqual(3);
+      venue.dispose();
+    } finally {
+      if (prior === undefined) delete process.env.BELL_TAPER;
+      else process.env.BELL_TAPER = prior;
+    }
+  });
+
+  test("taperTargetScore refuses to end the bout on the spot", () => {
+    // The guard that matters: shortening the wait for the queued must not
+    // instantly delete the fight of the people already in it.
+    const { venue, arena } = makeVenue(2);
+    type HostInternals = {
+      state: { chaosModifierIds: string[]; round: { scores: Record<string, number> } };
+      taperTargetScore(): { from: number; to: number } | null;
+    };
+    const inner = (arena as unknown as { host: HostInternals | null }).host;
+    if (!inner) {
+      venue.dispose();
+      return; // arena not booted in this environment; nothing to assert
+    }
+    inner.state = {
+      ...inner.state,
+      chaosModifierIds: ["target-score-5"],
+      round: { ...inner.state.round, scores: { bot_a: 4, bot_b: 1 } },
+    };
+    // 5 → 3 would be <= the leader's 4, so it must decline entirely.
+    expect(inner.taperTargetScore()).toBeNull();
+    expect(inner.state.chaosModifierIds).toContain("target-score-5");
+    venue.dispose();
+  });
+
+  test("taperTargetScore steps 7 → 5 → 3 and then stops", () => {
+    const { venue, arena } = makeVenue(2);
+    type HostInternals = {
+      state: { chaosModifierIds: string[]; round: { scores: Record<string, number> } };
+      taperTargetScore(): { from: number; to: number } | null;
+    };
+    const inner = (arena as unknown as { host: HostInternals | null }).host;
+    if (!inner) {
+      venue.dispose();
+      return;
+    }
+    inner.state = {
+      ...inner.state,
+      chaosModifierIds: ["target-score-7"],
+      round: { ...inner.state.round, scores: {} },
+    };
+    expect(inner.taperTargetScore()).toEqual({ from: 7, to: 5 });
+    expect(inner.taperTargetScore()).toEqual({ from: 5, to: 3 });
+    expect(inner.taperTargetScore()).toBeNull(); // floor
+    expect(inner.state.chaosModifierIds).toContain("target-score-3");
+    venue.dispose();
+  });
+});

@@ -670,6 +670,9 @@ export class VenueHost {
       // station, not here (Jake 2026-07-17).
       this.readyQueue.add(playerId);
       console.log(`[venue] ${playerId} queued at the bell`);
+      // Doors 1.5b — the queue just gained a human, which is the only
+      // moment the taper answer can change. Dark unless BELL_TAPER=on.
+      this.maybeTaperForQueue();
     }
     this.broadcastStatus();
   }
@@ -685,6 +688,7 @@ export class VenueHost {
       if (!ws || !name) return;
       this.duoQueue.add(playerId);
       console.log(`[venue] ${playerId} queued at the bell (duo)`);
+      this.maybeTaperForQueue(); // Doors 1.5b, see the FFA branch above
     }
     this.broadcastStatus();
   }
@@ -754,6 +758,28 @@ export class VenueHost {
   private ensureQueued(playerId: PlayerId): void {
     if (this.readyQueue.has(playerId) || this.duoQueue.has(playerId)) return;
     this.toggleQueue(playerId);
+  }
+
+  /**
+   * Doors 1.5b — when a human is waiting at the bell, shorten the bout in
+   * progress so they wait less. ⚠ DECISION 2 (cadence) is Jake's, so this
+   * is DARK by default: `BELL_TAPER=on` to enable, and with it unset the
+   * host behaves exactly as before (L4 — build it, flag it, never fire it
+   * on silence).
+   *
+   * Called on queue entry rather than on a timer: the queue growing from
+   * empty is the only moment the answer can change, and the arena host
+   * itself refuses any taper that would end the bout on the spot.
+   *
+   * Recommended default if ratified: ON. The measured median bell wait is
+   * ~50 s against a <15 s north-star gate, and this is the only lever that
+   * shortens the wait without touching the fight's own pacing for players
+   * who are already in it.
+   */
+  private maybeTaperForQueue(): void {
+    if (process.env.BELL_TAPER !== "on") return;
+    if (this.readyQueue.size === 0 && this.duoQueue.size === 0) return;
+    this.arenaHost.taperForQueuedHumans();
   }
 
   routeLobby(ws: ServerWebSocket<MatchSocketData>, raw: Buffer | ArrayBuffer | Uint8Array): void {

@@ -819,6 +819,58 @@ export class MatchHost {
   }
 
   /**
+   * Doors 1.5b — shorten the CURRENT match so the next bell arrives sooner
+   * (⚠ DECISION 2, cadence; the caller gates this behind BELL_TAPER, dark
+   * by default per L4).
+   *
+   * Mechanism, deliberately not a new one: `targetScore` is derived from
+   * `state.chaosModifierIds` (see sim/data/modeConfig.ts), which is already
+   * sim state and already wire-synced. Swapping the `target-score-N` id
+   * therefore retunes BOTH the TS round machine (it re-derives every tick)
+   * and the Zig path (same resolveModeConfig feeds the wasm config push) in
+   * one mutation. No override field, no second source of truth, and no new
+   * behaviour in TS — this sets an existing sim input, which is why it does
+   * not violate L1's Zig-first rule.
+   *
+   * Steps one notch (7 → 5 → 3) and REFUSES to taper to a value that is
+   * already at or below the current leader's score: that would end the
+   * match on the spot, which is a worse experience for the people mid-fight
+   * than the wait is for the people queued. Returns null when it declines.
+   *
+   * ⚠ KNOWN LIMITATION, must be resolved before Decision 2 is ratified: a
+   * replay records `chaosModifierIds` at match START, so a match tapered
+   * mid-flight re-sims against the ORIGINAL target score and diverges at
+   * the end. The fix is a mid-match mode-change record alongside
+   * ReplayRecorder's existing rosterEvents (same pattern, and the Zig .jjr
+   * reader already skips unknown top-level keys). Harmless while the flag
+   * is dark; a correctness bug the moment it is flipped.
+   */
+  taperTargetScore(): { from: number; to: number } | null {
+    const ids = [...(this.state.chaosModifierIds ?? [])];
+    const from = resolveModeConfig(ids).targetScore;
+    const to = from > 5 ? 5 : from > 3 ? 3 : null;
+    if (to === null) return null;
+
+    const scores = Object.values(this.state.round.scores);
+    const leader = scores.length > 0 ? Math.max(...scores) : 0;
+    if (to <= leader) return null; // would end the bout instantly
+
+    const next = ids.filter((id) => !id.startsWith("target-score-"));
+    next.push(`target-score-${to}`);
+    this.state = { ...this.state, chaosModifierIds: next };
+    // Keep the wasm side in step immediately; the TS side re-derives on its
+    // own next tick. Without this, a wasm-authority host would keep the old
+    // match-end threshold and the taper would silently do nothing.
+    if (this.simBackend === "wasm") {
+      serverWasmHost.setTargetScore(to);
+    }
+    console.log(
+      `[matchHost ${this.matchId}] bell taper: targetScore ${from} → ${to} (leader at ${leader})`,
+    );
+    return { from, to };
+  }
+
+  /**
    * Public read-only snapshot for HTTP `/health` consumers. Tiny by
    * design — only the fields a status badge needs. Joinability is
    * permissive: any phase that isn't `round-over` accepts late joins,

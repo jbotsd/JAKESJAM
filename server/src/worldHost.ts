@@ -743,6 +743,16 @@ export class WorldHost {
     return this.host ? this.host.summary() : null;
   }
 
+  /** Doors 1.5b pass-through — the venue asks the arena to shorten the bout
+   *  in progress because humans are queued for the next bell. No-op when
+   *  the arena hasn't booted (nothing to shorten) and when MatchHost
+   *  declines (see `taperTargetScore`: it refuses any taper that would end
+   *  the bout on the spot). Returns whether anything actually changed, so a
+   *  caller can log or assert on it rather than assuming. */
+  taperForQueuedHumans(): boolean {
+    return this.host?.taperTargetScore() != null;
+  }
+
   /** Server-tick perf instrument pass-through (2026-07-27 lag/perf audit) —
    *  same null-when-unbooted shape as `summary()` above. `null` reads as
    *  "no data yet", not "zero cost". */
