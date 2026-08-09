@@ -501,6 +501,18 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       emit the existing state hash every N ticks (default 60).
       Full-match step of the largest replay (21.9 MB) completes;
       wall-clock recorded as the first native bench number.
+      **Sequencing win found 2026-08-09 — 0.3/0.4 do NOT have to wait for
+      0.5 or for named maps.** The passport compares native vs wasm on the
+      same input stream; it does not care who BUILT the starting world. The
+      TS side already packs a full `WorldState` for the wasm path
+      (`worldStateBridge.packWorldState`), so a small Bun tool can dump the
+      initial packed state beside a `.jjr` and the native harness can load
+      it and step from there. That makes the passport reachable for all 10
+      archived replays now, and demotes 0.5 from a blocker to a cleanliness
+      item (shells should not hand the sim a world — but the passport can
+      prove bit-identity before that is true). Cost: the native harness
+      must write per-tick inputs exactly as `serverWasmHost.step` does, so
+      that path is the thing to get right, not world construction.
 - [ ] **0.4 Cross-check gate.** Same hash cadence from the wasm path
       (reuse the parity harness); comparator runs both over every
       archived replay. **Bit-identical across all replays**, comparator
