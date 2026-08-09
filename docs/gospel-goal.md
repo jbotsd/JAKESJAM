@@ -773,7 +773,30 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
         tests DO run inside `zig build test` (172/172).
       - Default 3000 ticks/replay (crosses a round boundary + first draft);
         `--ticks 0` for full length before a toolchain jump.
-- [ ] **0.5 Native world-init.** `world_init(seed, map_id, roster)` in
+- [~] **0.5 Native world-init.** THE MISSING HALF IS BUILT (2026-08-09).
+      `world_init_player` + `world_init_roster` land the player-entity
+      construction the scoping note identified as "the actual work":
+      spawn placement (wrapping when the roster outruns the spawns), class
+      chassis base health, alive flag, cleared buff windows, and a defined
+      facing. Acceptance is met for generated arenas — smoke.zig builds a
+      roster through the exports ALONE, with no packed state, and steps it
+      30 ticks with gravity moving the rig, which is the "create and
+      self-play without packed-state input" bar.
+      Two things worth keeping from the build:
+      - the first version set only the counters it knew about, and
+        `step_world` panicked on `index 2863311530` (0xAAAAAAAA — Zig's
+        undefined fill) from garbage destructible/pickup counters. An init
+        that leaves ANY field undefined has not created a world, and the
+        failure surfaces nowhere near its cause. It now zeroes the whole
+        WorldState first.
+      - `docs/zig-wasm-exports.md` has a sync test, and it caught the two
+        undocumented exports immediately. Good instrument; left as found.
+      STILL OPEN, unchanged: named maps (boxworks-tower, vessel-nexus,
+      skyseam) are TS data, so native init reaches only the 5 `gen:N`
+      replays — N-MAP's job, and the passport must report that split
+      rather than a whole-archive pass.
+      (original scoping note below)
+- [ ] ~~**0.5 Native world-init.**~~ `world_init(seed, map_id, roster)` in
       the core (exported to wasm too) so shells stop hand-packing initial
       state. The TS bridge keeps its packing path (parity-tested) until
       E3. Acceptance: the N0 harness can *create* a world natively and

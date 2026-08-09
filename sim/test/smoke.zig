@@ -5273,3 +5273,78 @@ test "homing: homing_strength overrides the default turn rate (a stronger shard 
     try std.testing.expect(default_vy > 0.0);
     try std.testing.expect(strong_vy > default_vy);
 }
+
+// ─── N0.5 · native world init ────────────────────────────────────────────
+//
+// Acceptance for the row is "the harness can CREATE a world natively and
+// self-play bots without packed-state input", so these tests build a world
+// through the new exports only — no TS, no packed state — and then step it.
+
+test "world_init_roster: builds a steppable roster with no packed state" {
+    var state: root.world_state.WorldState = undefined;
+    const spawns = [_]f64{ 100, 200, 300, 200, 500, 200 };
+    _ = root.world.world_state_set_spawn_points(&spawns, 3);
+
+    const archetypes = [_]u8{ 0, 1, 2, 3 };
+    const n = root.world.world_init_roster(&state, &archetypes, 4, 12345);
+    try std.testing.expectEqual(@as(u32, 4), n);
+    try std.testing.expectEqual(@as(u32, 4), state.player_count);
+
+    // Chassis bases, straight from the row's own parity note.
+    try std.testing.expectEqual(@as(f64, 100), state.players[0].health); // balanced
+    try std.testing.expectEqual(@as(f64, 125), state.players[1].health); // heavy
+    try std.testing.expectEqual(@as(f64, 85), state.players[2].health); // sprinter
+    try std.testing.expectEqual(@as(f64, 100), state.players[3].health); // shielded
+
+    // Placed on the map's spawns, wrapping when the roster outruns them.
+    try std.testing.expectEqual(@as(f64, 100), state.players[0].x);
+    try std.testing.expectEqual(@as(f64, 300), state.players[1].x);
+    try std.testing.expectEqual(@as(f64, 500), state.players[2].x);
+    try std.testing.expectEqual(@as(f64, 100), state.players[3].x); // wrapped
+
+    for (0..4) |i| {
+        try std.testing.expect(state.players[i].flags.alive);
+        // Aim must not be (0,0) — that points the whole roster at the
+        // arena's top-left corner on frame one.
+        try std.testing.expect(state.players[i].aim_x > state.players[i].x);
+    }
+}
+
+test "world_init_roster: rng seed is never zero (xorshift fixed point)" {
+    var state: root.world_state.WorldState = undefined;
+    const archetypes = [_]u8{0};
+    _ = root.world.world_init_roster(&state, &archetypes, 1, 0);
+    // Vacuity guard on the guard: a zero seed would make every subsequent
+    // random draw return zero forever, which reads as "deterministic" and
+    // is actually "broken".
+    try std.testing.expect(state.header.rng_state != 0);
+}
+
+test "world_init_player: an out-of-range archetype clamps instead of UB" {
+    var state: root.world_state.WorldState = undefined;
+    root.world.world_init_player(&state, 0, 200, 0);
+    try std.testing.expectEqual(
+        root.world_state.CharacterArchetype.balanced,
+        state.players[0].character_id,
+    );
+    try std.testing.expectEqual(@as(f64, 100), state.players[0].health);
+}
+
+test "world_init_roster: the built world actually STEPS (the acceptance bar)" {
+    var state: root.world_state.WorldState = undefined;
+    const spawns = [_]f64{ 100, 0, 400, 0 };
+    _ = root.world.world_state_set_spawn_points(&spawns, 2);
+    const archetypes = [_]u8{ 0, 1 };
+    _ = root.world.world_init_roster(&state, &archetypes, 2, 777);
+    state.header.round_phase = @intFromEnum(root.world_state.RoundPhase.fighting);
+
+    const before_y = state.players[0].y;
+    var i: usize = 0;
+    while (i < 30) : (i += 1) {
+        _ = root.world.step_world(&state, 1000.0 / 60.0);
+    }
+    // Gravity is the cheapest proof the sim genuinely ran on this state
+    // rather than the call being a no-op on an unrecognised world.
+    try std.testing.expect(state.players[0].y != before_y);
+    try std.testing.expectEqual(@as(u32, 30), state.header.tick);
+}

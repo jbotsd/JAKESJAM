@@ -8203,3 +8203,140 @@ pub export fn world_apply_card_pick(
 pub export fn world_draft_roll_offers(state_ptr: *world_state.WorldState) void {
     draft.rollOffersForRound(state_ptr);
 }
+
+// ─── N0.5 · Native world init ────────────────────────────────────────────
+//
+// The half of `world_init(seed, map_id, roster)` that did not exist: PLAYER
+// CONSTRUCTION. The map half already ships (`world_state_generate_arena`
+// writes statics/one-ways/spawns/size/theme for a `gen:N` seed, and the
+// `world_state_set_*` family covers the rest), and loadout resolution ships
+// (`resolve_player_loadout`). What was missing is the step between them —
+// place a player at a spawn, give it the class chassis base, mark it alive
+// — which today only exists as TS `World.create` packed through the bridge.
+//
+// SCOPE, stated rather than discovered later (L8): this builds players onto
+// a world whose MAP has already been established. It does not build named
+// maps (boxworks-tower, vessel-nexus, skyseam) — those are TS data and are
+// N-MAP's job — so a native harness can create and self-play `gen:N` worlds
+// only. That is 5 of the 10 archived replays, and the passport should
+// report the split rather than a whole-archive pass that skipped half.
+
+/// Reset a player slot to a clean, alive, spawned state.
+///
+/// Mirrors TS `World.create`'s per-player construction: position from the
+/// map's spawn list (index cycles, matching the TS behaviour of wrapping
+/// when there are more players than spawns), class chassis base health,
+/// aim pointing right-of-centre so a player that never sends input still
+/// has a defined facing, and every buff/debuff window cleared.
+///
+/// Loadout is NOT resolved here — call `resolve_player_loadout` after, the
+/// same order the TS path uses, so card-driven stats stay in exactly one
+/// place.
+pub export fn world_init_player(
+    state_ptr: *world_state.WorldState,
+    player_index: u32,
+    archetype_raw: u8,
+    spawn_index: u32,
+) void {
+    if (player_index >= world_state.MAX_PLAYERS) return;
+    const archetype: world_state.CharacterArchetype = @enumFromInt(
+        // Out-of-range archetypes clamp to `balanced` rather than causing
+        // illegal-enum UB: a host that sends garbage should get a playable
+        // default, not a crash in the sim.
+        if (archetype_raw <= @intFromEnum(world_state.CharacterArchetype.shielded)) archetype_raw else 0,
+    );
+
+    const p = &state_ptr.players[player_index];
+    p.* = .{
+        .x = 0,
+        .y = 0,
+        .vx = 0,
+        .vy = 0,
+        .aim_x = 0,
+        .aim_y = 0,
+        .health = baseMaxHealthForArchetype(archetype),
+        .fire_cooldown_ms = 0,
+        .ammo = 0,
+        .ability_charge = 0,
+        .jetpack_fuel = 0,
+        .shield_charge = 0,
+        .shield_max_charge = 0,
+        .parry_facing = 1,
+        .burn_dps = 0,
+        .slow_multiplier = 1,
+        .freeze_multiplier = 1,
+        .slowed_until_tick = 0,
+        .burn_until_tick = 0,
+        .burn_tick_last_applied = 0,
+        .freeze_until_tick = 0,
+        .parry_active_until_tick = 0,
+        .parry_cooldown_until_tick = 0,
+        .overcharge_until_tick = 0,
+        .damage_amp_until_tick = 0,
+        .speed_boost_until_tick = 0,
+        .melee_mode_until_tick = 0,
+        .slow_debuff_until_tick = 0,
+        .vulnerability_until_tick = 0,
+        .block_jammer_until_tick = 0,
+        .boss_mode_until_tick = 0,
+        .last_processed_input_seq = 0,
+        .flags = std.mem.zeroes(world_state.PlayerFlags),
+        .character_id = archetype,
+        .card_count = 0,
+        .id_len = 0,
+        .weapon_id_len = 0,
+        .current_keys = 0,
+        .prev_keys = 0,
+        .score = 0,
+    };
+    p.flags.alive = true;
+
+    if (g_spawn_point_count > 0) {
+        const idx = spawn_index % g_spawn_point_count;
+        p.x = g_spawn_points_x[idx];
+        p.y = g_spawn_points_y[idx];
+    }
+    // Facing right by default — an unset aim of (0,0) would point every
+    // player at the arena's top-left corner, which shows up as a whole
+    // roster aiming the same impossible direction on frame one.
+    p.aim_x = p.x + 100;
+    p.aim_y = p.y;
+}
+
+/// Build a whole roster natively: `count` players, archetypes read from a
+/// byte array, spawns assigned in order.
+///
+/// Sets `player_count` and zeroes the tick/entity counters so the result is
+/// a world a shell can step immediately — which is the N0.5 acceptance
+/// bar ("create a world natively and self-play bots without packed-state
+/// input"). `seed` seeds the header RNG; pass the same value the map
+/// generator got for a reproducible world.
+pub export fn world_init_roster(
+    state_ptr: *world_state.WorldState,
+    archetypes_ptr: [*]const u8,
+    count: u32,
+    seed: u32,
+) u32 {
+    // Zero the WHOLE state first. Setting only the counters this function
+    // knows about is not enough: the first version did exactly that and
+    // step_world panicked on `index 2863311530` — 0xAAAAAAAA, Zig's
+    // undefined fill — because destructible/pickup/paper-double counters
+    // were still garbage from the caller's uninitialised buffer. An init
+    // that leaves ANY field undefined has not created a world, and the
+    // failure surfaces as an out-of-bounds deep inside the step rather
+    // than anywhere near here.
+    state_ptr.* = std.mem.zeroes(world_state.WorldState);
+
+    const clamped = @min(count, @as(u32, @intCast(world_state.MAX_PLAYERS)));
+    var i: u32 = 0;
+    while (i < clamped) : (i += 1) {
+        world_init_player(state_ptr, i, archetypes_ptr[i], i);
+    }
+    state_ptr.player_count = clamped;
+    state_ptr.header.tick = 0;
+    // Never seed the RNG with 0: the xorshift generator is a fixed point at
+    // zero and would return 0 forever, silently removing all randomness.
+    state_ptr.header.rng_state = if (seed == 0) 1 else seed;
+    state_ptr.header.next_entity_id = 1;
+    return clamped;
+}
