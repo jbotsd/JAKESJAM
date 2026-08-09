@@ -137,12 +137,19 @@ Sequencing, items, acceptance: `open-doors-goal.md`. Two amendments:
 
 Strictly after E2; N0 may start once E1 is merged.
 
+**Item detail now lives in `native-desktop-goal.md` (2026-08-09)** —
+authoritative for N phases, laws NL0-NL6, interlock lanes (N-BOT,
+N-MAP, N-AIM), meters, and acceptance, the same way open-doors-goal.md
+is authoritative for Track D. The N0-N4 summaries below stay as the
+orchestration view.
+
 - **N0 · Native harness.** `sim` compiles native (x86_64 first) behind a
   tiny CLI: step a `.jjr` replay headless, emit state hashes;
   cross-check = the same hashes as the wasm path. This is the port
   passport — and the fastest possible sim test loop as a bonus.
-- **N1 · Shell spike + decision.** Renderer/window/input/audio lib pick
-  (sokol vs SDL3 vs raylib) as a documented decision with a spike each;
+- **N1 · Shell — DECIDED 2026-08-09: raylib** (ADR-0008; SDL3 is the
+  named fallback with recorded switch triggers). One confirmation spike
+  remains, not three;
   netcode = plain threads + nonblocking sockets (research verdict: do NOT
   build on std.Io async — only Io.Threaded is production-grade, evented
   backends can't do sockets yet; do NOT trust 0.15/0.16 std TLS for
@@ -180,7 +187,23 @@ position (1.2), bell taper (1.5), announcer (4.3), board persistence.
 
 ## STATUS — ground truth, newest first
 
-- 2026-08-05 (e) · **Wave 2 merged — E1 COMPLETE, Doors 1.3/1.4/1.5a
+- 2026-08-09 (b) · **N1 shell DECIDED: raylib** (ADR-0008, SDL3 named
+  fallback + switch triggers; reverses a same-day SDL3 recommendation
+  on two withdrawn premises). Three spikes → one confirmation spike.
+  Full reasoning in the ADR and native-desktop-goal Status.
+- 2026-08-09 · **Track N expanded into `native-desktop-goal.md`**
+  (authoritative for N detail; this doc keeps orchestration). Session
+  soak re-verified ground truth: E2 still UNFLIPPED on the live host
+  (`USE_WASM_STEP_WORLD` absent from the running :8088 server's env —
+  the 07-31 replays' backend=wasm lines were the client swap-module
+  layer, caveat from 08-05 (d) resolved); hosts healthy, bot-only
+  since 07-31, zero commits since wave 2. Port-surface audit measured:
+  54,392-line Phaser shell / 914-line bot brain / 486-line map gen /
+  177-line delta codec core; `.jjr` = input-stream+seed (N0 needs no
+  format work). L8 finding (Track P, fix queued): warehouse report.ts
+  counts 20 `@example.com` test rows as "email signups" — real count
+  ~0-1. Next-weakest unchanged: E2 headless soak → flip; N0 is
+  unblocked and parallel-safe (L5).
   live.** Six lanes, one smoke.zig EOF-append conflict (resolved
   base+both-tails), full gates green post-merge: zig 142/142, client
   1949/0 (128k asserts), server 349/0 both authority modes, typechecks
