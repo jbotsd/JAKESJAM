@@ -1,0 +1,81 @@
+[PROMPT SESSION — SHORTS VO — paste this whole file into prompt_ at localhost:7777]
+[Keys: V mic on · SPACE run/pause · up/down WPM · R rewind · E cut best take · L back]
+[Bracketed lines are cues. They are dimmed and they do NOT count toward timing.]
+[Start around 105 WPM. These are punchy reads, not narration. Land the bold line, then breathe.]
+
+[ROOM TONE — press SPACE to run, then say NOTHING for five seconds. Do not skip this.]
+[It is how the noise floor gets subtracted later. Five seconds of your actual room is worth more than any plugin.]
+
+[BLOCK 1 — IT'S HERE — pairs with S1-double-browser]
+[Hit the first line hard. It is the only line in the whole session that gets the announcer chain.]
+JAKESJAM is live.
+Four classes. One arena. Zero downloads.
+It runs in a browser tab.
+That's it. That's the pitch.
+
+[BLOCK 2 — THE BUILD — pairs with S5-no-download or any late-round clip]
+[Dry. Almost bored. The joke is the escalation, so do not sell it.]
+This gun started polite.
+Every card you grab mutates it.
+Homing. Bouncing. Splitting.
+Ten picks later it is a war crime.
+Come build yours.
+
+[BLOCK 3 — THE BOTS — pairs with S3-bots-fight]
+[Slightly defensive, like you are answering an accusation.]
+Everyone assumes the bots are furniture.
+These ones dodge. These ones parry.
+These ones will absolutely embarrass you on a staircase.
+Go find out.
+
+[BLOCK 4 — NO DOWNLOAD — pairs with S5-no-download]
+[Flat, factual, fast. This is the objection-killer. Rhythm matters more than warmth.]
+No install.
+No launcher.
+No forty-gig download.
+No account.
+You click a link and you are in the arena.
+
+[BLOCK 5 — 1V1 ME — pairs with S2-spire]
+[Conspiratorial. You are handing them a weapon.]
+Somebody in your chat says "1v1 me"?
+This is where you take them.
+One link. No download. No excuses.
+And one of you is about to eat a parried rocket.
+JAKESJAM. The ultimate 1v1-me destination.
+
+[BLOCK 6 — THE HONEST ONE — pairs with S4-waitforit]
+[Deadpan. Do not smile. The bleakness IS the joke.]
+Players online right now: one.
+Me.
+It is ten-player arena chaos in your browser
+and I am so alone in here.
+Fix this.
+
+[BLOCK 7 — FIGHT ME]
+[Straight to camera energy even though this is audio. Say it like a threat you regret.]
+We built a game at our own game jam,
+and I will personally shoot you in it.
+Come make me regret this.
+
+[CTA — record this SIX times, back to back, varying nothing but energy.]
+[One of these goes on the end of every single short, so it has to be the cleanest thing on the tape.]
+Plays in your browser. Link in bio.
+Plays in your browser. Link in bio.
+Plays in your browser. Link in bio.
+Plays in your browser. Link in bio.
+Plays in your browser. Link in bio.
+Plays in your browser. Link in bio.
+
+[OPTIONAL — DO NOT RECORD UNTIL THE CLAIM IS TRUE]
+[Fight Night: only read this if the Friday stream is actually running this week.]
+[Every Friday night the server goes live, the stream goes live,]
+[and everyone on the list gets the arena link.]
+
+[OPTIONAL — DO NOT RECORD UNTIL MEASURED]
+[The old scripts said "eight seconds". gospel-goal.md line 37 measures URL to first shot]
+[at 60 to 140 seconds worst case, median bell wait about 50 seconds, ~15s best via ?world=1.]
+[When that number is real, this line goes back in and it is a great line. Not yet.]
+[From this link to shooting geometry: eight seconds.]
+
+[END — hit E to cut the best take per line, then check ~/Downloads for prompt-take-<timestamp>.wav]
