@@ -413,8 +413,20 @@ teaches the loop.
   flag in `step_world` (TS-only PvP-immunity pin lifted, both hosts).
 - **E1-residual · new items surfaced by wave 2** (small, land with E2 or
   just after):
-  - `world.zig` homing-at-integration passes empty player arrays —
-    homing never turns under wasm; reachable now via priest tendrils.
+  - [x] homing-at-integration — **FIXED 2026-08-09 (1f3e204)**.
+    `findHomingTargetIdx` mirrors `closestNonOwnerPlayer`; the turn
+    applies before integration (TS's own ordering), so stepV2's own
+    branch still finds nothing and cannot double-turn. zig 170/170,
+    TS↔wasm parity 343/0 (48,754 asserts), server 363/0 under strict
+    wasm. **Two named leftovers, recorded at the call site:** the Veil
+    of Nought skip is a no-op only because the veil ACTIVE is itself
+    unported (`.veil_of_nought => {}`) — whoever ports the veil MUST add
+    the skip in the same commit or homing silently tracks through it;
+    and Priest tendril platform avoidance still needs a static spatial
+    grid inside `step_world` (`spatial.queryGrid` exists, nothing builds
+    the grid on this path) reusing the SAME candidate order or the
+    nearest-surface tie-break diverges. Tendrils now home but do not yet
+    dodge terrain — a smaller, named divergence than not homing at all.
   - Hangout dummy melee/edge-arc alternates unported (per-swing dedupe
     is the blocker).
   - Zero-damage cosmetic hit-confirm events dropped on the wasm hangout
