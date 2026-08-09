@@ -408,9 +408,18 @@ teaches the loop.
         that fires exactly when a dummy is hit — and it never ran:
         measured a dummy going 60 → 48 with the hint still up. Watching
         the health sum cannot miss a hit that actually happened.
-      - Still open: first-storm / first-cycle-end lines; class verbs on
-        first pick. A re-summonable legend is now polish rather than a
-        gap — Settings covers the need.
+      Fourth slice DONE: **the first-storm line**. "THE RING IS CLOSING /
+      OUTSIDE IT YOU BURN", once ever, warm-toned rather than the
+      legend's cyan because it is a warning and not a lesson. Fired on
+      the ring becoming ACTIVE, not on the player being caught outside
+      it — by the time it is hurting you an explanation is a post-mortem;
+      the useful moment is while you still have somewhere to run.
+      - **first-cycle-end is already covered** by 2.3's strip ("FIRST
+        CYCLE — you finished one"), so that half of the row was closed by
+        a different item rather than needing its own line.
+      - Still open: class verbs taught on first pick of that class. A
+        re-summonable legend is polish rather than a gap now that
+        Settings carries the reference.
       Original item: onboarding by encounter (ui-axioms bans modal tutorials) —
       the lobby teaches movement/fire via ghosted glyphs over the
       dummies; the FTUE legend becomes re-summonable (today: once ever

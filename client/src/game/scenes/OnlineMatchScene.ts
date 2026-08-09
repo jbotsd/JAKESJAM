@@ -446,6 +446,9 @@ export class OnlineMatchScene extends Phaser.Scene {
   private matchResultsOverlay?: MatchResultsOverlay;
   /** Doors 2.3 — set when a kill streak beat the stored personal best
    *  during THIS cycle. Read once at the results screen. */
+  /** Doors 3.3 — per-scene guard so the storm line's localStorage read
+   *  happens once, not every frame the ring is up. */
+  private firstStormShown = false;
   private cycleBeatStreak = false;
   private cycleBestStreak = 0;
   private matchHasEnded = false;
@@ -893,6 +896,56 @@ export class OnlineMatchScene extends Phaser.Scene {
    * one-shot, the line waits for the first recorded one). localStorage-gated
    * to once ever, mirroring setupFtueLegend's key discipline.
    */
+  /**
+   * One-shot line the first time the storm ever closes on this player
+   * (Doors 3.3 — "first-storm gets an FTUE line like the first-draft
+   * one"). Same key discipline as the legend and the clip disclosure:
+   * once ever, then never again.
+   *
+   * Deliberately fired on the storm being ACTIVE rather than on the
+   * player being caught outside it: by the time it is hurting you, an
+   * explanation is a post-mortem. The useful moment is when the ring
+   * appears and you still have somewhere to run.
+   */
+  private maybeShowFirstStormLine(): void {
+    if (this.firstStormShown) return;
+    this.firstStormShown = true;
+    const KEY = "jakesjam-ftue-storm-shown";
+    try {
+      if (localStorage.getItem(KEY) === "1") return;
+      localStorage.setItem(KEY, "1");
+    } catch {
+      // Storage unavailable — show it every match rather than never.
+    }
+    // Two short lines for the same reason the clip disclosure uses two:
+    // one line of this copy is wider than a 393px viewport at 14px mono.
+    const lines = ["THE RING IS CLOSING", "OUTSIDE IT YOU BURN"];
+    const LIFE_MS = 7_000;
+    const text = this.add
+      .text(uiWidth(this) - 20, this.touchControls ? 112 : 48, lines.join("\n"), {
+        color: "#ffd7a8", // warm, unlike the legend's cyan: this one is a WARNING
+        fontFamily: "'Space Mono', 'Courier New', monospace",
+        fontSize: "14px",
+        align: "right",
+        backgroundColor: "rgba(24,10,5,0.55)",
+        padding: { left: 10, right: 10, top: 8, bottom: 8 },
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(2000)
+      .setAlpha(0);
+    this.tweens.add({ targets: text, alpha: 1, duration: 240, ease: "Cubic.easeOut" });
+    this.time.delayedCall(LIFE_MS, () => {
+      this.tweens.add({
+        targets: text,
+        alpha: 0,
+        duration: 400,
+        ease: "Cubic.easeIn",
+        onComplete: () => text.destroy(),
+      });
+    });
+  }
+
   private setupClipDisclosure(slot: { nextLineY: number; nextLineDelayMs: number }): void {
     if (!isClipsEnabled()) return;
     const DISCLOSED_KEY = "jakesjam-ftue-clips-disclosed";
@@ -1233,6 +1286,11 @@ export class OnlineMatchScene extends Phaser.Scene {
       const dy = local.y - this.stormZoneModel.centerY;
       outsideStorm = dx * dx + dy * dy > this.stormZoneModel.radius * this.stormZoneModel.radius;
     }
+
+    // Doors 3.3 — the storm is the one mechanic that starts hurting you
+    // with no input of your own, so it is the one that most deserves a
+    // word the first time it happens.
+    if (this.stormZoneModel.active) this.maybeShowFirstStormLine();
 
     const vitals: HudVitals = {
       health: local?.health ?? 0,
