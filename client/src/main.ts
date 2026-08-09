@@ -35,6 +35,12 @@ import {
 } from "./game/highlights/clipConsent";
 import { ShellController } from "./shell/ShellController";
 import { installEmailGate } from "./shell/emailGate";
+import {
+  clearInMatch,
+  resumableMatch,
+  startResumeHeartbeat,
+  type MatchPlace,
+} from "./shell/matchResume";
 import { installIdentShader, loadIdentStems, type IdentStems, type IdentStemName } from "./shell/identShader";
 import { getAudioUrl } from "./game/audio/audioUrl";
 import {
@@ -2140,6 +2146,7 @@ function joinWorld(): void {
   startVenueMusic();
   silenceAnnouncer(); // cut the diatribe if it's mid-flight
   requestGameFullscreen();
+  armMatchResume("venue");
   // Bare `?world=1` auto-joins with no gesture (fullscreen rejects) — the
   // first in-match touch retries once.
   window.addEventListener("pointerdown", () => requestGameFullscreen(), {
@@ -2172,6 +2179,7 @@ function enterArenaFromVenue(): void {
   startWorldMusic();
   announce("welcome");
   emitMatchStarted("world");
+  armMatchResume("arena");
   game.scene.stop(SceneKeys.Hangout);
   document.title = "JAKESJAM — The Arena";
   game.scene.start(SceneKeys.OnlineMatch, {
@@ -2205,11 +2213,50 @@ function leaveMatchToHome(): void {
   shell.goto("home");
   showMatchChrome(false);
   startMenuMusic();
+  // Doors 1.7 — leaving is a DECISION. Never resume someone back into a
+  // fight they chose to walk out of.
+  disarmMatchResume();
+}
+
+/**
+ * Doors 1.7 — keep the resume marker fresh for as long as this surface is
+ * live, and drop the previous surface's heartbeat. One at a time: entering
+ * the arena from the venue replaces "venue" with "arena".
+ */
+let stopMatchResumeHeartbeat: (() => void) | null = null;
+function armMatchResume(place: MatchPlace): void {
+  stopMatchResumeHeartbeat?.();
+  stopMatchResumeHeartbeat = startResumeHeartbeat(place);
+}
+function disarmMatchResume(): void {
+  stopMatchResumeHeartbeat?.();
+  stopMatchResumeHeartbeat = null;
+  clearInMatch();
 }
 
 // Auto-join Hot Lobby when the URL says so (`?world=1` / `/world`).
 const urlParams = new URLSearchParams(window.location.search);
-if (urlParams.get("replay")) {
+// Doors 1.7 — a reload mid-match used to land on the splash and forfeit
+// the run: the server's 10 s reconnect grace was real but unreachable,
+// because nothing on the boot path ever tried to use it. The player id
+// already survives a reload (localStorage base + sessionStorage suffix),
+// so all that was missing was intent. Checked BEFORE the URL branches: a
+// live match outranks whatever deep link the address bar still holds,
+// and `?replay` is the one exception (an explicit render request).
+const resumePlace = urlParams.get("replay") ? null : resumableMatch();
+if (resumePlace) {
+  setTimeout(() => {
+    if (resumePlace === "arena") {
+      // Straight back into the fight. If the grace HAS expired the server
+      // admits them as a pending entrant and Doors 1.4 shows "YOU'RE IN /
+      // NEXT BELL" — never a false ELIMINATED — so a late resume degrades
+      // honestly instead of lying about a run that ended.
+      enterArenaFromVenue();
+    } else {
+      joinWorld();
+    }
+  }, 0);
+} else if (urlParams.get("replay")) {
   // Replay playback / offline render (ReplayScene) — no netcode, no lobby.
   shell.goto("home");
   document.title = "JAKESJAM — Replay";
@@ -2234,6 +2281,7 @@ if (urlParams.get("replay")) {
 window.addEventListener("jakesjam:back-to-splash", () => {
   shell.goto("home");
   startMenuMusic();
+  disarmMatchResume(); // Doors 1.7 — deliberate exit, see returnToMenu
 });
 
 // Tab title reflects which room the player is in (item 9).
