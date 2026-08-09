@@ -353,9 +353,11 @@ the sim-side halves land in Zig.
       - Still open: per-ROUND surfacing (no client round-end signal
         exists yet) and class-scoped records ("first win as
         Geometrician") — both need 2.1's run record. Recorded, not faked.
-- [ ] **2.4 Pillar 2/3 residuals** — lobby presence floor (see 3.1),
-      orphan-ceremony regression test, the unmeasured dummy-hit-<8 s
-      half of venue 2.5, ready-totem linger debounce.
+- [~] **2.4 Pillar 2/3 residuals** — audited row by row 2026-08-09:
+      - [x] orphan-ceremony regression test — DONE (f64661b).
+      - [ ] lobby presence floor — genuinely open, see 3.1 (frozen path).
+      - [ ] the unmeasured dummy-hit-<8 s half of venue 2.5 — open.
+      - [ ] ready-totem linger debounce — open.
 
 ### Phase 3 — ALIVE AND UNDERSTANDABLE (empty room + onboarding)
 
@@ -494,7 +496,12 @@ teaches the loop.
         from the construct needs a per-class expectation the doc does not
         yet state.
 - [ ] **4.6 Live killfeed** (small; the ceremony and clips both want it).
-      Data side lands in Zig per D-law.
+      Data side lands in Zig per D-law. **Staleness-audited 2026-08-09 —
+      still genuinely open**: the only "killfeed" in the client is
+      HudSystem comments citing CS2's killfeed as a STYLE reference for
+      buff-icon stacking. No feed exists and nothing is wired to
+      player-killed events. Checked so the next reader does not re-grep
+      and mistake the comments for an implementation.
 - [x] 4.7 — DONE 2026-08-09. `dvh` pairs at all four viewport-sized rules
       (`.app-shell` plus the three panel caps; line numbers in the old
       item were stale). `html.kiosk` deliberately stays `vh` — fixed
