@@ -379,11 +379,28 @@ The arena is genuinely alive (4 bots fighting before anyone arrives). The
 lobby — the mandatory antechamber — is genuinely dead, and nothing
 teaches the loop.
 
-- [ ] **3.1 Lobby presence floor** — persona bots idle in the venue;
-      displaced arena bots return here instead of vanishing
-      (`worldHost.ts:353-354`). Plausible varied names (never
-      Name+digits — the exact tell players catch), violet plates stay
-      honest, one FAQ line owns the policy.
+- [~] **3.1 Lobby presence floor** — naming half CLOSED 2026-08-09, the
+      presence half still open.
+      - [x] **Plausible varied names, never Name+digits.** Already true
+            (12 machine-part names, no digits) and now pinned by a test.
+      - [x] **Bot ids are unique over TIME** — a latent bug found while
+            auditing the above, not a cosmetic one. The id is derived from
+            the name (`bot_<name>`), `nameCursor` persists across bells,
+            and the roster is 12 long, so a host up for days wraps the
+            cursor onto a name still standing in the arena:
+            `this.bots.set(id, ...)` then overwrote a LIVE bot and the same
+            playerId went into a match roster twice. Now takes the first
+            name not in use. Mutation-checked — reverting the fix yields 5
+            distinct ids for a 6-bot roster.
+      - [x] **Violet plates stay honest** — bots render `BOT · NAME` on a
+            violet rig, unchanged and verified in the live killfeed
+            evidence above.
+      - [ ] **Persona bots idle IN THE VENUE** (the presence floor
+            proper) — still open; today the venue's only inhabitants are
+            the ally NPCs and the tableau.
+      - [ ] **Displaced arena bots return to the venue** instead of
+            vanishing (`worldHost.ts:353-354`) — still open.
+      - [ ] **One FAQ line owns the policy** — still open.
 - [ ] **3.2 First-session bot ramp** (Smash Karts / Fortnite pattern) —
       a new player's first cycle is bots tuned to lose entertainingly;
       guarantee a first kill inside 60 s; blend humans in from cycle two.

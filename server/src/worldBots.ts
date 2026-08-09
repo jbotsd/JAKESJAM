@@ -213,7 +213,26 @@ export class WorldBots {
         });
         continue;
       }
-      const name = ROSTER[this.nameCursor % ROSTER.length]!;
+      // Take the first roster name NOT currently in use, rather than
+      // whatever the cursor lands on (gospel 3.1).
+      //
+      // The bot id is derived from the name, so a name collision is an ID
+      // collision: `this.bots.set(id, ...)` would silently overwrite a
+      // LIVE bot's state and `out` would carry the same playerId twice
+      // into a match roster. `nameCursor` persists across bells while the
+      // roster is only 12 long, so on a host that stays up for days —
+      // which the live one does — the cursor wraps onto a name that is
+      // still standing in the arena. The cap of 6 makes exhaustion
+      // impossible, so this always terminates with a free name.
+      let name = ROSTER[this.nameCursor % ROSTER.length]!;
+      for (let probe = 0; probe < ROSTER.length; probe += 1) {
+        const candidate = ROSTER[(this.nameCursor + probe) % ROSTER.length]!;
+        if (!this.bots.has(PlayerId(`${BOT_ID_PREFIX}${candidate.toLowerCase()}`))) {
+          name = candidate;
+          this.nameCursor += probe;
+          break;
+        }
+      }
       const characterId = pickScarcestClass();
       this.nameCursor += 1;
       const id = PlayerId(`${BOT_ID_PREFIX}${name.toLowerCase()}`);
