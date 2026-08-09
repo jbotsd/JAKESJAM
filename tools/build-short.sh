@@ -193,31 +193,30 @@ fi
 FILTER="${FILTER},fps=${FPS},format=yuv420p[v]"
 
 # ── audio ───────────────────────────────────────────────────────────────
-# House rule: the game's real audio is the point. Music, if any, sits UNDER
-# it via sidechain ducking — it never replaces it.
+# Narrated shorts are VOICE ONLY (Jake, 2026-08-09: "remove them all, all I
+# can hear is the in-game audio effects"). No game bed, no ducking.
+#
+# The previous "duck the game under the voice" graph shipped six shorts with
+# NO VOICE IN THEM AT ALL, and the failure was silent: the [vo] label was
+# used twice (sidechain key + amix input), and instead of erroring, ffmpeg
+# rebound the second reference to input stream 0:1 — the game clip's own
+# audio ("Binding input with label 'vo' to input stream 0:1"). The mix became
+# game + game, with the voice audible only to the compressor. If a bed is
+# ever wanted again, asplit every label that feeds two filters.
 AUDIO_IN=(); AMAP=(); ACODEC=()
-if [ -n "$VO" ] && [ -n "$HAS_AUDIO" ]; then
-  # Voice on top, game audio ducked underneath by the voice itself. The game
-  # sound still carries the hits; it just gets out of the way of the words.
+if [ -n "$VO" ]; then
   AUDIO_IN=(-i "$VO")
-  FILTER="${FILTER};[1:a]aformat=channel_layouts=stereo,volume=2.6[vo];
-          [0:a]volume=0.75[game];
-          [game][vo]sidechaincompress=threshold=0.03:ratio=12:attack=15:release=280[gameduck];
-          [gameduck][vo]amix=inputs=2:duration=longest:dropout_transition=0,
-          alimiter=limit=0.95,
-          afade=t=out:st=$(awk -v d="$VO_DUR" 'BEGIN{printf "%.2f", d-0.35}'):d=0.35[a]"
-  AMAP=(-map "[a]"); ACODEC=(-c:a aac -b:a 192k)
-elif [ -n "$VO" ]; then
-  AUDIO_IN=(-i "$VO")
-  FILTER="${FILTER};[1:a]aformat=channel_layouts=stereo,volume=2.6,alimiter=limit=0.95,
+  FILTER="${FILTER};[1:a]aformat=channel_layouts=stereo,
           afade=t=out:st=$(awk -v d="$VO_DUR" 'BEGIN{printf "%.2f", d-0.35}'):d=0.35[a]"
   AMAP=(-map "[a]"); ACODEC=(-c:a aac -b:a 192k)
 elif [ -n "$MUSIC" ] && [ -n "$HAS_AUDIO" ]; then
   AUDIO_IN=(-ss "$MUSIC_START" -i "$MUSIC")
+  # asplit because [game] feeds BOTH the sidechain and the mix — reusing one
+  # label silently rebinds to an input stream (the bug above).
   FILTER="${FILTER};[1:a]volume=0.28,afade=t=in:st=0:d=0.3[mus];
-          [0:a]volume=1.0[game];
-          [mus][game]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=350[duck];
-          [duck][game]amix=inputs=2:duration=first:dropout_transition=0[a]"
+          [0:a]volume=1.0,asplit=2[gkey][gmix];
+          [mus][gkey]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=350[duck];
+          [duck][gmix]amix=inputs=2:duration=first:dropout_transition=0[a]"
   AMAP=(-map "[a]"); ACODEC=(-c:a aac -b:a 192k)
 elif [ -n "$MUSIC" ]; then
   AUDIO_IN=(-ss "$MUSIC_START" -i "$MUSIC")
