@@ -158,3 +158,30 @@ Only where the clip earns it:
   (see `tools/bell-probe.mjs`), and bot-only matches never persist a
   replay (`matchHost.ts:1848`). This slate is deliberately independent
   of that being fixed.
+
+---
+
+## TRUTHFULNESS AUDIT (2026-08-09) — what may be claimed
+
+Every hook was checked against the code. Verified TRUE:
+
+| claim | evidence |
+|---|---|
+| four classes | `characters.ts` — exactly 4 |
+| bots parry / dodge | `worldBots.ts` `parryEveryMs: 3400`, header lists "approach, cover peek, lead shots, LOS-gated fire, parry" |
+| 1v1 by link | `createPrivateLobby` in `index.ts` |
+| no install / no launcher / browser tab | it is a web build |
+| DOUBLE KILL | only on clips whose lower-third shows it |
+
+**BANNED — do not put these in a hook or the VO:**
+
+- **"in the arena in 8 seconds"** — FALSE. `gospel-goal.md:37` measures URL to
+  first shot at 60-140 s worst case, ~50 s median bell wait, ~15 s best via
+  `?world=1`. It is a target, not a fact. S8 was cut for this.
+- **"no account"** — misleading. `emailGate.ts` has
+  `DEFAULT_GATE_POSITION = "boot"`, so a stranger IS asked for an email before
+  playing. There is a "maybe later" skip, so it is not a hard block, but
+  pairing "no account" with "you click a link and you are in the arena"
+  oversells it. Block 04's hook is now "no install. / no launcher."
+- **"ten-player"** — unverified. No player cap found anywhere in
+  `worldHost.ts` or `config.ts`.
