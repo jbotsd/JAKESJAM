@@ -417,9 +417,19 @@ teaches the loop.
       - **first-cycle-end is already covered** by 2.3's strip ("FIRST
         CYCLE — you finished one"), so that half of the row was closed by
         a different item rather than needing its own line.
-      - Still open: class verbs taught on first pick of that class. A
-        re-summonable legend is polish rather than a gap now that
-        Settings carries the reference.
+      Fifth slice DONE — **class verbs on first pick**, which closes the
+      row. Picking a chassis for the first time announces its kit using
+      the SAME `kitSummary` string the picker shows (one source, so the
+      two cannot drift, and characters.ts already enforces "name only
+      abilities that are live today"). Once PER CLASS, not once ever —
+      picking Kindled teaches nothing about Syzygist, and a single flag
+      would have meant three of four chassis never explaining
+      themselves. Hung off `jakesjam:class-change` rather than one
+      picker's callback, so it fires from Settings AND the venue loadout
+      station — the reason 1.8 made both announce their writes.
+      Cyan-accented, not the personal-best gold: information, not earned.
+      **3.3 is now complete** except a re-summonable legend, which is
+      polish rather than a gap now that Settings carries the reference.
       Original item: onboarding by encounter (ui-axioms bans modal tutorials) —
       the lobby teaches movement/fire via ghosted glyphs over the
       dummies; the FTUE legend becomes re-summonable (today: once ever

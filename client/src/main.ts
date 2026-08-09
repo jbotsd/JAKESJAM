@@ -43,6 +43,7 @@ import { VENUE_CTA, VENUE_TITLE, ARENA_TITLE } from "./venueNames";
 import { buildClassPicker } from "./game/ui/classPicker";
 import { characters } from "./game/data/characters";
 import { sanitizeCharacterId } from "./net/playerCharacter";
+import { noteClassPicked } from "./shell/classVerbHint";
 import {
   clearInMatch,
   resumableMatch,
@@ -862,7 +863,15 @@ const sfxMutedInput = queryRequired<HTMLInputElement>("[data-sfx-muted]");
   window.addEventListener("jakesjam:class-change", (event) => {
     const characterId = (event as CustomEvent<{ characterId?: string }>).detail
       ?.characterId;
-    if (characterId) picker.setSelected(sanitizeCharacterId(characterId));
+    if (!characterId) return;
+    const id = sanitizeCharacterId(characterId);
+    picker.setSelected(id);
+    // Doors 3.3 — teach this chassis's verbs the FIRST time it is ever
+    // picked. Hung off the event rather than the picker's onSelect so it
+    // fires for BOTH surfaces (Settings and the venue loadout station),
+    // which is the whole reason 1.8 made them announce their writes.
+    const def = characters.find((c) => (c.id as string) === id);
+    if (def) noteClassPicked(id, def.name, def.kitSummary);
   });
 }
 

@@ -2035,6 +2035,16 @@ button.btn-danger:hover:not(:disabled) {
   min-width: 0;
 }
 
+/* Doors 3.3 — the class-verb hint reuses the strip's geometry but not its
+   meaning: cyan is information, gold is earned (chassis grammar). */
+.pb-toast--info {
+  border-color: rgba(120, 200, 230, 0.42);
+}
+
+.pb-toast--info .pb-toast-item b {
+  color: #cffaff;
+}
+
 .pb-toast-item b {
   font-family: "Space Mono", "Courier New", monospace;
   font-size: 0.74rem;
