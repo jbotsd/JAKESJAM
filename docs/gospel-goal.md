@@ -1037,6 +1037,25 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (w) · **Zig authority is FAST, and my soak was silently not
+  recording it.** The soak CSV's `tick_p99_ms` column has been empty for
+  every row of every run tonight: the script greps `"p99"` and the field
+  is `"p99Ms"`. So the soak has been proving stability and fallback-free
+  operation while capturing nothing at all about frame budget — a hole in
+  my own instrument, found by asking what the empty column meant instead
+  of scrolling past it.
+  - **Sampled by hand instead** (soak host, 78 min into wasm authority,
+    5 reads): **p50 0.26–0.28 ms · p95 1.80–1.96 ms · p99 2.76–2.95 ms ·
+    max 12.2 ms**, fallbackTicks 0 throughout. Against a 16.67 ms budget
+    at 60 Hz that is p99 at ~17% of frame and the worst spike still
+    inside budget. **Zig authority is comfortably fast** — this is the
+    perf half of the E2 case, which nothing had actually measured.
+  - **NOT fixing the script yet, on purpose.** Bash reads a script
+    incrementally by byte offset, so editing `wasm-authority-soak.sh`
+    while a 2 h run is executing it can make the running shell execute
+    garbage. The one-character fix waits until the soak ends; losing the
+    run to a tidy-up would be the third dead soak today.
+
 - 2026-08-09 (v) · **URL → in the world: ~1.0 s median** (3/3 first-visit
   0.9–1.2 s, 3/3 returning 1.1–1.2 s). `tools/time-to-world.mjs`, defined
   as "the local player has an entity in authoritative state" — not
