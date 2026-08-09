@@ -369,11 +369,18 @@ teaches the loop.
       Captured at desktop and phone; the first draft collided with the
       "[T] DUO QUEUE" hint and was moved below the whole top-left status
       band — caught in the capture, not in review.
+      Second slice DONE the same day: **a persistent controls reference
+      in Settings** (8 bindings, mono keycaps, two-column grid; stacks
+      under 420px). The legend teaches once and is then gone forever,
+      which is right for a legend and wrong as the only place the
+      controls were ever written down — a player who blinked, switched
+      device, or came back next week had nowhere to look. Settings is two
+      keystrokes from anywhere. Verified rendering at desktop and phone.
       **Still open, and it is the better form:** ghosted glyphs over the
       dummies themselves. ui-axioms bans modal tutorials and text is the
-      weaker answer. Also open: re-summonable legend + a persistent
-      controls reference in Settings; first-storm / first-cycle-end
-      lines; class verbs on first pick.
+      weaker answer. Also open: making the legend itself re-summonable
+      (Settings now covers the need, so this is polish); first-storm /
+      first-cycle-end lines; class verbs on first pick.
       Original item: onboarding by encounter (ui-axioms bans modal tutorials) —
       the lobby teaches movement/fire via ghosted glyphs over the
       dummies; the FTUE legend becomes re-summonable (today: once ever

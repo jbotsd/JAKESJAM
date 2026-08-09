@@ -362,6 +362,30 @@ app.innerHTML = `
         <div data-settings-character-picker></div>
         <p class="shell-hint">Your class picks your body, your kit and your ability catalog. Change it any time — it applies to your next bout.</p>
       </div>
+      <!-- Doors 3.3 — a PERSISTENT controls reference. The FTUE legend
+           teaches once and is then gone forever (one localStorage key,
+           now shared between the venue and the arena), which is right
+           for a legend and wrong as the only place the controls have
+           ever been written down: a player who blinked, arrived on a
+           second device, or came back a week later had nowhere to look.
+           This is the somewhere. Settings is two keystrokes from
+           anywhere (Menu/Esc), same reasoning as the class picker above.
+           Deliberately a reference you GO to, not a modal that
+           interrupts you — ui-axioms bans tutorial modals. -->
+      <div class="shell-section">
+        <h3>Controls</h3>
+        <dl class="controls-ref" data-controls-ref>
+          <dt>WASD</dt><dd>move</dd>
+          <dt>SPACE / W</dt><dd>jump</dd>
+          <dt>MOUSE</dt><dd>aim &amp; fire</dd>
+          <dt>SHIFT</dt><dd>hold shield</dd>
+          <dt>RIGHT CLICK / C</dt><dd>aegis power-slide — blocks on the way in, bashes on contact</dd>
+          <dt>E</dt><dd>emission, only at a full meter</dd>
+          <dt>1 – 3</dt><dd>drafted abilities, in the order you picked them</dd>
+          <dt>ESC</dt><dd>menu</dd>
+        </dl>
+        <p class="shell-hint">On touch the same actions are the on-screen buttons: left stick moves, right stick aims and fires, and the numbered buttons appear only once you have drafted something for them.</p>
+      </div>
       <div class="shell-section">
         <h3>Audio</h3>
         <label>
