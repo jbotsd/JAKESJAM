@@ -821,6 +821,29 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (m) · **INDEPENDENT VERIFICATION of HEAD (367f1cc) by the
+  goal runner — every claim below re-run rather than taken on trust,
+  which is the point of one session owning STATUS (L5a).**
+  - **Port passport: PASS, 12/12 replays, native ≡ wasm bit-identical**
+    (`scripts/passport.sh --ticks 1500`; 0 diverged, 0 skipped). N0.4's
+    central claim independently confirmed. The archive is 12 files now,
+    not 10 — today's probe runs left three new ones.
+  - zig **170/170** · server **366/0** under `USE_WASM_STEP_WORLD=1
+    WASM_STRICT=1` · client **1963 pass / 3 skip / 0 fail** (128,114
+    asserts).
+  - **The client suite is RED in the shared working tree and GREEN at
+    HEAD** — 2 failures in `spectatorDirector.test.ts` ("it cuts to
+    whoever is actually moving", received `still_a`) come from a
+    concurrent session's UNCOMMITTED S2 edit, not from committed code.
+    Verified by running the suite in a clean checkout of 367f1cc in
+    `.claude/worktrees/doors-lane`. Recorded because `bun test` in the
+    shared tree measures whatever another agent happens to be
+    mid-keystroke on, which is exactly the confusion L5a exists to stop.
+  - **E2 flip evidence is still NOT satisfied for HEAD**, and the
+    re-soak that would satisfy it is running (started 17:57, 8188). The
+    2 h 10 m PASS from 15:45 tested a tree that predates the input-
+    routing fix (5ad59c5), the index-space fix (9199f84) and homing
+    (1f3e204). "Soak what you flip."
 - 2026-08-09 (l) · **Both HIGH footage findings FIXED — S1 (367f1cc) and
   S2 (4600eaf).** The footage loop's purpose is to find the weakest thing,
   and the weakest thing had already been found on 08-05 and left un-fixed;
