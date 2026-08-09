@@ -222,10 +222,13 @@ now cut the cruellest half of that chain.
 - [ ] **1.6 `?fight` fast lane + `venueNames.ts`** (venue-goal 6.3/6.1).
       Today's fastest path (`?world=1` slipping under the email gate) is
       an accident, not a design.
-- [ ] **1.7 Refresh-mid-match recovery.** A reload during a match lands
-      on the splash and forfeits the run (the 10 s server grace is
-      unreachable through the boot path). Store a resume token; a bare
-      reload inside grace rejoins the arena directly.
+- [x] 1.7 Refresh-mid-match recovery — DONE 2026-08-09 (b5adbe2 +
+      2318025). The server grace and the stable player id both already
+      existed; only boot's *intent* was missing. sessionStorage marker,
+      2 s heartbeat + pagehide, checked before the URL branches;
+      deliberate exits clear it. **e2e 3/3 in real Chromium against a
+      real host**: reload in venue lands on a live surface, deliberate
+      exit is not resumed, stale marker is not resumed.
 - [ ] **1.8 Class select in the front door.** A player who never finds
       the loadout table fights as "balanced" forever; the private-room
       picker is a bare `<select>` (`main.ts:547-552`) next to the rich
