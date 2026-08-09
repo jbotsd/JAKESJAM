@@ -821,6 +821,17 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (n) · **THE JOIN BUG IS GONE — verified on HEAD, so the last
+  non-evidence blocker on the E2 flip is cleared.** `bun
+  tools/bell-probe.mjs` against an isolated HEAD host (worktree build,
+  :8388, never the live one) drove a real headless browser through
+  venue → bell → arena: `humans=1 bots=3 phase=fighting
+  scene=OnlineMatchScene`, sustained ~30 s, **RESULT: PASS (handoff
+  works)**. The failure it was written for — "ADMITTED" logged while
+  `/health` held `humans=0`, then evicted after the 10 s grace — did not
+  reproduce. **Remaining gate on the flip is now purely the HEAD re-soak**
+  (running, 8188). Minor, unrelated: the probe logged 4× 404s for page
+  resources; not chased here, noted so it is not rediscovered as new.
 - 2026-08-09 (m) · **INDEPENDENT VERIFICATION of HEAD (367f1cc) by the
   goal runner — every claim below re-run rather than taken on trust,
   which is the point of one session owning STATUS (L5a).**
