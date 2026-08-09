@@ -13,6 +13,8 @@
 
 import Phaser from "phaser";
 import { SceneKeys } from "./SceneKeys";
+import { Killfeed, killfeedLineText } from "../ui/killfeed";
+import { setKillfeedGetter } from "../../debug/wasmStateProbe";
 import { ConvexClient } from "convex/browser";
 import {
   ClientLoop,
@@ -1269,6 +1271,20 @@ export class OnlineMatchScene extends Phaser.Scene {
   // ---------------- New shared HUD system ----------------
 
   private updateHudSystem(state: WorldState): void {
+    // gospel 4.6 — the killfeed rides the HUD's per-frame tick, but sits
+    // BEFORE the guard below: it does not depend on hudSystem existing,
+    // and a feed that vanishes whenever the HUD is mid-rebuild would look
+    // like dropped kills.
+    //
+    // Wipe it on a round change: a line from the previous round hanging
+    // over a freshly reset arena reads as a kill that just happened. The
+    // 5s TTL usually covers this, but a round can end and restart inside
+    // that window.
+    if (this.killfeedRoundIndex !== state.round.roundIndex) {
+      this.killfeedRoundIndex = state.round.roundIndex;
+      this.killfeed?.clear();
+    }
+    this.renderKillfeed(this.time.now);
     if (!this.hudSystem || !this.roundBannerSystem) return;
 
     const local = state.players[this.localPlayerId];
@@ -1913,6 +1929,18 @@ export class OnlineMatchScene extends Phaser.Scene {
     // router's killStreakCount already includes this event's kill.
     for (const event of events) {
       if (event.t !== "player-killed") continue;
+      // gospel 4.6 — every kill goes to the feed, including unattributed
+      // deaths and other players'. Pushed here rather than in the death-FX
+      // loop above so the feed reflects EVENTS, not whatever the renderer
+      // happened to have a rig for.
+      this.ensureKillfeed().push(
+        {
+          victimId: event.victimId as string,
+          killerId: (event.killerId as string | null) ?? null,
+          execute: (event as { execute?: boolean }).execute === true,
+        },
+        this.time.now,
+      );
       if (event.killerId === this.localPlayerId && event.victimId !== this.localPlayerId) {
         recordKill();
         // Doors 2.3 — remember whether this beat the stored best; the
@@ -3227,6 +3255,57 @@ export class OnlineMatchScene extends Phaser.Scene {
    *  for bots, id-tail tag only as the true last resort. Before this, the
    *  results screen renamed everyone to id tails — you fight "VERA" and
    *  the podium says "3F2A". */
+  /** gospel 4.6 — live killfeed. Lazily built because `displayName` and
+   *  `localPlayerId` are not settled at construction time. */
+  private killfeed: Killfeed | null = null;
+  private killfeedText: Phaser.GameObjects.Text | null = null;
+  private killfeedRoundIndex = -1;
+
+  private ensureKillfeed(): Killfeed {
+    if (!this.killfeed) {
+      this.killfeed = new Killfeed(
+        (id) => this.displayName(id),
+        this.localPlayerId ?? null,
+      );
+      // Make the feed observable from outside — see setKillfeedGetter's
+      // doc. A killfeed lives ~5s per line, so neither a screenshot nor a
+      // single poll can establish whether it works.
+      const feed = this.killfeed;
+      setKillfeedGetter(() => feed.visible(this.time.now).map(killfeedLineText));
+    }
+    return this.killfeed;
+  }
+
+  /** Redraw the feed. Called every frame the HUD updates; cheap when the
+   *  visible set is unchanged, and free of tweens on purpose — a killfeed
+   *  that animates while you are reading it is worse than one that does
+   *  not. */
+  private renderKillfeed(nowMs: number): void {
+    const lines = this.ensureKillfeed().visible(nowMs);
+    if (lines.length === 0) {
+      this.killfeedText?.setVisible(false);
+      return;
+    }
+    if (!this.killfeedText) {
+      this.killfeedText = this.add
+        .text(this.scale.width - 16, 96, "", {
+          fontFamily: "monospace",
+          fontSize: "13px",
+          align: "right",
+          backgroundColor: "rgba(8,12,22,0.5)",
+          padding: { left: 8, right: 8, top: 6, bottom: 6 },
+          lineSpacing: 3,
+        })
+        .setOrigin(1, 0)
+        .setScrollFactor(0)
+        .setDepth(1990);
+    }
+    this.killfeedText
+      .setText(lines.map(killfeedLineText))
+      .setPosition(this.scale.width - 16, 96)
+      .setVisible(true);
+  }
+
   private displayName(pid: string): string {
     if (isBotId(pid)) return botLabel(pid);
     return this.rosterNames.get(pid) ?? playerTag(pid);

@@ -28,6 +28,16 @@ let activeRigDebugGetter: (() => RigDebugRow[] | null) | null = null;
 let activeNetStatsGetter: (() => Record<string, unknown> | null) | null = null;
 let activeLocalPlayerIdGetter: (() => string | null) | null = null;
 
+/** gospel 4.6 — the killfeed's CURRENT visible lines, as plain strings.
+ *  Exposed for the same reason the sim probes are: a killfeed is only
+ *  observable for a few seconds after a kill, so a screenshot cannot prove
+ *  it works and absence cannot prove it does not. */
+let activeKillfeedGetter: (() => string[]) | null = null;
+
+export function setKillfeedGetter(fn: (() => string[]) | null): void {
+  activeKillfeedGetter = fn;
+}
+
 /** Renderer-side truth for probes: where each player rig ACTUALLY is on
  *  screen and whether it's visible. Catches "sim says alive at (x,y) but
  *  nothing rendered" bugs that state sampling alone can't see. */
@@ -178,6 +188,7 @@ type ProbeWindow = {
   } | null;
   __rigDebug?: () => RigDebugRow[] | null;
   __localPlayerId?: () => string | null;
+  __killfeedLines?: () => string[];
   __netStats?: () => Record<string, unknown> | null;
 };
 
@@ -281,6 +292,7 @@ export function installWindowProbe(): void {
   w.__rigDebug = () => activeRigDebugGetter?.() ?? null;
   w.__netStats = () => activeNetStatsGetter?.() ?? null;
   w.__localPlayerId = () => activeLocalPlayerIdGetter?.() ?? null;
+  w.__killfeedLines = () => activeKillfeedGetter?.() ?? [];
   w.__simSampleHashes = async (count, intervalMs) => {
     const out: number[] = [];
     for (let i = 0; i < count; i++) {
