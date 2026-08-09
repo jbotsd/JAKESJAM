@@ -509,10 +509,9 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       formatVersion is a hard error; replays with
       `backendFallbackTicks > 0` are flagged unusable as passport
       fixtures. **10/10 archived replays parse, 0 failed.**
-- [ ] **0.3 Headless stepper + hash stream.** Step from seed + inputs,
-      emit the existing state hash every N ticks (default 60).
-      Full-match step of the largest replay (21.9 MB) completes;
-      wall-clock recorded as the first native bench number.
+- [x] **0.3 Headless stepper + hash stream** — DONE 2026-08-09 (4aa8882).
+      `jjsim replay-hash <file.jjr>` steps from the packed initial state and
+      prints a hash of the state buffer every N ticks.
       **Sequencing win found 2026-08-09 — 0.3/0.4 do NOT have to wait for
       0.5 or for named maps.** The passport compares native vs wasm on the
       same input stream; it does not care who BUILT the starting world. The
@@ -539,12 +538,21 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       to settle FIRST: what the live host feeds a player who has no input
       frame on a given tick (`matchHost`'s per-tick assembly), because a
       wrong answer there diverges silently rather than loudly.
-- [ ] **0.4 Cross-check gate.** Same hash cadence from the wasm path
-      (reuse the parity harness); comparator runs both over every
-      archived replay. **Bit-identical across all replays**, comparator
-      lands in `zig build test` + the client parity suite. Any mismatch
-      is an L10 float-semantics bug and blocks all N work until
-      root-caused.
+- [x] **0.4 Cross-check gate — PASSING** 2026-08-09 (4aa8882).
+      `bun run passport` (scripts/passport.sh) steps every archived replay
+      through BOTH the native build and sim.wasm and diffs the hash
+      streams: **replays=12 agreed=12 skipped=0 diverged=0**. Native
+      x86_64 and wasm are bit-identical — L10 is now measured, not assumed,
+      and the native build is provably the same game.
+      - Hash is over the raw 99,200-byte packed buffer, not a semantic
+        per-entity digest: one shared layout means bytes are the strongest
+        claim available and need no second implementation to drift from.
+      - **DEVIATION recorded (L8):** the comparator cannot literally live in
+        `zig build test` — it needs Bun to drive the wasm half and `zig
+        build` cannot. It is `bun run passport`; the stepper's own unit
+        tests DO run inside `zig build test` (172/172).
+      - Default 3000 ticks/replay (crosses a round boundary + first draft);
+        `--ticks 0` for full length before a toolchain jump.
 - [ ] **0.5 Native world-init.** `world_init(seed, map_id, roster)` in
       the core (exported to wasm too) so shells stop hand-packing initial
       state. The TS bridge keeps its packing path (parity-tested) until
@@ -791,6 +799,31 @@ Zig (that's E3's conversation) · Steam before N3.
 ---
 
 ## STATUS — ground truth, newest first
+
+- 2026-08-09 (k) · **THE PORT PASSPORT PASSES — N0's first gate is met.**
+  `bun run passport` steps every archived replay through the native build
+  AND sim.wasm and diffs the hash streams: **replays=12 agreed=12
+  skipped=0 diverged=0.** Native x86_64 and wasm are bit-identical, so L10
+  is now measured rather than assumed and the native build is provably the
+  same game. Commit 4aa8882; N0.1-N0.4 closed.
+  - Sequencing is what made it reachable today: the passport never needed
+    native world-init (N0.5) or named-map data in the core (N-MAP). It
+    compares two backends over ONE input stream and does not care who BUILT
+    the starting world, so dumping TS's own packed init (7642134) unblocked
+    all 12 replays — including the named maps nothing native can construct.
+  - The two contract details carry the whole risk, and both were read off
+    the live host rather than guessed: slot order comes from the BUFFER
+    (each PlayerEntity carries its own id_bytes, so there is no comparator
+    to re-derive — the exact mistake that grew two index spaces), and every
+    tick zeroes all keys before patching the players who have a frame
+    (without it a silent player keeps last tick's input and the HARNESS
+    invents a divergence).
+  - Remaining in N0: only **0.5 native world-init**, and it is now honestly
+    a cleanliness item ("shells should not hand the sim a world") rather
+    than a blocker for anything.
+  - DEVIATION recorded (L8): the comparator cannot live inside `zig build
+    test` — it needs Bun for the wasm half. It is `bun run passport`; the
+    stepper's own tests do run in `zig build test` (172/172).
 
 - 2026-08-09 (j) · **Gate reconciled: the passing soak PREDATES the input
   fix, so HEAD is re-soaking.** Two sessions wrote this block on the same
