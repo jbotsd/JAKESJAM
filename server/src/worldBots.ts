@@ -302,10 +302,50 @@ export class WorldBots {
     const fireRange = melee ? BOT_TUNING.meleeFireRange * scale : BOT_TUNING.fireRange * scale;
 
     if (!foe) {
+      // FOOTAGE FINDING S1 (docs/clip-sheets/study-2026-08-05-jul31-replay.md,
+      // HIGH): "BOT·PISTON stands at a wall in the SAME position 7.7 s
+      // apart", plus 6.6 s and 6.8 s statue runs — roughly a third of the
+      // studied window was a motionless bot, on camera. Two causes, both in
+      // this block, both fixed here:
+      //
+      //   1. The idle direction was drawn from [-1, 0, 1] — 0 meaning STAND
+      //      STILL — and held 900-2300 ms. Consecutive zero rolls compound:
+      //      four in a row is ~9 s, which is the observed 7.7 s statue.
+      //      Now {-1, +1}: an idle bot always walks. That is the standing
+      //      "stationary > 1 s is a bug" rule applied at the one place that
+      //      could violate it without actually being stuck.
+      //   2. The unstick detector (bot.stuckTicks, further down) lives AFTER
+      //      this early return, so an idle bot pressing into geometry never
+      //      reached it and leaned on the wall indefinitely. Idle now runs
+      //      the same "intended to move but didn't" check and turns around.
+      //
+      // Deliberately NOT done here: the study's suggested "wander toward
+      // nearest POI". That is real navigation and belongs with N-BOT, which
+      // ports this policy into the Zig core. A bot that always MOVES is the
+      // fix for the filmed bug. Bot policy has no Zig mirror today (it is
+      // host-side orchestration, like map choice), so N-BOT must carry both
+      // of these across rather than porting the old shape.
       if (nowMs > bot.strafeUntil) {
-        bot.strafeDir = ([-1, 0, 1] as const)[Math.floor(bot.rand() * 3)]!;
+        bot.strafeDir = bot.rand() < 0.5 ? -1 : 1;
         bot.strafeUntil = nowMs + 900 + bot.rand() * 1400;
       }
+      const idleMoved =
+        Math.abs(me.x - bot.lastX) + Math.abs(me.y - bot.lastY) * 0.35;
+      if (idleMoved < 0.7) {
+        bot.stuckTicks += 1;
+        // ~3 ticks of pressing into geometry with nothing to fight: turn
+        // around and hop — the same remedy the engaged path already uses.
+        if (bot.stuckTicks >= 3) {
+          bot.strafeDir = bot.strafeDir === -1 ? 1 : -1;
+          bot.strafeUntil = nowMs + 900 + bot.rand() * 1400;
+          keys |= InputBit.Jump;
+          bot.stuckTicks = 0;
+        }
+      } else {
+        bot.stuckTicks = 0;
+      }
+      bot.lastX = me.x;
+      bot.lastY = me.y;
       if (bot.strafeDir < 0) keys |= InputBit.Left;
       if (bot.strafeDir > 0) keys |= InputBit.Right;
       bot.jumpHeldPrev = (keys & InputBit.Jump) !== 0;

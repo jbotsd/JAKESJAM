@@ -59,7 +59,14 @@ describe("wasm input routing (gospel E2)", () => {
     const state = twoPlayerState();
     const map = resolveMap("boxworks-tower");
     serverWasmHost.setStatics(
-      map.platforms.map((p) => ({ x: p.x, y: p.y, w: p.width, h: p.height })),
+      // PlatformDefinition is {position, size}, not flat x/y/width/height —
+      // Bun runs tests untyped, so this only surfaced under tsc.
+      map.platforms.map((p) => ({
+        x: p.position.x,
+        y: p.position.y,
+        w: p.size.x,
+        h: p.size.y,
+      })),
       map.platforms.map(() => 0),
     );
     serverWasmHost.setArenaSize(map.size.x, map.size.y);
