@@ -93,6 +93,52 @@ pub fn build(b: *std.Build) void {
     const run_native_step = b.step("run-native", "Run jjsim (pass args after --)");
     run_native_step.dependOn(&run_native.step);
 
+    // gospel N1.1 — the raylib confirmation spike. Its own step, NEVER
+    // wired into `test` or the default build: it links a vendored C
+    // library and opens a window, so a machine without sim/vendor/raylib
+    // built must still be able to run `zig build test`. Missing library =
+    // this step fails, nothing else does.
+    // Pin a glibc VERSION on the target so Zig supplies its own start
+    // files instead of the system's crt1.o. Without this the link fails on
+    // THIS box with "unhandled relocation type R_X86_64_PC64 ... in
+    // crt1.o:.sframe": GCC 16 emits an .sframe section that Zig 0.15.2's
+    // linker does not understand, and the toolchain pin is deliberate
+    // (0.15.2 over 0.16, see the goal's toolchain note). A recorded L13
+    // "this box bites" finding rather than a reason to move the pin.
+    const spike_target = b.resolveTargetQuery(.{
+        .cpu_arch = .x86_64,
+        .os_tag = .linux,
+        .abi = .gnu,
+        .glibc_version = .{ .major = 2, .minor = 39, .patch = 0 },
+    });
+    const spike_module = b.createModule(.{
+        .root_source_file = b.path("src/native/spike_raylib.zig"),
+        .target = spike_target,
+        .optimize = optimize,
+    });
+    const spike_exe = b.addExecutable(.{
+        .name = "jjspike",
+        .root_module = spike_module,
+    });
+    spike_exe.addIncludePath(b.path("vendor/raylib/src"));
+    spike_exe.addObjectFile(b.path("vendor/raylib/build/raylib/libraylib.a"));
+    spike_exe.linkLibC();
+    // raylib's own link line on Linux/desktop.
+    // Pinning the glibc target above puts Zig in cross-compile mode, which
+    // stops it searching the host's library paths — so GL/X11 have to be
+    // pointed at explicitly. Both halves of this are the same L13 finding:
+    // the fix for the CRT problem created the library-path one.
+    spike_exe.addLibraryPath(.{ .cwd_relative = "/usr/lib" });
+    for ([_][]const u8{ "m", "pthread", "dl", "rt", "GL", "X11" }) |sys_lib| {
+        spike_exe.linkSystemLibrary(sys_lib);
+    }
+    const spike_step = b.step("spike-raylib", "N1.1: build the raylib confirmation spike");
+    spike_step.dependOn(&b.addInstallArtifact(spike_exe, .{}).step);
+    const run_spike = b.addRunArtifact(spike_exe);
+    if (b.args) |args| run_spike.addArgs(args);
+    const run_spike_step = b.step("run-spike", "N1.1: run the raylib spike (args after --)");
+    run_spike_step.dependOn(&run_spike.step);
+
     // Native-only unit tests (msgpack + .jjr reader). Wired into `test` so
     // the passport's parsing layer is covered by the same gate as the sim.
     const native_test_module = b.createModule(.{

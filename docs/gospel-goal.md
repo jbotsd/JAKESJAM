@@ -991,7 +991,30 @@ blend + render-to-texture, TTF text, and ogg/mp3 decode of the 27 MB
 canonical SFX bank; caller-owned frame loop; cheap Windows
 cross-compile; on-box today (`extra/raylib 6.0`).
 
-- [ ] **1.1 Confirmation spike** (one worktree lane, timeboxed). Bar:
+- [x] **1.1 Confirmation spike** — PASSED 2026-08-10, full result in
+      `docs/n1-spike-result.md`. Every item on the bar: window OK, 500
+      additive shapes at **p99 1.48 ms** against a 16.67 ms budget (~11x
+      headroom), HUD text from a TTF, the canonical `bruh.wav` decoded
+      from file, mouse round-trip and gamepad 0 present. Built with
+      `@cImport` on `raylib.h`, raylib 5.5 vendored and built IN-REPO —
+      no system install on a daily driver whose nvidia stack moves every
+      `-Syu`.
+      **The first run lied and the fix matters more than the pass:**
+      `SetTargetFPS(60)` makes raylib sleep to the cap, so p99 came back
+      as exactly 16.67 ms with a cheerful "60 Hz HELD" — the meter
+      reporting what it was asked for. `--uncapped` is the run that means
+      anything, and the spike now prints which mode produced the number
+      and refuses to say "held" on a capped run.
+      **L13 findings the shell inherits:** (1) Zig 0.15.2 cannot link this
+      box's `crt1.o` — GCC 16 emits `.sframe` with an `R_X86_64_PC64`
+      relocation it does not handle; fixed by pinning `glibc_version` so
+      Zig supplies its own start files, which then required an explicit
+      `/usr/lib` path because that puts Zig in cross-compile mode. NOT a
+      reason to move the toolchain pin. (2) the repo's brand fonts are
+      `.woff2` and raylib needs TTF/OTF — a real asset gap for the native
+      build. (3) GL 3.3 confirmed and stable over ~2500 frames, so
+      ADR-0008's GL-instability switch trigger did not fire.
+- [ ] ~~**1.1 Confirmation spike** (one worktree lane, timeboxed). Bar:~~
       open a window; 500 moving additive-blended shapes at 60 Hz with
       frame p99 printed; HUD text from a TTF; one canonical meme SFX
       decoded from file; mouse + one gamepad. Built via `@cImport` on
@@ -999,7 +1022,13 @@ cross-compile; on-box today (`extra/raylib 6.0`).
       `mise exec`** (L2 footgun). A spike that fights the box (L13)
       records that as a finding — and as a live check against ADR-0008's
       GL-instability switch trigger.
-- [ ] **1.2 Promote or fall back.** Bar met → promote to
+- [~] **1.2 Promote or fall back.** BAR MET (see 1.1), so this promotes:
+      raylib is confirmed and SDL3 stays the named fallback behind its
+      existing switch triggers rather than being re-argued. What remains
+      is the mechanical half — the `sim/native/shell.zig` skeleton and
+      flipping ADR-0008's own wording from spike-gated to confirmed.
+      (original row below)
+- [ ] ~~**1.2 Promote or fall back.** Bar met → promote to~~
       `sim/native/shell.zig` skeleton, ADR-0008 flips from spike-gated
       to confirmed. Bar missed → SDL3 per the ADR's triggers, follow-up
       ADR, no re-argument of the rejected candidates.

@@ -76,3 +76,8 @@ tools/.promo-session-out/
 
 # local short-form renders (build artifacts, not source)
 /out/
+# Vendored native build inputs (raylib, N1.1). Fetched on demand so a
+# clone stays small and nobody inherits a stale binary — but the HOW is
+# tracked, or the spike is unreproducible.
+sim/vendor/*
+!sim/vendor/README.md
