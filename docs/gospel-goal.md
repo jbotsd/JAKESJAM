@@ -390,6 +390,12 @@ teaches the loop.
 - [ ] **4.4 Studio SFX pack** — `scripts/process-sfx.ts` + SFX_KIT brief
       are complete; `~/Music/binipe-sfx/` doesn't exist. The `shoot` cue
       is heard ~1000×/session as synth fallback.
+      - Its visible symptom, chased and dismissed 2026-08-09: every page
+        load logs `404 /audio/sfx/manifest.json`. That is CORRECT — the
+        pack genuinely is not there, and `SampleEngine.loadAll` treats a
+        missing manifest as "synth fallback everywhere" by design. Do not
+        silence it with a HEAD request or an empty manifest; that would
+        hide a true statement. It goes away when the pack lands.
 - [ ] **4.5 Lobby VFX parity completion** — Geometrician lance
       inconclusive, Syzygist tether + all-4 cast-tells not attempted
       (`lobby-vfx-parity-goal.md:451-458`).
