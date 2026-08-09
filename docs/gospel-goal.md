@@ -807,6 +807,20 @@ Zig (that's E3's conversation) · Steam before N3.
     coincide. Real play is precisely where they diverge. Recorded because
     it is a lesson about the gate, not just about the bug — a green soak
     is evidence of stability, not of correctness.
+  - **Audited the whole patch-after-pack family and found the boundary had
+    TWO player index spaces** (9199f84): the player array is packed with
+    `id.localeCompare` and IS the space Zig sees, while the index encoders
+    and the event decoder used a bare `.sort()`. They agree on today's ids
+    and disagree where `_` meets letters. The bridge had already noticed —
+    `playerIdBySlot`'s own doc says "pack uses localeCompare, the score
+    loop uses default sort" — and worked around it in one place without
+    fixing the rest. Now one exported `packedPlayerOrder()`, with
+    `unpackWorldState` reading the slot ids it actually decoded instead of
+    re-deriving a sort. Sites that would have misbehaved: round winner,
+    first blood, event→player attribution (kills/killfeed/hit-confirms),
+    and fire-config resolution (a player wearing another player's
+    WEAPONS). **Latent, not live** — recorded that way rather than dressed
+    up as a save.
   - **Consequence for the flip:** the 2 h soak now running was started
     before this fix, so it validated stability on code that differs from
     HEAD. Stability is not what changed (the fix is an index
