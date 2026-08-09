@@ -43,7 +43,8 @@
     "presentation:lobby-vfx-parity": "bun scripts/lobbyVfxParityShots.ts",
     "balance-sim": "bun scripts/balance-sim.ts",
     "clips:migrate-r2": "bun scripts/migrate-clips-to-r2.ts",
-    "clips:migrate-r2:dry-run": "bun scripts/migrate-clips-to-r2.ts --dry-run"
+    "clips:migrate-r2:dry-run": "bun scripts/migrate-clips-to-r2.ts --dry-run",
+    "passport": "./scripts/passport.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

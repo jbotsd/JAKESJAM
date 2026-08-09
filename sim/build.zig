@@ -100,6 +100,15 @@ pub fn build(b: *std.Build) void {
         .target = test_target,
         .optimize = optimize,
     });
+    // Stepper tests need the sim itself (hash primitives + step_world).
+    const stepper_test_module = b.createModule(.{
+        .root_source_file = b.path("src/native/stepper.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
+    stepper_test_module.addImport("sim_root", sim_root_native);
+    const stepper_tests = b.addTest(.{ .root_module = stepper_test_module });
+    test_step.dependOn(&b.addRunArtifact(stepper_tests).step);
     const native_tests = b.addTest(.{ .root_module = native_test_module });
     test_step.dependOn(&b.addRunArtifact(native_tests).step);
 

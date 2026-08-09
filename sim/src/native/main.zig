@@ -10,6 +10,7 @@
 
 const std = @import("std");
 const jjr = @import("jjr.zig");
+const stepper = @import("stepper.zig");
 const sim = @import("sim_root");
 
 const USAGE =
@@ -23,6 +24,13 @@ const USAGE =
     \\
     \\  jjsim replay-verify <dir>
     \\      Parse every .jjr in <dir>. Exit non-zero if any fails.
+    \\
+    \\  jjsim replay-hash <file.jjr> [--init <file>] [--every N] [--max-ticks N]
+    \\      Step the replay headless from its packed initial state and print
+    \\      a hash of the state buffer every N ticks (default 60). --init
+    \\      defaults to <file.jjr>.init.bin (server/tools/dump-replay-init.ts).
+    \\      These hashes are the port passport: the same inputs through wasm
+    \\      must produce the same stream, bit for bit.
     \\
 ;
 
@@ -59,10 +67,99 @@ pub fn main() !u8 {
             return 2;
         }
         return verifyDir(gpa, args[2]);
+    } else if (std.mem.eql(u8, cmd, "replay-hash")) {
+        if (args.len < 3) {
+            try stderr("replay-hash needs a .jjr file\n");
+            return 2;
+        }
+        return replayHash(gpa, args[2..]);
     }
 
     try stderr(USAGE);
     return 2;
+}
+
+/// `replay-hash <file.jjr> [--init f] [--every n] [--max-ticks n]`
+fn replayHash(gpa: std.mem.Allocator, args: [][:0]u8) !u8 {
+    const path = args[0];
+    var init_path: ?[]const u8 = null;
+    var opts: stepper.Options = .{};
+
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        if (std.mem.eql(u8, a, "--init") and i + 1 < args.len) {
+            i += 1;
+            init_path = args[i];
+        } else if (std.mem.eql(u8, a, "--every") and i + 1 < args.len) {
+            i += 1;
+            opts.every = std.fmt.parseInt(u64, args[i], 10) catch 60;
+            if (opts.every == 0) opts.every = 60;
+        } else if (std.mem.eql(u8, a, "--max-ticks") and i + 1 < args.len) {
+            i += 1;
+            opts.max_ticks = std.fmt.parseInt(u64, args[i], 10) catch 0;
+        } else {
+            try stderrPrint("unknown argument: {s}\n", .{a});
+            return 2;
+        }
+    }
+
+    const resolved_init = if (init_path) |p|
+        try gpa.dupe(u8, p)
+    else
+        try std.fmt.allocPrint(gpa, "{s}.init.bin", .{path});
+    defer gpa.free(resolved_init);
+
+    const replay_bytes = std.fs.cwd().readFileAlloc(gpa, path, 512 * 1024 * 1024) catch |err| {
+        try stderrPrint("cannot read {s}: {s}\n", .{ path, @errorName(err) });
+        return 1;
+    };
+    defer gpa.free(replay_bytes);
+
+    var replay = jjr.parse(gpa, replay_bytes) catch |err| {
+        try stderrPrint("cannot parse {s}: {s}\n", .{ path, @errorName(err) });
+        return 1;
+    };
+    defer replay.deinit();
+
+    // A replay recorded across a mid-match backend switch cannot be held to
+    // bit-identity by either backend alone — refuse rather than emit hashes
+    // that would read as a divergence.
+    if (!replay.isSingleBackend()) {
+        try stderrPrint(
+            "{s}: {d} backend-fallback tick(s) — not a passport fixture\n",
+            .{ path, replay.header.backend_fallback_ticks },
+        );
+        return 1;
+    }
+
+    const init_bytes = std.fs.cwd().readFileAlloc(gpa, resolved_init, 8 * 1024 * 1024) catch |err| {
+        try stderrPrint(
+            "cannot read init state {s}: {s}\n(run: bun server/tools/dump-replay-init.ts {s})\n",
+            .{ resolved_init, @errorName(err), path },
+        );
+        return 1;
+    };
+    defer gpa.free(init_bytes);
+
+    const state_ptr = sim.alloc_state();
+    const state_buf = state_ptr[0..sim.state_size()];
+
+    const result = stepper.run(gpa, state_buf, init_bytes, &replay, opts) catch |err| {
+        try stderrPrint("step failed: {s}\n", .{@errorName(err)});
+        return 1;
+    };
+    defer gpa.free(result.samples);
+
+    try stdoutPrint(
+        "# {s}\tmap={s}\tseed={d}\tticks={d}\tinputs_applied={d}\n",
+        .{ path, replay.header.map_id, replay.header.rng_seed, result.ticks_stepped, result.inputs_applied },
+    );
+    for (result.samples) |s| {
+        try stdoutPrint("{d}\t{x:0>8}\n", .{ s.tick, s.hash });
+    }
+    try stdoutPrint("final\t{x:0>8}\n", .{result.final_hash});
+    return 0;
 }
 
 fn verifyDir(gpa: std.mem.Allocator, dir_path: []const u8) !u8 {
