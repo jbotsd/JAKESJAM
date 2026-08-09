@@ -902,6 +902,23 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (n) · **HEAD re-soak KILLED at 94% — E2 gate NOT re-met on
+  HEAD.** The run reached 7298 s of 7800 (8 m 2 s short) and was stopped
+  externally, so the script never wrote a verdict; one was written by hand
+  and labelled INCOMPLETE rather than rounded up.
+  - Every sampled row was clean: 242 samples, **0 fallback ticks, 0
+    fallbacks logged**, authority wasm throughout, 8 match cycles, RSS
+    band 66–109 MB starting at 94 and ending at 92 (sawtooth, no leak).
+  - **Not claiming the gate on it.** The earlier full 2 h 10 m PASS
+    (soak-20260809-154519) is the only completed run, and it predates the
+    input-routing fix. So E2's soak row currently reads: "passed on
+    pre-fix code, 94%-clean on post-fix code, no completed run on HEAD".
+    A flip needs one more full soak — the harness is one command
+    (`scripts/wasm-authority-soak.sh 7800`) and the evidence is durable.
+  - Orphaned soak server on :8188 stopped by hand: the script's cleanup
+    trap does not run when the script itself is killed, so it left the
+    host it spawned behind. Worth fixing in the harness if this recurs.
+
 - 2026-08-09 (p) · **P2: footage re-studied on POST-FIX code — no dead
   runs.** Sheet: `docs/clip-sheets/study-2026-08-09-post-fix.md`
   (clip-sheets are gitignored by convention, so the findings live here).
