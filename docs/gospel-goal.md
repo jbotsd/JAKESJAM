@@ -1053,6 +1053,43 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (zzzzz) · **E2-b IS RETRACTED — wasm does NOT break the venue
+  lobby. I was measuring an orphaned server.**
+
+  The "TS says fighting, wasm says round-over" comparison was not a
+  comparison of authorities. Port 8388 was still held by a process started
+  at **19:10** by an earlier session, which survived my `systemctl stop`
+  and silently answered every request — including the "server up" check
+  that was supposed to prove my own instance had started. The TS side was
+  a fresh build; the wasm side was 3.5 h old. So the split measured
+  old-build vs new-build.
+
+  Re-measured after killing the orphan, on current code under genuine
+  wasm authority (`authority: wasm`, `wasmReady: true`):
+
+  | authority | lobby phase (client, 90 s) | lobby phase (server) |
+  |---|---|---|
+  | TS | 44/45 fighting | fighting |
+  | wasm | **44/45 fighting** | **fighting** |
+
+  Identical. There is no hangout regression under wasm, and E2-b is not a
+  blocker. **E2-a stands** — the `.env.local` and rollback findings were
+  established by reading config and by reproduction, not by that server.
+
+  What survives from the episode, and is worth keeping: `/venue/summary`
+  now reports the LOBBY's own phase, which is what made the retraction
+  checkable from outside the process at all.
+
+  The lesson is narrower than "check your servers": a port answering
+  `/health` proves *something* is listening, not that YOUR build is. Bind
+  checks must compare process start time (or a build stamp) against the
+  change under test — three separate conclusions today came from
+  processes older than the code they were supposedly testing.
+
+- [x] **E2-b Venue hangout parity under wasm.** RETRACTED — not a real
+      defect; see above. The lobby-phase field added while chasing it is
+      kept, and a soak that polls it is still worth having.
+
 - 2026-08-09 (zzzz) · **WASM AUTHORITY BREAKS THE VENUE LOBBY'S HANGOUT
   MODE — and it is live right now.** Same client build, same map, two
   servers differing only in authority:
@@ -1075,11 +1112,10 @@ Zig (that's E3's conversation) · Steam before N3.
   outside its field of view. Zero fallback ticks and a correct venue are
   independent claims; only the first was measured.
 
-- [ ] **E2-b Venue hangout parity under wasm (blocks the flip).** Get the
-      lobby to phase "fighting" under wasm authority and keep it there,
-      then add the parity assertion the soak lacks — poll the LOBBY's
-      phase, not just the arena's, so this cannot regress unobserved
-      again.
+- [ ] **E2-b' Soak should poll the LOBBY's phase too.** (Descoped from the
+      retracted E2-b.) Not a blocker, but the soak still only watches the
+      arena, so a hangout-only divergence would be invisible to it. Now
+      cheap: `/venue/summary` exposes `lobby.phase`.
 
 - 2026-08-09 (final) · **Closing gate at HEAD, all green** — zig
   **172/172** (9/9 steps), client **1983 pass / 3 skip / 0 fail**,

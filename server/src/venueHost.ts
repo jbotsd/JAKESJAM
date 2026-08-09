@@ -251,6 +251,11 @@ export type VenueSummary = {
   lobby: {
     /** Connected lobby sockets — humans standing in the antechamber. */
     present: number;
+    /** The lobby world's own round phase. Hangout mode pins this to
+     *  "fighting" forever; anything else means hangout semantics are not
+     *  actually in force (gospel E2-b). `null` if the host has no summary
+     *  yet. */
+    phase: string | null;
   };
   arena: (ReturnType<MatchHost["summary"]> & { nextBellMs: number }) | null;
 };
@@ -960,8 +965,19 @@ export class VenueHost {
    *  the same numbers the death overlay shows). */
   summary(): VenueSummary {
     const arena = this.arenaHost.summary();
+    // The LOBBY's own phase, not just the arena's (gospel E2-b). Hangout
+    // mode is defined to hold "fighting" forever and never run a round
+    // machine, so this field is a standing assertion about the venue: any
+    // other value means hangout semantics are not in force. It was
+    // unobservable from outside the process until now, which is why the
+    // lobby could sit in the wrong phase live while every in-process test
+    // said it could not.
+    const lobbySummary = this.lobbyHost.summary();
     return {
-      lobby: { present: this.lobbySockets.size },
+      lobby: {
+        present: this.lobbySockets.size,
+        phase: lobbySummary?.phase ?? null,
+      },
       arena: arena
         ? { ...arena, nextBellMs: Math.round(msUntilNextBell(arena.phase, arena.countdownRemainingMs)) }
         : null,
