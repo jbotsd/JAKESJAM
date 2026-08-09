@@ -780,7 +780,36 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
-- 2026-08-09 (f) · **E2 EVIDENCE GATE FULLY SATISFIED — flip deliberately
+- 2026-08-09 (j) · **Gate reconciled: the passing soak PREDATES the input
+  fix, so HEAD is re-soaking.** Two sessions wrote this block on the same
+  afternoon again (the entry below was labelled (f), colliding with (f)/(g)/
+  (h) — relabelled (i), content untouched). Reconciliation, because "every
+  row is green" needs one correction and one addition:
+  - **Correction.** The soak it cites
+    (`soak-20260809-154519`, VERDICT=PASS, 7803 s, 0 fallback ticks, 0
+    divergence, 8 cycles, RSS 90→109 MB) started at 15:45, BEFORE the
+    input-routing fix landed at ~17:20 (5ad59c5). It is honest evidence of
+    process stability and nothing about input correctness. Stability is not
+    what the fix changed — it is an index computation, not the fallback or
+    memory path — but the gate says soak what you flip, so a second 2 h 10 m
+    run on HEAD started 17:57 (`soak-20260809-175752`, wasm authority
+    confirmed at boot). Not claiming the gate on stale code.
+  - **Addition — the row the soak cannot supply.** A bot soak provably
+    could not have caught the input bug (its bots submit every tick, so the
+    buggy subset index always coincided). So the flip now also has a REAL
+    CLIENT row: `tests/e2e/wasmAuthorityInput.spec.ts` (dac39ec) drives
+    Chromium against a `USE_WASM_STEP_WORLD=1` host and asserts the local
+    player moves on hold-D — passing, with the host reporting
+    `wasmFallbackTicks: 0` afterwards.
+  - **Agreed on holding the flip**, and the join bug below is the right
+    reason. Worth connecting: while writing the e2e I saw a client's x jump
+    -1800 px on the venue→arena transition and worked around it by
+    measuring in the venue. Given that lane's finding ("ADMITTED" while
+    `/health` says `humans=0`), that jump is probably the same bug seen from
+    the other side, not the coordinate change I assumed. Whoever holds the
+    join lane should have it.
+
+- 2026-08-09 (i) · **E2 EVIDENCE GATE FULLY SATISFIED — flip deliberately
   held, see below.** The 2 h 10 m headless bot-only soak under wasm
   authority returned **VERDICT=PASS**: ran 7803 s, **0 fallback ticks, 0
   divergence lines**, 8 full match cycles, RSS 90 MB → 109 MB (peak 143,
