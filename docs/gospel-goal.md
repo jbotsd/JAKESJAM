@@ -1037,6 +1037,25 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (z) · **CONSOLIDATED GATE AT HEAD — everything green.** Run
+  together rather than trusting the per-change runs, because "each change
+  passed" and "the tree passes" are different claims:
+
+  | gate | result |
+  |---|---|
+  | zig (`zig build test`) | **172/172** |
+  | client (`bun test`) | **1983 pass / 3 skip / 0 fail** (128,156 asserts) |
+  | server, TS authority | **369 / 0 fail** |
+  | server, `USE_WASM_STEP_WORLD=1 WASM_STRICT=1` | **369 / 0 fail** |
+  | port passport, native vs wasm | **12/12 agreed, 0 diverged** (900 ticks each) |
+  | five-viewport sweep | **5/5 clean** |
+  | front-door e2e | **11/11** |
+  | soak, wasm authority | **0 fallback ticks**, heap flat, p99 2.8 ms |
+
+  Both authority modes at identical counts is the row that matters: the
+  suite exercises the same behaviour whichever engine steps it, which is
+  precisely what E2 is asking to be true before the flip.
+
 - 2026-08-09 (y) · **Correction to my own payload number: the real one is
   ~1.4 MB, not 3.64 MB.** The 3.64 MB was measured against the ORIGIN on
   localhost. Public traffic goes through Cloudflare, which compresses at
