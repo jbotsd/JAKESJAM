@@ -938,9 +938,31 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       world-init for 5 of the 10 archived replays and what N2 offline needs
       for its non-generated arenas. Treat this lane as "named-map data into
       the core", not "port the generator".
-- [ ] **N-AIM · E4 aim-intent substrate.** Mouse-exact dialect ships
-      first; assisted/stick arrive with gamepad. Desktop input feeds the
-      same aim contract as browser input or L9 is violated.
+- [~] **N-AIM · E4 aim-intent substrate.** FIRST SLICE DONE 2026-08-10 —
+      the dialect lives in the core (`sim/src/aim_dialect.zig`).
+      `exact` (mouse) passes through untransformed; `assisted` (touch) is a
+      port of `touchAimAssist.ts` — 20 deg cone, 900px, blend ramping to
+      0.6; `snap` (gamepad) is NAMED but deliberately unimplemented and
+      behaves as assisted, because guessing it now would be a second thing
+      to keep in parity for no consumer.
+      Ported rather than left in TS so the raylib shell shares ONE assist
+      instead of growing a slightly-different second one — "slightly
+      different" is the whole risk here: the target is chosen by a strict
+      `>` on a cosine, so a reordered expression changes WHO a player is
+      nudged toward and never crashes, it just "feels off on mobile".
+      **THE CONTRACT, now written down:** a shell submits a WORLD-SPACE aim
+      point; how it gets there is the shell's business and the sim never
+      sees screen coordinates. That was implicit until venue 2.5 cost a
+      night to an e2e that assumed the camera centres the player.
+      `aimDialectParity.test.ts` compares the real TS against the wasm over
+      a direction grid — 81 assertions, including the nearest-to-crosshair
+      tiebreak and every boundary (dead, out of range, outside the cone,
+      zero-length stick). Mutation-checked with the substitution count
+      VERIFIED first (an earlier mutation this session silently failed to
+      apply and looked like a passing test).
+      STILL OPEN: the shells do not call it yet — the browser keeps its TS
+      path until E3, and there is no native shell to wire. `snap` awaits
+      gamepad.
 
 ### N1 — SHELL: **DECIDED**, one confirmation spike (after E2)
 
