@@ -269,6 +269,7 @@ fn runSmooth(
     const state: *WorldState = @ptrCast(@alignCast(state_buf.ptr));
 
     var clock = shell.StepClock{};
+    var latency = InputLatency{};
     var prev = Lerpable.capture(state);
     var curr = prev;
     var tick: u64 = 0;
@@ -303,6 +304,13 @@ fn runSmooth(
             _ = sim.world.step_world(state, shell.STEP_MS);
             curr = Lerpable.capture(state);
         }
+
+        // Poll AFTER stepping so the reading is "time until the next step
+        // consumes this", which is the number a player feels.
+        const raw = pollRaw(ctx, false);
+        const frame_input = shell.mapInput(raw);
+        _ = frame_input;
+        latency.note((shell.STEP_MS - clock.accumulator) * 1000.0);
 
         const a = @as(f32, @floatCast(clock.alpha()));
         ctx.frames_drawn += 1;
@@ -346,7 +354,62 @@ fn runSmooth(
         ctx.frames_drawn,
         clock.dropped_steps,
     });
+    std.debug.print("input->sim latency: mean {d:.0} us, worst {d:.0} us over {d} frames (one step = {d:.0} us)\n", .{
+        latency.meanUs(),
+        latency.worst_us,
+        latency.samples,
+        shell.STEP_MS * 1000.0,
+    });
 }
+
+/// Poll raylib into the shell's device-state struct. The ONLY job here is
+/// reading devices — every decision about what a key means lives in
+/// `shell.mapInput`, which is pure and tested. Screen→world for the mouse
+/// happens here too, because that conversion is the shell's job and
+/// nobody else's (the aim contract; venue 2.5 cost a night to an e2e that
+/// assumed otherwise).
+fn pollRaw(ctx: *const RenderCtx, emission_ready: bool) shell.RawInput {
+    const mp = c.GetMousePosition();
+    return .{
+        .key_a = c.IsKeyDown(c.KEY_A),
+        .key_d = c.IsKeyDown(c.KEY_D),
+        .key_w = c.IsKeyDown(c.KEY_W),
+        .key_s = c.IsKeyDown(c.KEY_S),
+        .key_space = c.IsKeyDown(c.KEY_SPACE),
+        .key_shift = c.IsKeyDown(c.KEY_LEFT_SHIFT) or c.IsKeyDown(c.KEY_RIGHT_SHIFT),
+        .key_c = c.IsKeyDown(c.KEY_C),
+        .key_e = c.IsKeyDown(c.KEY_E),
+        .key_1 = c.IsKeyDown(c.KEY_ONE),
+        .key_2 = c.IsKeyDown(c.KEY_TWO),
+        .key_3 = c.IsKeyDown(c.KEY_THREE),
+        .mouse_left = c.IsMouseButtonDown(c.MOUSE_BUTTON_LEFT),
+        .mouse_right = c.IsMouseButtonDown(c.MOUSE_BUTTON_RIGHT),
+        .aim_world_x = (@as(f64, @floatCast(mp.x)) - ctx.off_x) / ctx.scale,
+        .aim_world_y = (@as(f64, @floatCast(mp.y)) - ctx.off_y) / ctx.scale,
+        .emission_ready = emission_ready,
+    };
+}
+
+/// gospel N2.2 asks for input→sim latency "measured, not asserted".
+///
+/// The honest measurement for a fixed-tick loop is: at the instant the
+/// frame polls, how long until the step that consumes it? That is the
+/// accumulator's remaining debt, and it is bounded by one step by
+/// construction. Reported as observed microseconds rather than claimed.
+const InputLatency = struct {
+    samples: u64 = 0,
+    total_us: f64 = 0,
+    worst_us: f64 = 0,
+
+    fn note(self: *InputLatency, us: f64) void {
+        self.samples += 1;
+        self.total_us += us;
+        if (us > self.worst_us) self.worst_us = us;
+    }
+    fn meanUs(self: *const InputLatency) f64 {
+        return if (self.samples == 0) 0 else self.total_us / @as(f64, @floatFromInt(self.samples));
+    }
+};
 
 pub fn main() !void {
     var gpa_state = std.heap.GeneralPurposeAllocator(.{}){};

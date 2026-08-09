@@ -141,3 +141,161 @@ test "StepClock: steady 60Hz never drops and never drifts" {
     try std.testing.expectEqual(@as(u32, 600), total);
     try std.testing.expectEqual(@as(u64, 0), c.dropped_steps);
 }
+
+// ── gospel N2.2 · input dialect (mouse-exact) ────────────────────────────
+//
+// Mirrors `client/src/net/protocol.ts`'s InputBit exactly. Duplicated as
+// constants rather than imported because the sim already hard-codes these
+// (weapon.zig's `InputBitFire = 1 << 6`, world.zig's FIRE_BIT) — the wire
+// numbering is the contract, and a third opinion about it is the danger.
+pub const Bit = struct {
+    pub const left: u32 = 1 << 0;
+    pub const right: u32 = 1 << 1;
+    pub const up: u32 = 1 << 2;
+    pub const down: u32 = 1 << 3;
+    pub const jump: u32 = 1 << 4;
+    pub const crouch: u32 = 1 << 5;
+    pub const fire: u32 = 1 << 6;
+    pub const ability: u32 = 1 << 7;
+    pub const shield: u32 = 1 << 8;
+    pub const dash: u32 = 1 << 9;
+    pub const slot1: u32 = 1 << 10;
+    pub const slot2: u32 = 1 << 11;
+    pub const slot3: u32 = 1 << 12;
+};
+
+/// Raw device state for one frame, as a shell would poll it.
+///
+/// A struct rather than direct raylib calls so the MAPPING is testable
+/// without a window. The raylib layer's only job is filling this in; every
+/// decision about what a key means lives in `mapInput` below, where a test
+/// can reach it.
+pub const RawInput = struct {
+    key_a: bool = false,
+    key_d: bool = false,
+    key_w: bool = false,
+    key_s: bool = false,
+    key_space: bool = false,
+    key_shift: bool = false,
+    key_c: bool = false,
+    key_e: bool = false,
+    key_1: bool = false,
+    key_2: bool = false,
+    key_3: bool = false,
+    mouse_left: bool = false,
+    mouse_right: bool = false,
+    /// Already converted to WORLD space by the shell — the sim never sees
+    /// screen coordinates (the aim contract, see aim_dialect.zig).
+    aim_world_x: f64 = 0,
+    aim_world_y: f64 = 0,
+    /// True when the local player's emission meter is full. The browser
+    /// arms the emission key client-side on exactly this condition; the
+    /// native shell must reproduce it or a native player could press E
+    /// early and reach a code path a browser player cannot.
+    emission_ready: bool = false,
+};
+
+/// Map device state to the sim's input frame. Pure.
+///
+/// The control truth (CLAUDE.md, and the Controls reference in Settings):
+///   WASD move · SPACE/W jump · MOUSE aim+fire · SHIFT hold shield
+///   RIGHT-CLICK or C aegis power-slide · E emission at a full meter
+///   1-3 drafted abilities
+///
+/// Note on slot count: the goal row says "1-4 drafted actives", but the
+/// rack is locked at THREE (MAX_ABILITY_SLOTS, sim/src/world_state.zig)
+/// and the shipped Controls copy says 1-3. Three is implemented; the row
+/// is stale.
+pub fn mapInput(raw: RawInput) FrameInput {
+    var keys: u32 = 0;
+    if (raw.key_a) keys |= Bit.left;
+    if (raw.key_d) keys |= Bit.right;
+    // W is both "up" and a jump alias, matching the browser. Up drives
+    // aim-relative movement intent; jump is the actual verb.
+    if (raw.key_w) keys |= Bit.up | Bit.jump;
+    if (raw.key_space) keys |= Bit.jump;
+    if (raw.key_s) keys |= Bit.down | Bit.crouch;
+    if (raw.mouse_left) keys |= Bit.fire;
+    if (raw.key_shift) keys |= Bit.shield;
+    if (raw.mouse_right or raw.key_c) keys |= Bit.dash;
+    // THE ARM GATE. E does nothing unless the meter is full — reproduced
+    // here because the browser gates it client-side, and a native shell
+    // that sent the bit early would hand native players a state browser
+    // players can never reach. Server-validated too, but "the other
+    // client can't even ask" is the property being preserved.
+    if (raw.key_e and raw.emission_ready) keys |= Bit.ability;
+    if (raw.key_1) keys |= Bit.slot1;
+    if (raw.key_2) keys |= Bit.slot2;
+    if (raw.key_3) keys |= Bit.slot3;
+
+    return .{
+        .keys = keys,
+        .aim_x = raw.aim_world_x,
+        .aim_y = raw.aim_world_y,
+        .dt_ms = STEP_MS,
+    };
+}
+
+test "mapInput: movement and jump aliases" {
+    try std.testing.expectEqual(Bit.left, mapInput(.{ .key_a = true }).keys);
+    try std.testing.expectEqual(Bit.right, mapInput(.{ .key_d = true }).keys);
+    try std.testing.expectEqual(Bit.jump, mapInput(.{ .key_space = true }).keys);
+    // W is up AND jump, same as the browser.
+    try std.testing.expectEqual(Bit.up | Bit.jump, mapInput(.{ .key_w = true }).keys);
+    try std.testing.expectEqual(Bit.down | Bit.crouch, mapInput(.{ .key_s = true }).keys);
+}
+
+test "mapInput: fire, shield, and both slide bindings" {
+    try std.testing.expectEqual(Bit.fire, mapInput(.{ .mouse_left = true }).keys);
+    try std.testing.expectEqual(Bit.shield, mapInput(.{ .key_shift = true }).keys);
+    // Right-click and C are the SAME verb; either alone must produce it,
+    // and both together must not produce it twice or cancel.
+    try std.testing.expectEqual(Bit.dash, mapInput(.{ .mouse_right = true }).keys);
+    try std.testing.expectEqual(Bit.dash, mapInput(.{ .key_c = true }).keys);
+    try std.testing.expectEqual(Bit.dash, mapInput(.{ .mouse_right = true, .key_c = true }).keys);
+}
+
+test "mapInput: the emission ARM GATE — E is inert on an empty meter" {
+    // The property: a native player must not be able to ask for something
+    // a browser player cannot. The browser arms E client-side on a full
+    // meter; without this the native shell would send the bit early.
+    try std.testing.expectEqual(@as(u32, 0), mapInput(.{ .key_e = true }).keys);
+    try std.testing.expectEqual(
+        Bit.ability,
+        mapInput(.{ .key_e = true, .emission_ready = true }).keys,
+    );
+    // Vacuity guard: a full meter with the key UP is still nothing, so the
+    // test above is about the key and not just the flag.
+    try std.testing.expectEqual(@as(u32, 0), mapInput(.{ .emission_ready = true }).keys);
+}
+
+test "mapInput: ability slots are 1-3, and there is no slot 4" {
+    try std.testing.expectEqual(Bit.slot1, mapInput(.{ .key_1 = true }).keys);
+    try std.testing.expectEqual(Bit.slot2, mapInput(.{ .key_2 = true }).keys);
+    try std.testing.expectEqual(Bit.slot3, mapInput(.{ .key_3 = true }).keys);
+    // Nothing maps to 1 << 13. The rack is locked at MAX_ABILITY_SLOTS=3;
+    // the goal row's "1-4" is stale and this pins which one is right.
+    const all = mapInput(.{ .key_1 = true, .key_2 = true, .key_3 = true }).keys;
+    try std.testing.expectEqual(@as(u32, 0), all & (@as(u32, 1) << 13));
+}
+
+test "mapInput: aim passes through in WORLD space, untouched" {
+    // The aim contract: the shell has already converted; the dialect must
+    // not "helpfully" transform it. Mouse is exact — see aim_dialect.zig.
+    const f = mapInput(.{ .aim_world_x = 1234.5, .aim_world_y = -67.25 });
+    try std.testing.expectEqual(@as(f64, 1234.5), f.aim_x);
+    try std.testing.expectEqual(@as(f64, -67.25), f.aim_y);
+}
+
+test "mapInput: a full hand of inputs composes without collisions" {
+    // Vacuity guard for the single-key tests: every bit distinct, nothing
+    // masking anything else.
+    const f = mapInput(.{
+        .key_a = true, .key_space = true, .mouse_left = true,
+        .key_shift = true, .key_c = true, .key_e = true,
+        .emission_ready = true, .key_2 = true,
+    });
+    const want = Bit.left | Bit.jump | Bit.fire | Bit.shield | Bit.dash | Bit.ability | Bit.slot2;
+    try std.testing.expectEqual(want, f.keys);
+    try std.testing.expectEqual(@as(u32, 7), @popCount(f.keys));
+}

@@ -1103,7 +1103,34 @@ cross-compile; on-box today (`extra/raylib 6.0`).
       baked-tier procedural draws. Acceptance: an N0 replay *rendered* —
       watch an archived match play back windowed with hashes still
       matching (L9's proof-of-innocence for the shell).
-- [ ] **2.2 Input dialect (mouse-exact).** Per the control truth in
+- [~] **2.2 Input dialect (mouse-exact).** MAPPING DONE 2026-08-10 in
+      `shell.mapInput` — pure, so it is testable without a window, and the
+      raylib layer's only job is filling a `RawInput` struct. Every
+      decision about what a key means lives where a test can reach it.
+      Covers the control truth: WASD, SPACE/W jump (W is up AND jump, same
+      as the browser), left-click fire, SHIFT shield, right-click OR C for
+      the aegis slide (one verb, two bindings, neither doubling), E
+      emission, 1-3 abilities. 6 tests.
+      **The arm gate is reproduced and pinned:** E is inert unless the
+      meter is full, because the browser gates it client-side and a native
+      shell that sent the bit early would let a native player ask for
+      something a browser player cannot. Mutation-checked — removing the
+      gate fails 4 tests.
+      **Latency, measured not asserted:** mean **6.0 ms**, worst
+      **16.667 ms** over 3812 frames, where one step is 16.667 ms. So
+      input→sim is ≤ 1 frame, and the worst case IS exactly one step —
+      the bound holds by construction, not by luck. Honest scope: this
+      measures poll→consuming-step inside the loop, not photon-to-photon;
+      display and compositor latency are not in it.
+      **Row correction:** it says "1-4 drafted actives"; the rack is
+      locked at THREE (`MAX_ABILITY_SLOTS`) and the shipped Controls copy
+      says 1-3. Three is implemented and a test asserts nothing maps to
+      bit 13.
+      STILL OPEN: nothing consumes the mapped input yet — `jjplay` polls
+      and measures it but replays a recording, so there is no live local
+      player to drive. That arrives with N2.4 (offline match vs bots).
+      (original row below)
+- [ ] ~~**2.2 Input dialect (mouse-exact).**~~ Per the control truth in
       CLAUDE.md: move, Shift shield, left-click alternating throws,
       right-click/C aegis slide, E emission at full charge, 1-4 drafted
       actives. Input→sim ≤ 1 frame, measured not asserted; the
