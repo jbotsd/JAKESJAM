@@ -272,11 +272,30 @@ now cut the cruellest half of that chain.
       deliberate exits clear it. **e2e 3/3 in real Chromium against a
       real host**: reload in venue lands on a live surface, deliberate
       exit is not resumed, stale marker is not resumed.
-- [ ] **1.8 Class select in the front door.** A player who never finds
-      the loadout table fights as "balanced" forever; the private-room
-      picker is a bare `<select>` (`main.ts:547-552`) next to the rich
-      draft-overlay class rows. One presentation, surfaced on the main
-      path.
+- [x] 1.8 Class select on the main path — DONE 2026-08-09 (1557e46 +
+      8dbbbbd). `game/ui/classPicker.ts` owns the element (extracted
+      verbatim from CardDraftOverlay, which delegates), mounted in BOTH
+      the private-room form (the bare `<select>` is gone) and **Settings**,
+      two keystrokes from anywhere. Two views, ONE persisted key, kept in
+      step by `jakesjam:class-change`. Writing the e2e is what proved the
+      first attempt was only half the item: tiles in the room form gave
+      one presentation but left the choice in a panel hidden by default,
+      and the click failed "element is not visible".
+      - **Latent bug found in EVERY shell layer, now fixed:**
+        `.shell-layer` is `overflow: auto` with `align-items: center`, so
+        once content exceeds the layer height, centring pushes the frame's
+        TOP above the scroll origin and it is unreachable forever (scroll
+        down works, up does not). A Class section made Settings cross that
+        line at 1280×800 — first control visible, enabled, un-clickable.
+        Fixed with `align-items: flex-start` + `margin: auto` on
+        `.shell-frame`: centred while it fits, scrollable when it isn't.
+        Repairs settings/clips/credits/pause. Precisely what L7 exists for.
+      - Also un-staled two 1.7 e2e cases that asserted a splash from a
+        bare URL — that stopped being a 1.7 statement once 1.1 made the
+        venue the default landing; they use `?splash=1` now.
+      Gates: client 1963/0 (+3 skip), tsc clean, classPicker e2e 6/6
+      including all four canonical viewports, matchResume + lobbyFirst
+      7/7 re-run green against the CSS change.
 
 ### Phase 2 — CLOSE THE LOOP (venue-goal Pillars 4 → 5, as written)
 
@@ -691,6 +710,31 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (f) · **Doors Phase 1 machine lanes CLOSED — 1.6 and 1.8
+  done; only the two Jake decisions remain.** Commits 0aa1261 (fast
+  lane), 3b8bebd (venueNames), 1557e46 (picker extract), 8dbbbbd (main
+  path + the CSS fix). Phase 1 is now 1.1/1.3/1.4/1.5a/1.6/1.7/1.8 DONE,
+  with 1.2 (email-gate position) and 1.5b (bell taper) the only open
+  rows — both Decision-gated, to be built flag-dark per L4, never fired
+  on silence.
+  - **1.6** routes the fast lane through the SAME `toggleQueue` a totem
+    touch uses, so it adds a trigger rather than a second queue path and
+    the callsign gate still holds; `ensureQueued` guards the toggle
+    against the queue/UNqueue flip a reconnect would otherwise cause.
+  - **1.8 turned up a latent bug in every shell layer**, which is the
+    session's second "the gate caught what the code hid": `.shell-layer`
+    centred content inside an `overflow: auto` box, so any panel taller
+    than the viewport lost its own top permanently. Settings crossed
+    that line the moment it gained a Class section. Fixed for
+    settings/clips/credits/pause together.
+  - Two 1.7 e2e cases were quietly stale — they asserted a splash from a
+    bare URL, which stopped meaning anything about 1.7 once 1.1 made the
+    venue the default landing. Fixed to `?splash=1`.
+  - **E2 soak at 76/130 min: 0 fallback ticks, wasmReady true
+    throughout.** Honest caveat on the heap gate: RSS is 90 → 137 MB
+    across 76 min of bot cycling, oscillating rather than monotonically
+    climbing. "Flat" is a judgement call to be made against the whole
+    curve when the run ends, not asserted now.
 - 2026-08-09 (d) · **E2 gate hardened + N0.1/N0.2 landed.** Commits
   c05f5ca (gate), 5c51b3e (soak harness), f7b5796 (native harness).
   - **The E2 gate was hollow and is now real.** `USE_WASM_STEP_WORLD=1
