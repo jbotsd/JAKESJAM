@@ -188,7 +188,7 @@ type ProbeWindow = {
   } | null;
   __rigDebug?: () => RigDebugRow[] | null;
   __localPlayerId?: () => string | null;
-  __killfeedLines?: () => string[];
+  __killfeedLines?: () => string[] | null;
   __netStats?: () => Record<string, unknown> | null;
 };
 
@@ -292,7 +292,10 @@ export function installWindowProbe(): void {
   w.__rigDebug = () => activeRigDebugGetter?.() ?? null;
   w.__netStats = () => activeNetStatsGetter?.() ?? null;
   w.__localPlayerId = () => activeLocalPlayerIdGetter?.() ?? null;
-  w.__killfeedLines = () => activeKillfeedGetter?.() ?? [];
+  // null = no feed has registered yet (wrong scene, or never constructed);
+  // [] = a feed exists and currently shows nothing. Collapsing those two
+  // into [] made the first live check unreadable.
+  w.__killfeedLines = () => (activeKillfeedGetter ? activeKillfeedGetter() : null);
   w.__simSampleHashes = async (count, intervalMs) => {
     const out: number[] = [];
     for (let i = 0; i < count; i++) {

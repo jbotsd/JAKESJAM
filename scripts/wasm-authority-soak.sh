@@ -113,7 +113,7 @@ if [ "$AUTHORITY" != "wasm" ] || [ "$WASM_READY" != "true" ]; then
 fi
 echo "[soak] wasm authority confirmed at boot; soaking ${DURATION}s..."
 
-echo "elapsed_s,rss_kb,fallback_ticks,matches,wasm_ready,tick_p99_ms" >"$CSV"
+echo "elapsed_s,rss_kb,fallback_ticks,matches,wasm_ready,tick_p99_ms,lobby_phase" >"$CSV"
 
 START="$(date +%s)"
 FIRST_RSS=""
@@ -143,16 +143,29 @@ while :; do
   RDY="$(echo "$H" | grep -o '"wasmReady":[a-z]*' | cut -d: -f2 || true)"
   MATCHES="$(echo "$H" | grep -o '"matches":[0-9]*' | cut -d: -f2 || true)"
   P99="$(echo "$H" | grep -o '"p99Ms":[0-9.]*' | head -1 | cut -d: -f2 || true)"
+  # gospel E2-b' — watch the LOBBY, not only the arena. The 2026-08-09 soak
+  # counted fallback ticks on the arena world and would not have noticed a
+  # hangout-only divergence at all; "0 fallback ticks" and "the venue
+  # behaves" are independent claims. Hangout mode pins the lobby to
+  # "fighting" forever, so anything else is a real signal.
+  V="$(curl -sf --max-time 5 "http://localhost:$PORT/venue/summary" || true)"
+  LOBBY_PHASE="$(echo "$V" | grep -o '"phase":"[a-z-]*"' | head -1 | cut -d: -f2 | tr -d '"' || true)"
+  LOBBY_PHASE="${LOBBY_PHASE:-}"
   FB="${FB:-0}"; RDY="${RDY:-false}"; MATCHES="${MATCHES:-0}"; P99="${P99:-}"
   # `cond && assign` is a trap under `set -e`: when cond is false the list
   # returns 1 and kills the run. Cost the first smoke test its whole loop.
   if [ -z "$FIRST_RSS" ]; then FIRST_RSS="$RSS"; fi
   if [ "$FB" -gt "$MAX_FALLBACK" ]; then MAX_FALLBACK="$FB"; fi
 
-  echo "$ELAPSED,$RSS,$FB,$MATCHES,$RDY,$P99" >>"$CSV"
+  echo "$ELAPSED,$RSS,$FB,$MATCHES,$RDY,$P99,$LOBBY_PHASE" >>"$CSV"
 
   if [ "$FB" -ne 0 ]; then FAILED="wasmFallbackTicks=$FB at ${ELAPSED}s"; break; fi
   if [ "$RDY" != "true" ]; then FAILED="wasmReady went false at ${ELAPSED}s"; break; fi
+  # Only fail on a phase we actually read — an empty value means the server
+  # predates the field, which is a gap in observation, not a defect.
+  if [ -n "$LOBBY_PHASE" ] && [ "$LOBBY_PHASE" != "fighting" ]; then
+    FAILED="venue lobby left hangout: phase=$LOBBY_PHASE at ${ELAPSED}s"; break
+  fi
 
   sleep "$POLL"
 done
