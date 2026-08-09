@@ -394,11 +394,23 @@ teaches the loop.
       controls were ever written down — a player who blinked, switched
       device, or came back next week had nowhere to look. Settings is two
       keystrokes from anywhere. Verified rendering at desktop and phone.
-      **Still open, and it is the better form:** ghosted glyphs over the
-      dummies themselves. ui-axioms bans modal tutorials and text is the
-      weaker answer. Also open: making the legend itself re-summonable
-      (Settings now covers the need, so this is polish); first-storm /
-      first-cycle-end lines; class verbs on first pick.
+      Third slice DONE: **ghosted glyphs over the dummy** — the form
+      ui-axioms actually asks for. Walk within 300 px of the practice
+      dummy and a faint world-anchored "HIT ME" appears ON it; hit
+      anything once and it is gone forever. Its own localStorage key, not
+      the legend's, because "that object is a target" is a different
+      lesson from "here are the controls" and a shared key would let
+      whichever fired first suppress the other. Verified end to end:
+      glyph rendered over the dummy at 147 px, retire flag set after a
+      real hit.
+      - **Retirement watches destructible HEALTH, not an event.** The
+        first version hooked `spawnDamageNumberAt` — the one callback
+        that fires exactly when a dummy is hit — and it never ran:
+        measured a dummy going 60 → 48 with the hint still up. Watching
+        the health sum cannot miss a hit that actually happened.
+      - Still open: first-storm / first-cycle-end lines; class verbs on
+        first pick. A re-summonable legend is now polish rather than a
+        gap — Settings covers the need.
       Original item: onboarding by encounter (ui-axioms bans modal tutorials) —
       the lobby teaches movement/fire via ghosted glyphs over the
       dummies; the FTUE legend becomes re-summonable (today: once ever

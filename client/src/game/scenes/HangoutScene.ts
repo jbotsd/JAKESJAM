@@ -125,6 +125,10 @@ const CLASS_ROW_TITLE = "CHOOSE YOUR CLASS";
 // dropdown are two views of ONE selection. Same literal-key precedent as
 // "jakesjam.playerName" below.
 const PLAYER_CHARACTER_KEY = "jakesjam.playerCharacter";
+/** Doors 3.3 — "that object is a target" is a DIFFERENT lesson from
+ *  "here are the controls", so it gets its own key. Sharing the legend's
+ *  would mean whichever fired first silently suppressed the other. */
+const DUMMY_HINT_KEY = "jakesjam-ftue-dummy-hit";
 
 export class HangoutScene extends Phaser.Scene {
   private mode: "private" | "venue" = "private";
@@ -159,6 +163,19 @@ export class HangoutScene extends Phaser.Scene {
    *  displayed state until the next press, never the server's behavior. */
   private duoIntentLocal = false;
   private duoHintText: Phaser.GameObjects.Text | null = null;
+  /** Doors 3.3 — the encounter prompt over a practice dummy, and whether
+   *  the lesson is already over. See updateDummyEncounterGlyph. */
+  private dummyGlyph: Phaser.GameObjects.Text | null = null;
+  /** Total destructible health last frame; a DROP means somebody hit
+   *  something, which is the lesson being learned. */
+  private lastDummyHealthSum: number | null = null;
+  private dummyHintRetired = ((): boolean => {
+    try {
+      return localStorage.getItem(DUMMY_HINT_KEY) === "1";
+    } catch {
+      return false;
+    }
+  })();
   private statusText: Phaser.GameObjects.Text | null = null;
   private actionCamera!: ActionCamera;
   private simEventRouter: SimEventRouter | null = null;
@@ -1552,6 +1569,116 @@ export class HangoutScene extends Phaser.Scene {
     this.updateTotemPulse(now);
     this.updateVenueFeed(now);
     this.updateActionBar(state);
+    this.updateDummyEncounterGlyph(state);
+  }
+
+  /**
+   * Onboarding BY ENCOUNTER — Doors 3.3, and the form ui-axioms actually
+   * asks for ("the only good tutorial is the one you can't tell is a
+   * tutorial"; modal tutorials are banned outright).
+   *
+   * The text legend that landed earlier today teaches on a timer whether
+   * or not the player is looking. This teaches when they are already
+   * standing in front of the thing: walk near a practice dummy and a
+   * ghosted prompt appears ON it. Hit anything once and it is gone
+   * forever — the lesson is over the moment it is learned, which is the
+   * difference between teaching and nagging.
+   *
+   * Its own localStorage key, NOT the legend's: these are different
+   * lessons ("here are the controls" vs "that object is a target"), and
+   * sharing a key would mean whichever fired first silently suppressed
+   * the other.
+   */
+  private updateDummyEncounterGlyph(state: WorldState): void {
+    if (this.mode !== "venue" || this.dummyHintRetired) return;
+
+    const me = state.players[this.localPlayerId];
+    if (!me) return;
+
+    // Nearest dummy within reach of "I am standing at it". Squared
+    // distance — no hypot in a per-frame loop for a proximity test.
+    const REACH_PX = 300;
+    let healthSum = 0;
+    let bestX = 0;
+    let bestY = 0;
+    let bestSq = REACH_PX * REACH_PX;
+    let found = false;
+    for (const key in state.destructibles) {
+      const d = state.destructibles[key as unknown as keyof typeof state.destructibles];
+      if (!d) continue;
+      healthSum += d.health;
+      const cx = d.x + d.width / 2;
+      const cy = d.y;
+      const dx = cx - me.x;
+      const dy = cy - me.y;
+      const sq = dx * dx + dy * dy;
+      if (sq < bestSq) {
+        bestSq = sq;
+        bestX = cx;
+        bestY = cy;
+        found = true;
+      }
+    }
+
+    // Retire on OBSERVED DAMAGE rather than on a render callback. The
+    // first version hooked spawnDamageNumberAt — the one call that fires
+    // exactly when a dummy is hit — and it never ran: measured a dummy
+    // going 60 -> 48 health with the hint still up. Watching the health
+    // sum is plumbing-independent and cannot miss a hit that actually
+    // happened, which is the only definition of "learned" that matters.
+    // Caveat, deliberately accepted: a dummy being DESTROYED also drops
+    // the sum (it leaves the record), so that retires the hint too. In a
+    // room whose only destructible is the practice target that is the
+    // right answer anyway — either way somebody hit it — and the cost of
+    // being wrong is a hint ending early, not a lie on screen.
+    if (this.lastDummyHealthSum !== null && healthSum < this.lastDummyHealthSum) {
+      this.retireDummyHint();
+      this.lastDummyHealthSum = healthSum;
+      return;
+    }
+    this.lastDummyHealthSum = healthSum;
+
+    if (!found) {
+      this.dummyGlyph?.setVisible(false);
+      return;
+    }
+
+    if (!this.dummyGlyph) {
+      this.dummyGlyph = this.add
+        .text(0, 0, "HIT ME", {
+          color: "#cffaff",
+          fontFamily: "'Space Mono', 'Courier New', monospace",
+          fontSize: "13px",
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(900) // under HUD chrome (1000+), above the room
+        .setAlpha(0.55); // GHOSTED: a prompt, not a label
+    }
+    // Sits above the dummy's head in WORLD space (no setScrollFactor(0))
+    // so it belongs to the object rather than to the screen — that is
+    // what makes it read as part of the room.
+    this.dummyGlyph.setVisible(true).setPosition(bestX, bestY - 26);
+  }
+
+  /** The lesson is over: something got hit. Doors 3.3. */
+  private retireDummyHint(): void {
+    if (this.dummyHintRetired) return;
+    this.dummyHintRetired = true;
+    try {
+      localStorage.setItem(DUMMY_HINT_KEY, "1");
+    } catch {
+      /* storage unavailable — it simply teaches again next visit */
+    }
+    const glyph = this.dummyGlyph;
+    this.dummyGlyph = null;
+    if (!glyph) return;
+    this.tweens.add({
+      targets: glyph,
+      alpha: 0,
+      duration: 320,
+      ease: "Cubic.easeIn",
+      onComplete: () => glyph.destroy(),
+    });
   }
 
   /** Lobby VFX parity (docs/lobby-vfx-parity-goal.md Pillar 1) — drives the
