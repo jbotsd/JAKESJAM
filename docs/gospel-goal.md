@@ -1105,7 +1105,7 @@ Zig (that's E3's conversation) · Steam before N3.
   |---|---|
   | zig (`zig build test`) | **172/172** |
   | client (`bun test`) | **1983 pass / 3 skip / 0 fail** (128,156 asserts) |
-  | server, TS authority | **369 / 0 fail** |
+  | server, TS authority (`USE_WASM_STEP_WORLD=0`) | **369 / 0 fail** |
   | server, `USE_WASM_STEP_WORLD=1 WASM_STRICT=1` | **369 / 0 fail** |
   | port passport, native vs wasm | **12/12 agreed, 0 diverged** (900 ticks each) |
   | five-viewport sweep | **5/5 clean** |
@@ -1115,6 +1115,13 @@ Zig (that's E3's conversation) · Steam before N3.
   Both authority modes at identical counts is the row that matters: the
   suite exercises the same behaviour whichever engine steps it, which is
   precisely what E2 is asking to be true before the flip.
+
+  CORRECTED after the `.env.local` find: the "TS authority" row was first
+  run by simply NOT setting the flag, which — via `server/.env.local` and
+  Bun's dotenv loading — very likely ran wasm twice and compared it with
+  itself. Re-run with an explicit `USE_WASM_STEP_WORLD=0`; still 369 / 0,
+  so the conclusion stands, but it is now actually a two-engine
+  comparison instead of one engine measured twice.
 
 - 2026-08-09 (y) · **Correction to my own payload number: the real one is
   ~1.4 MB, not 3.64 MB.** The 3.64 MB was measured against the ORIGIN on
