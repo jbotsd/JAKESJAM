@@ -36,7 +36,7 @@ Numeric gates (published browser-game bars — Poki/CrazyGames):
 | Conversion-to-play (load → ≥1 min played) | ≥70% (80% = exceptional) | unmeasured; journey has 5 gates + ≥5 clicks before the lobby |
 | URL → **in the world** | (precursor to the row below) | **~1.0 s median, first visit AND returning** (measured 2026-08-09, localhost) |
 | URL → first shot fired | <15 s returning / <30 s first visit | front door now ~1 s; remaining distance is the BELL, not the boot — see note |
-| Critical-path payload | <10 MB | **3.64 MB on the landing** (was 12.12 MB — fixed 2026-08-09) |
+| Critical-path payload | <10 MB | **~1.4 MB over the wire** (origin measures 3.64 MB; Cloudflare brotli does the rest — was 12.12 MB) |
 | First kill | <60 s | unguaranteed (default-class player vs mixed bots) |
 | Play-again rate after first cycle | ≥50% | unmeasured; cycle ends in a modal |
 
@@ -1036,6 +1036,26 @@ Zig (that's E3's conversation) · Steam before N3.
 ---
 
 ## STATUS — ground truth, newest first
+
+- 2026-08-09 (y) · **Correction to my own payload number: the real one is
+  ~1.4 MB, not 3.64 MB.** The 3.64 MB was measured against the ORIGIN on
+  localhost. Public traffic goes through Cloudflare, which compresses at
+  the edge — measured on `play.elyad.io`: the JS bundle is **663 KB
+  brotli** (2.29 MB at origin) and `sim.wasm` is **60 KB** (333 KB at
+  origin). So a real visitor downloads roughly 1.4 MB, not 3.6 MB, and
+  the gate has far more headroom than tonight's earlier entry claimed.
+  - **The origin genuinely does not compress** — no `content-encoding`
+    even when the request sends `Accept-Encoding: gzip, br`; gzip would
+    take that bundle to 0.64 MB. That costs nothing for public players
+    (Cloudflare fixes it downstream, and the origin hop is loopback) but
+    it IS the number anyone on LAN or a direct IP pays, and it is why
+    every local measurement tonight over-reported. Fix is in
+    `server/src`, inside the freeze — recorded, not done.
+  - **Both figures in the row now**, origin and wire, because measuring
+    the origin and calling it "what a visitor downloads" is exactly the
+    mistake the row already made once tonight with gzip-bundle prose.
+  - Note the 8.5 MB media win from (u) is unaffected and real: media was
+    not being compressed away, it was not being fetched at all.
 
 - 2026-08-09 (x) · **Client frame budget on the landing, measured for the
   first time** (`tools/landing-fps.mjs`, rAF deltas in-page):
