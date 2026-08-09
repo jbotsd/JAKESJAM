@@ -730,11 +730,32 @@ section early because it is fun; it is fun, and it is parked.
       replays remain un-studied.** No newer replays exist — no human has
       played since 07-31.
   - Findings from the studied one (docs/clip-sheets/study-2026-08-05-jul31-replay.md):
-    **S1** bot idle floor violated (7.7 s statue bot, HIGH) · **S2**
-    spectator director dwells on idle subjects (HIGH) · S3 HUD-less
-    renders read countdowns as dead air (MED) · S4 render envelope
-    documented (≤~45 s windows; upload 413 above; full-match encode
-    wedges). S1+S2 are open lane candidates.
+    **S1 FIXED 2026-08-09 (367f1cc)** · **S2 FIXED 2026-08-09 (4600eaf)** ·
+    S3 HUD-less renders read countdowns as dead air (MED, open) · S4 render
+    envelope documented (≤~45 s windows; upload 413 above; full-match
+    encode wedges — documentation only, done).
+    - **S1** (7.7 s statue bot): the no-foe path drew its idle direction
+      from `[-1, 0, 1]` — 0 meaning STAND STILL — held 900–2300 ms, and
+      consecutive zero rolls compounded (four ≈ 9 s, which is what was
+      filmed). The unstick detector also sat AFTER that path's early
+      return, so an idle bot leaning on geometry never reached it. Both
+      fixed; 3 tests verified failing pre-fix. N-BOT must carry these
+      across rather than porting the old shape.
+    - **S2** (director dwells on stillness): `pairScore` weights speed but
+      closeness (×1.6) + low HP clears the duel threshold at ZERO
+      movement, and the existing dwell protected the MODE, not the
+      SUBJECT — so after any cut the camera drifted straight back to the
+      statue. Added a 1.5 s idle dwell cap (cut to the liveliest, else a
+      wide shot that HOLDS) plus a rule never to trade a moving subject
+      for a still one. Max stare 6–8 s → under 3.4 s.
+      **Still open, deliberately:** full action-weighted SCORING so
+      motion outranks a motionless pair without waiting for the cap —
+      a pairScore rebalance with feel consequences. The study asked for
+      scoring AND a cap; this is the cap.
+    - Acting on the last study before rendering another was the call
+      here: the loop exists to find the weakest thing, and the weakest
+      thing was already found and un-fixed. The 2 un-studied replays stay
+      queued.
 - [ ] **P3 Stranger test (the exit gate).** 5–8 people, silent-8
       protocol (observe, never help, second person takes notes), funnel
       from P1 running. Gates: CTP ≥70%, first kill <60 s, play-again
@@ -799,6 +820,36 @@ Zig (that's E3's conversation) · Steam before N3.
 ---
 
 ## STATUS — ground truth, newest first
+
+- 2026-08-09 (l) · **Both HIGH footage findings FIXED — S1 (367f1cc) and
+  S2 (4600eaf).** The footage loop's purpose is to find the weakest thing,
+  and the weakest thing had already been found on 08-05 and left un-fixed;
+  acting on it beat rendering a third replay to find a fourth problem.
+  - **S1, the 7.7 s statue bot.** Two causes on the no-foe path: the idle
+    direction was drawn from `[-1, 0, 1]` — 0 meaning STAND STILL — held
+    900-2300 ms, and consecutive zero rolls compounded (four ≈ 9 s, which
+    is exactly what was filmed); and the unstick detector sits AFTER that
+    path's early return, so an idle bot leaning on geometry never reached
+    it. Both fixed, 3 tests **verified failing pre-fix**. The standing
+    "stationary > 1 s = bug" rule now has a test at the one code path that
+    could break it without the bot actually being stuck.
+  - **S2, the director dwelling on stillness.** `pairScore` does weight
+    speed, but closeness (×1.6) plus low HP clears the duel threshold at
+    ZERO movement, and the existing dwell protected the MODE, not the
+    SUBJECT — so the frame after any cut the camera drifted back to the
+    statue. Added a 1.5 s idle cap (cut to the liveliest, else a wide shot
+    that HOLDS) and a rule never to trade a moving subject for a still
+    one. Max stare 6-8 s → under 3.4 s. Three wrong iterations recorded at
+    the code, including one that turned the cap into a 1.5 s metronome —
+    which is not better direction than a stare.
+  - Still open from that study: S3 (HUD-less renders read countdowns as
+    dead air, MED) and S2's scoring half.
+  - **Honest note on the running soak:** it started at 17:57 and HEAD has
+    since moved (bot policy, director). Neither touches the wasm authority
+    path the soak is evidence about, so the verdict will still mean what
+    it says — but the "soak what you flip" principle keeps eroding while
+    development continues, and the flip should re-soak if anything lands
+    in the authority path itself.
 
 - 2026-08-09 (k) · **THE PORT PASSPORT PASSES — N0's first gate is met.**
   `bun run passport` steps every archived replay through the native build
