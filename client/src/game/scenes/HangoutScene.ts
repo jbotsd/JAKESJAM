@@ -341,6 +341,8 @@ export class HangoutScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1000);
 
+    if (this.mode === "venue") this.setupVenueFtueLegend();
+
     this.audio = new ProceduralAudio();
     this.input.once("pointerdown", () => this.audio?.unlock());
     this.input.keyboard?.once("keydown", () => this.audio?.unlock());
@@ -583,6 +585,90 @@ export class HangoutScene extends Phaser.Scene {
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown error";
       this.setStatus(`Connect failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Controls legend for the VENUE — Doors 3.3, and a gap Doors 1.1 opened.
+   *
+   * The legend only ever existed in OnlineMatchScene, which was fine while
+   * the arena was where you arrived. Lobby-first made the venue the
+   * LANDING, so a first-time visitor now stands in a room full of
+   * hittable dummies with no idea that hitting them is a thing — and
+   * stays uninstructed until the bell finally moves them. The room is the
+   * tutorial; it just wasn't saying so.
+   *
+   * Shares `jakesjam-ftue-controls-shown` with the arena legend
+   * deliberately: teach ONCE, wherever the player lands first, then never
+   * again. Whichever surface gets there first spends the key.
+   *
+   * Staged like the arena's (progressive disclosure, ~900 ms apart)
+   * rather than five lines at once, and left-anchored under the status
+   * line so it cannot collide with the top-right MENU/CLIPS pill or the
+   * centred NEXT BELL countdown.
+   *
+   * NOT the whole of 3.3: the doc wants ghosted glyphs over the dummies
+   * themselves ("onboarding by encounter", ui-axioms bans modal
+   * tutorials). This is text, which is the weaker form — recorded as
+   * such rather than dressed up as the finished item.
+   */
+  private setupVenueFtueLegend(): void {
+    const FTUE_KEY = "jakesjam-ftue-controls-shown";
+    try {
+      if (localStorage.getItem(FTUE_KEY) === "1") return;
+      localStorage.setItem(FTUE_KEY, "1");
+    } catch {
+      // Storage unavailable (private mode, file://) — teach every time
+      // rather than never.
+    }
+
+    const touch = isTouchPrimary();
+    const groups: string[][] = touch
+      ? [
+          ["LEFT STICK  move", "PUSH UP  jump"],
+          ["RIGHT STICK  aim & fire"],
+          ["the dummies are hittable — try it"],
+        ]
+      : [
+          ["WASD  move", "SPACE  jump"],
+          ["MOUSE  aim & fire"],
+          ["SHIFT  shield", "the dummies are hittable — try it"],
+        ];
+
+    const STAGE_GAP_MS = 900;
+    const LIFE_MS = 11_000; // a touch longer than the arena's 9s: nobody is shooting at you here
+    // Start BELOW the top-left status band. That band is stacked and
+    // dynamic — bell countdown, then the arena feed, then the duo hint at
+    // `feedText.y + displayHeight + 8` — and the first draft of this
+    // legend sat at y=48 and painted straight through "[T] DUO QUEUE:
+    // OFF" (caught in the capture, not in review). Touch starts lower
+    // again because the feed wraps to two lines at 393px.
+    let y = touch ? 150 : 110;
+    for (const [i, lines] of groups.entries()) {
+      const text = this.add
+        .text(20, y, lines.join("\n"), {
+          color: "#cffaff",
+          fontFamily: "'Space Mono', 'Courier New', monospace",
+          fontSize: "14px",
+          backgroundColor: "rgba(5,8,15,0.45)",
+          padding: { left: 10, right: 10, top: 8, bottom: 8 },
+        })
+        .setScrollFactor(0)
+        .setDepth(2000)
+        .setAlpha(0);
+      y += lines.length * 18 + 22;
+      this.time.delayedCall(i * STAGE_GAP_MS, () => {
+        this.tweens.add({ targets: text, alpha: 1, duration: 260, ease: "Cubic.easeOut" });
+      });
+      this.time.delayedCall(LIFE_MS, () => {
+        this.tweens.add({
+          targets: text,
+          alpha: 0,
+          duration: 420,
+          ease: "Cubic.easeIn",
+          onComplete: () => text.destroy(),
+        });
+      });
     }
   }
 

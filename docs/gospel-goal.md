@@ -357,7 +357,24 @@ teaches the loop.
       guarantee a first kill inside 60 s; blend humans in from cycle two.
       Keyed on localStorage next to the FTUE flags. **Lands in Zig via
       N-BOT** — do it once.
-- [ ] **3.3 Onboarding by encounter** (ui-axioms bans modal tutorials) —
+- [~] **3.3 Onboarding by encounter** — first slice DONE 2026-08-09: the
+      VENUE now teaches. The controls legend only ever existed in
+      OnlineMatchScene, which was fine while the arena was where you
+      arrived — Doors 1.1 made the venue the LANDING, so a newcomer stood
+      in a room full of hittable dummies with no idea that hitting them
+      was a thing, and stayed uninstructed until the bell. Staged
+      three-group legend (move → aim/fire → shield + "the dummies are
+      hittable — try it"), sharing `jakesjam-ftue-controls-shown` with the
+      arena so a player is taught exactly ONCE, wherever they land first.
+      Captured at desktop and phone; the first draft collided with the
+      "[T] DUO QUEUE" hint and was moved below the whole top-left status
+      band — caught in the capture, not in review.
+      **Still open, and it is the better form:** ghosted glyphs over the
+      dummies themselves. ui-axioms bans modal tutorials and text is the
+      weaker answer. Also open: re-summonable legend + a persistent
+      controls reference in Settings; first-storm / first-cycle-end
+      lines; class verbs on first pick.
+      Original item: onboarding by encounter (ui-axioms bans modal tutorials) —
       the lobby teaches movement/fire via ghosted glyphs over the
       dummies; the FTUE legend becomes re-summonable (today: once ever
       per browser, `OnlineMatchScene.ts:763-766`) plus a persistent
