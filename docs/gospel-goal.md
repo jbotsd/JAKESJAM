@@ -865,9 +865,33 @@ section early because it is fun; it is fun, and it is parked.
       protocol (observe, never help, second person takes notes), funnel
       from P1 running. Gates: CTP ≥70%, first kill <60 s, play-again
       ≥50%.
-- [ ] **P4 Soak + load.** Headless bot-only overnight cycles through the
-      NEW loop (ceremony/vote/return), and a join-path load test before
-      any public moment.
+- [~] **P4 Soak + load.** Soak half is live and hardened (see the E2
+      rows; `scripts/wasm-authority-soak.sh`, run under systemd).
+      **Join-path load test DONE 2026-08-09** —
+      `tools/join-load-test.mjs` drives the real contract (POST
+      /world-token → WS /ws/world → wait for the first SERVER FRAME,
+      because an open socket is not the same as being in the world) and
+      holds the sockets open.
+      - **Measured: 16/16 joined, time-to-first-frame p50 1 ms / p95
+        10 ms**, 14 sockets sustained through a 15 s hold, 4,738 frames.
+        The join path itself is fast and does not fall over.
+      - **`humans=0` during that hold is CORRECT, not a repeat of the
+        join bug**: attaching mid-fight parks you as a spectator-pending
+        entrant (bell gate S2.D) — you get hello + snapshots and no
+        entity until the next countdown. A capacity answer needs a hold
+        that spans a bell.
+      - **RISK worth naming before any public moment: the join path is
+        rate-limited PER IP — 20 token mints/min and 30 WS connects per
+        5 min.** A second run of 6 clients returned 0/6 (2 mint 429s, 4
+        ws errors) purely on leftover budget. That is fine for scattered
+        home traffic and hostile for anything behind one NAT: a school,
+        an office, or **a convention LAN — which is exactly the PAX
+        scenario in Decision 7**. Nobody had flagged it. Raising the
+        limits is a server change, so it is recorded rather than done
+        (E2 freeze).
+      - Corollary for whoever runs the real test: from one machine you
+        measure the LIMITER, not the server. A genuine capacity number
+        needs multiple source IPs.
 - [ ] **P5 Fix the lying meter (L8 violation, found 2026-08-09).**
       `data-warehouse/report.ts` reports "20 email signups captured";
       all 20 rows are `@example.com` UUID addresses from 2026-07-13/14
