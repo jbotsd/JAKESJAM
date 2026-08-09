@@ -36,11 +36,14 @@ W=1080; H=1920; FPS=30
 # energy accent. Never introduce a colour that isn't one of these.
 OBSIDIAN="0x0a0c10"; BONE="0xf2ece0"; GOLD="0xb08d3f"; TEAL="0x4fd8d8"
 
-# zoom 1.55 default: measured against the 07-31 footage it's the point where
+# zoom 2.0 default: the source is now follow-cam renders (tools/render-replay.mjs
+# with follow=first), where the subject is already centred, so a tighter punch
+# is safe and the fighters actually read on a phone. The old 1.55 was tuned for
+# wide static spectator framing. it's the point where
 # characters actually read at phone size, the arena keeps its context, and the
 # band clears both safe zones. zoom 1.0 keeps every pixel but the fighters are
 # too small to follow on a phone.
-IN=""; OUT=""; HOOK=""; ZOOM="1.55"; FROM=""; TO=""; MUSIC=""; MUSIC_START="0"; VO=""
+IN=""; OUT=""; HOOK=""; ZOOM="2.0"; FROM=""; TO=""; MUSIC=""; MUSIC_START="0"; VO=""; CAPS=""
 MARK="play.elyad.io"; HOOK_DUR="2.6"
 
 while [ $# -gt 0 ]; do
@@ -52,6 +55,7 @@ while [ $# -gt 0 ]; do
     --from) FROM="$2"; shift 2 ;;
     --to) TO="$2"; shift 2 ;;
     --vo) VO="$2"; shift 2 ;;
+    --captions) CAPS="$2"; shift 2 ;;
     --music) MUSIC="$2"; shift 2 ;;
     --music-start) MUSIC_START="$2"; shift 2 ;;
     --mark) MARK="$2"; shift 2 ;;
@@ -120,8 +124,15 @@ BAND_BOT=$((BAND_TOP + BAND_H))
 # Hook sits in the freed space ABOVE the band when there's room for it, else
 # just inside the band's top edge. Same idea for the mark below.
 HOOK_Y=$(awk -v t="$BAND_TOP" 'BEGIN{ y = t - 210; if (y < 230) y = t + 40; printf "%d", y }')
-MARK_Y=$(awk -v b="$BAND_BOT" -v h="$H" 'BEGIN{ y = b + 96; if (y > h-300) y = h-360; printf "%d", y }')
+if [ -n "$CAPS" ]; then
+  # Captions own the band-to-CTA gap; the mark sits below them.
+  MARK_Y=$(awk -v h="$H" 'BEGIN{ printf "%d", h-90 }')
+else
+  MARK_Y=$(awk -v b="$BAND_BOT" -v h="$H" 'BEGIN{ y = b + 96; if (y > h-300) y = h-360; printf "%d", y }')
+fi
 NAME_Y=$((MARK_Y - 74))
+# Sits in the top dead space, clear of the 10% platform-UI safe zone.
+WORDMARK_Y=$(awk -v t="$BAND_TOP" 'BEGIN{ y = t - 62; if (y < 210) y = 210; printf "%d", y }')
 echo "[short] plate: band ${W}x${BAND_H} at y=${BAND_TOP}..${BAND_BOT} | hook y=${HOOK_Y} | mark y=${MARK_Y}"
 
 ESC_MARK=$(printf '%s' "$MARK" | sed "s/'/\\\\'/g; s/:/\\\\:/g")
@@ -135,7 +146,10 @@ FILTER="
   drawbox=x=0:y=${BAND_TOP}-3:w=iw:h=3:color=${GOLD}@0.55:t=fill,
   drawbox=x=0:y=${BAND_BOT}:w=iw:h=3:color=${GOLD}@0.55:t=fill,
   drawtext=fontfile=${FONT_MARK}:text='${ESC_MARK}':fontsize=52:
-    fontcolor=${TEAL}:x=(w-text_w)/2:y=${MARK_Y}:borderw=4:bordercolor=black@0.85
+    fontcolor=${TEAL}:x=(w-text_w)/2:y=${MARK_Y}:borderw=4:bordercolor=black@0.85,
+  drawtext=fontfile=${FONT_HOOK}:text='JAKESJAM':fontsize=34:
+    fontcolor=${GOLD}:x=(w-text_w)/2:y=${WORDMARK_Y}:alpha=0.75:
+    borderw=3:bordercolor=black@0.7
 "
 # NOTE: the host render already bakes a small "JAKESJAM . play.elyad.io"
 # stamp into the gameplay frame (clip-goal B11). A second wordmark here read
@@ -168,6 +182,13 @@ if [ -n "$HOOK" ]; then
     fontcolor=${BONE}:borderw=6:bordercolor=black:line_spacing=16:
     x=(w-text_w)/2:y=${HOOK_Y}:
     alpha='if(lt(t,0.2),t/0.2,if(gt(t,${HOOK_DUR}-0.4),max(0,(${HOOK_DUR}-t)/0.4),1))'"
+fi
+if [ -n "$CAPS" ]; then
+  [ -f "$CAPS" ] || { echo "--captions file not found: $CAPS" >&2; exit 2; }
+  # subtitles= takes a filter-graph argument, so the path needs its colons and
+  # commas escaped or the graph parser eats them.
+  ESC_CAPS=$(printf '%s' "$CAPS" | sed "s/\\\\/\\\\\\\\/g; s/:/\\\\:/g; s/'/\\\\'/g; s/,/\\\\,/g")
+  FILTER="${FILTER},subtitles='${ESC_CAPS}'"
 fi
 FILTER="${FILTER},fps=${FPS},format=yuv420p[v]"
 
