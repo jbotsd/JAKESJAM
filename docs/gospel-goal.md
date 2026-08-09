@@ -1053,6 +1053,50 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (zz) · **E2 WAS ALREADY FLIPPED, AND THE KILL-SWITCH DOES NOT
+  WORK.** Both verified, not inferred. This supersedes the "E2 is not
+  flipped live" line below it.
+
+  `server/.env.local` line 7 has held `USE_WASM_STEP_WORLD=1` since
+  **2026-07-28**. Bun auto-loads `.env.local` from its cwd, and the live
+  host runs `bun --cwd server src/index.ts` (pid 1947, cwd
+  `.../JAKESJAM/server`, up since Aug 8 17:18). The Aug-5 code it is
+  running reads that flag at matchHost.ts:80. So the live host has been
+  stepping on **wasm authority for ~29 hours**, unobserved.
+
+  The earlier "USE_WASM_STEP_WORLD is absent from the running server's
+  environment" was an INSTRUMENT ERROR: it read `/proc/<pid>/environ`,
+  which cannot see variables Bun injects from `.env.local` at runtime.
+  `/proc` still reports the flag absent today. Proof by reproduction: a
+  server launched the same way with no explicit flag reports
+  `sim.authority: "wasm"`.
+
+  Two consequences, both bad:
+
+  1. **The rollback is a no-op.** `scripts/e2-flip.sh` strips
+     `USE_WASM_STEP_WORLD` from the captured environment (line 84) and
+     relaunches with `--cwd server` (line 106) — where Bun immediately
+     re-reads `.env.local` and puts it back. `--rollback` would report
+     success and leave the host on wasm. The kill-switch that the whole
+     flip plan rests on has never worked.
+  2. **It is machine-local.** `server/.env.local` is gitignored. This box
+     runs wasm; a fresh clone or any other host runs TS. "What prod does"
+     currently depends on an untracked file.
+
+  Nothing here says wasm authority is *wrong* — the 2 h soak, the strict
+  suites and the 12/12 passport all say it is fine, and ~29 h of live
+  bot-only running is corroboration. What is wrong is that it happened
+  without evidence and cannot be undone by the mechanism built to undo it.
+
+- [ ] **E2-a Make authority explicit and reversible (blocks the flip).**
+      Fix the rollback so it actually rolls back (neutralise `.env.local`
+      for the launch, or launch from a cwd without it, or have the script
+      assert the resulting `/health` `sim.authority` matches the mode it
+      claims — the last one is the honest-meter version and catches every
+      future variant of this). Then decide authority in TRACKED config so
+      it is the same on every machine. Until this lands, `e2-flip.sh`
+      should not be run: its safety net is imaginary.
+
 - 2026-08-09 (z) · **CONSOLIDATED GATE AT HEAD — everything green.** Run
   together rather than trusting the per-change runs, because "each change
   passed" and "the tree passes" are different claims:
