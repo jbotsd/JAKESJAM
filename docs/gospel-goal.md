@@ -357,7 +357,13 @@ the sim-side halves land in Zig.
 - [~] **2.4 Pillar 2/3 residuals** — audited row by row 2026-08-09:
       - [x] orphan-ceremony regression test — DONE (f64661b).
       - [ ] lobby presence floor — genuinely open, see 3.1 (frozen path).
-      - [ ] the unmeasured dummy-hit-<8 s half of venue 2.5 — MEASURED
+      - [x] the unmeasured dummy-hit-<8 s half of venue 2.5 — **MEASURED
+            AND PASSING 2026-08-10: 3753 ms** against an 8 s bar (10 s
+            asserted). Not a game bug; see the STATUS entry — the harness
+            aimed 174 px high, and the spec now calibrates the
+            screen→world map instead of assuming the camera centres the
+            player. Superseded detail below.
+      - [x] ~~the unmeasured dummy-hit-<8 s half of venue 2.5 — MEASURED
             2026-08-09, and the answer is that it does not happen at all:
             a visitor closes to 18px of a practice dummy, on the same
             floor, firing an 880px hitscan continuously, and no
@@ -1170,6 +1176,40 @@ Zig (that's E3's conversation) · Steam before N3.
 ---
 
 ## STATUS — ground truth, newest first
+
+- 2026-08-10 · **VENUE 2.5 IS MEASURED AND PASSES: 3753 ms.** And it was
+  never broken — the harness was aiming ~174 px over the dummy's head all
+  night.
+
+  The mouse was driven to "player screen-centre + world delta", which
+  assumes the camera centres the player vertically. It does not. Every
+  client-side probe I built was equally consistent with "the shot misses"
+  and "the game ignores the shot", so none of them could discriminate —
+  the harness knew where it had PUT the mouse, not where the game thought
+  it was aiming.
+
+  What finally cracked it was measuring at the server, in this order:
+  1. `dummyHealth` total in `/venue/summary` — never moved, so the shot
+     was not reaching the hit path (ruling out a display bug);
+  2. `humanX` DID move while walking — so inputs reach the lobby host;
+  3. a counter at the point of receipt — `fireInputsSeen` hit 83, so fire
+     inputs arrive and are accepted;
+  4. the aim carried on those inputs — **world y 868 when the dummy was at
+     1042.** Aiming 174 px high, from the harness, all along.
+
+  Fixed by CALIBRATING instead of assuming: the spec now takes two probe
+  samples, reads back the world aim the sim actually received, solves the
+  linear screen→world map, and aims. First run after that: hit in 98 ms
+  from 96 px. `test.fail()` removed; the spec asserts the real budget.
+
+  **Three of my own witnesses lied on the way** — `lastProcessedInputSeq`,
+  `currentKeys` and the client's `fireCooldownMs` are all unmaintained or
+  client-only on the lobby path, and each read 0 while the thing it
+  claimed to measure was working. Two of them were deleted rather than
+  left in `/venue/summary`, because a field that can only ever read 0 is a
+  lying meter (L8), not an instrument. The lesson that generalises: to
+  learn whether an input had an EFFECT, count it where it is RECEIVED, not
+  where it is stored.
 
 - 2026-08-09 (zzzzz) · **E2-b IS RETRACTED — wasm does NOT break the venue
   lobby. I was measuring an orphaned server.**

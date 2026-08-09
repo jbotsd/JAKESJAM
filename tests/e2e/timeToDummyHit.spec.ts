@@ -22,7 +22,7 @@
 import { test, expect } from "@playwright/test";
 
 type ProbeDestructible = { id: string; kind: string; x: number; y: number; health: number };
-type ProbePlayer = { id: string; x: number; y: number };
+type ProbePlayer = { id: string; x: number; y: number; aimX: number; aimY: number };
 
 declare global {
   interface Window {
@@ -51,6 +51,7 @@ async function asReturningVisitor(page: import("@playwright/test").Page): Promis
 /** Nearest practice dummy to the local player, with the player's own x. */
 async function nearestDummy(page: import("@playwright/test").Page): Promise<{
   dummyX: number;
+  dummyY: number;
   dummyId: string;
   meX: number;
   health: number;
@@ -66,69 +67,27 @@ async function nearestDummy(page: import("@playwright/test").Page): Promise<{
     for (const d of destructibles) {
       if (Math.abs(d.x - me.x) < Math.abs(best.x - me.x)) best = d;
     }
-    return { dummyX: best.x, dummyId: best.id, meX: me.x, health: best.health };
+    return { dummyX: best.x, dummyY: best.y, dummyId: best.id, meX: me.x, health: best.health };
   });
 }
 
 test.describe("venue-goal 2.5 — time to first dummy hit", () => {
   test.setTimeout(120_000);
 
-  // EXPECTED-FAIL as of 2026-08-09. Not flaky, and not a harness defect —
-  // it measures something real that does not work. `test.fail` is
-  // deliberate: the run stays green while the bug exists, and the moment
-  // someone fixes it this spec goes RED to say so. A `skip` would go quiet
-  // forever instead.
+  // RESOLVED 2026-08-10. This spec failed for hours and the game was fine
+  // the whole time — the harness was aiming ~174px over the dummy's head.
   //
-  // Measured by a SECOND harness driving the same probe, so that a bug in
-  // one would not quietly confirm the other:
-  //   - the visitor IS in the venue — /venue/summary reports
-  //     lobby.present=1 for the whole session (an earlier present=0 was an
-  //     artefact of sampling after the browser had closed);
-  //   - the shots ARE firing — fireCooldownMs is non-zero on 133/162
-  //     samples while fire is held;
-  //   - range is not the problem — the player closes to 18px horizontally
-  //     and both sit on the same floor (player y=1036, dummy y=1042);
-  //   - the weapon is TRUE hitscan (starter-pistol, delivery "raycast",
-  //     880px trace), so maxProjectiles=0 is expected, and ammo=0 is
-  //     irrelevant: weapon.ts:623 states ammo gates nothing;
-  //   - this is SUPPOSED to work — World.ts:3018, "Destructibles remain
-  //     hittable" in hangout mode.
+  // The mouse was driven to "player screen-centre + world delta", which
+  // assumes the camera centres the player vertically. It does not. Nothing
+  // client-side could reveal that: the harness knew where it had PUT the
+  // mouse, not where the game thought it was aiming, and both are equally
+  // consistent with "no damage". What settled it was reading back the aim
+  // the sim actually received (world 868 when the target was 1042).
   //
-  // NARROWED 2026-08-09, later the same evening. An earlier version of this
-  // comment blamed the SERVER lobby not being in hangout mode. That was
-  // wrong, and is recorded here rather than quietly deleted:
-  //   - the server DOES create the lobby as hangout — venueHost.ts:429
-  //     passes mode:"hangout" through matchHost.ts:464 into World.create;
-  //   - the "seven missing dummies" was interest culling, not loss.
-  //     InterestGrid.ts:117 culls destructibles by proximity and
-  //     matchHost's respawnDestructibles() rebuilds all eight, so a client
-  //     seeing one nearby dummy is correct behaviour;
-  //   - the SIM is not at fault either. hangoutDestructibleTargets.test.ts
-  //     now covers the hitscan path that nothing covered before: the
-  //     starter pistol damages a dummy in hangout mode, and a dummy behind
-  //     the shooter correctly stays untouched.
-  //
-  // The "round-over" lead was chased and is ALSO not the cause, though it
-  // was a real bug and is fixed: the lobby ran combat-mode client-side
-  // because the client sniffed `matchId.startsWith("hangout_")` and the
-  // lobby's id is "lobby" (ServerHello now states `mode`). And separately,
-  // wasm authority puts the lobby in "round-over" where TS puts it in
-  // "fighting" — logged as gospel E2-b, a live regression.
-  //
-  // Neither fixes this. Re-measured after both: under TS authority with
-  // the lobby correctly at phase "fighting", the dummy is STILL never
-  // damaged. So the remaining suspects are narrow:
-  //   - the shot is blocked by venue geometry on the approach line. The
-  //     map has ground-touching cover pylons at x=2040 (cover-d) and a
-  //     "lip" barrier at x=1740 (lip-c) bracketing the clusterC dummy at
-  //     x=1930, and the harness approaches leftward from x=2812;
-  //   - or the fire input never reaches the server from a real browser,
-  //     as opposed to being locally predicted (fireCooldownMs is a
-  //     client-side value and proves only local processing).
-  // The next step is a server-side observation of the lobby's destructible
-  // health, not another client-side probe — every client-side measurement
-  // so far has been consistent with both hypotheses.
-  test.fail();
+  // So this no longer guesses the mapping. It CALIBRATES: two probe shots
+  // at known screen Ys, read the resulting world aim off the player, solve
+  // the linear map, then aim. Measured this way the answer is immediate —
+  // a hit inside ~100ms of firing from 96px away.
   test("a visitor can damage a practice dummy inside the budget", async ({ page }) => {
     await asReturningVisitor(page);
     const t0 = Date.now();
@@ -175,14 +134,44 @@ test.describe("venue-goal 2.5 — time to first dummy hit", () => {
       if (heldKey) await page.keyboard.up(heldKey);
       await page.keyboard.down(want);
       heldKey = want;
-      // Aim to the side we are walking, slightly below the horizon so the
-      // shot meets a ground-standing dummy.
-      await page.mouse.move(
-        box.x + (want === "d" ? box.width * 0.78 : box.width * 0.22),
-        box.y + box.height * 0.56,
-      );
     };
     await steer(start.meX, start.dummyX);
+
+    /** World-space aim the SIM currently has for us. */
+    const aimOf = async (): Promise<{ x: number; y: number } | null> =>
+      page.evaluate(() => {
+        const id = window.__localPlayerId?.() ?? null;
+        const me = (window.__simPlayers?.() ?? []).find((p) => p.id === id);
+        return me ? { x: me.aimX, y: me.aimY } : null;
+      });
+
+    /** Point the mouse at a WORLD position, by measuring the mapping rather
+     *  than assuming it. Two samples give the linear screen->world scale;
+     *  the camera's offset falls out of the same solve. */
+    const aimAtWorld = async (wx: number, wy: number): Promise<void> => {
+      const sx1 = box.x + box.width * 0.35;
+      const sy1 = box.y + box.height * 0.4;
+      const sx2 = box.x + box.width * 0.65;
+      const sy2 = box.y + box.height * 0.7;
+      await page.mouse.move(sx1, sy1);
+      await page.waitForTimeout(90);
+      const a = await aimOf();
+      await page.mouse.move(sx2, sy2);
+      await page.waitForTimeout(90);
+      const b = await aimOf();
+      if (!a || !b || b.x === a.x || b.y === a.y) {
+        await page.mouse.move(sx2, sy2);
+        return;
+      }
+      const kx = (b.x - a.x) / (sx2 - sx1);
+      const ky = (b.y - a.y) / (sy2 - sy1);
+      const tx = sx1 + (wx - a.x) / kx;
+      const ty = sy1 + (wy - a.y) / ky;
+      await page.mouse.move(
+        Math.max(box.x + 2, Math.min(box.x + box.width - 2, tx)),
+        Math.max(box.y + 2, Math.min(box.y + box.height - 2, ty)),
+      );
+    };
 
     let hitAtMs: number | null = null;
     const deadline = Date.now() + 30_000;
@@ -199,7 +188,12 @@ test.describe("venue-goal 2.5 — time to first dummy hit", () => {
       prevHealth = next;
       if (hitAtMs === null) {
         const d = await nearestDummy(page);
-        if (d) await steer(d.meX, d.dummyX);
+        if (d) {
+          await steer(d.meX, d.dummyX);
+          // Re-aim at the dummy's WORLD position every sample: we are
+          // walking, so the mapping's origin moves under us.
+          if (Math.abs(d.dummyX - d.meX) < 400) await aimAtWorld(d.dummyX, d.dummyY);
+        }
         await page.waitForTimeout(120);
       }
     }

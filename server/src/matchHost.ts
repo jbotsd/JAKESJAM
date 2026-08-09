@@ -1149,6 +1149,14 @@ export class MatchHost {
     };
   }
 
+  /** How many inputs with the fire bit this host has ACCEPTED. */
+  fireInputsSeen = 0;
+  /** Aim carried by the most recent accepted fire input. The shot arrives;
+   *  whether it POINTS anywhere near a target is the next question, and it
+   *  is not answerable from the client side. */
+  lastFireAimX = 0;
+  lastFireAimY = 0;
+
   private applyInput(playerId: PlayerId, input: import("@net/protocol.ts").Input): void {
     // Refresh liveness regardless — even a duplicate seq proves the client is
     // alive on the wire.
@@ -1181,6 +1189,17 @@ export class MatchHost {
     //   corrects it.
     const keyMask = sanitizeKeyMaskFor(EMISSIONS_DISABLED, ABILITIES_DISABLED);
     const sanitizedKeys = input.keys & keyMask;
+    // venue 2.5 witness, counted at the POINT OF RECEIPT rather than read
+    // back off player state. Three derived witnesses in a row
+    // (lastProcessedInputSeq, currentKeys, and the client's own
+    // fireCooldownMs) turned out to be unmaintained or client-side on the
+    // lobby path, so each "proved" something it could not see. A counter
+    // here cannot be stale: if it moves, a fire-bit input arrived.
+    if ((sanitizedKeys & (1 << 6)) !== 0) {
+      this.fireInputsSeen += 1;
+      this.lastFireAimX = Math.round(input.aimX);
+      this.lastFireAimY = Math.round(input.aimY);
+    }
     const sanitizedDt = Math.max(1, Math.min(STEP_MS * 4, Number.isFinite(input.dt) ? input.dt : STEP_MS));
 
     const serverTick = this.state.tick;

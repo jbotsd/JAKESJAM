@@ -147,6 +147,17 @@ export type ProbePlayer = {
   id: string;
   x: number;
   y: number;
+  /** WORLD-space aim, as the sim sees it.
+   *
+   *  Exposed 2026-08-10 after venue 2.5: an e2e drove the mouse to
+   *  "player centre + world delta" and its shots landed 174px high for
+   *  hours, because the camera does not centre the player vertically.
+   *  Nothing client-side could see that — the harness knew where it had
+   *  put the mouse, not where the game thought it was aiming. With this,
+   *  a test can CALIBRATE the screen->world mapping instead of assuming
+   *  one. */
+  aimX: number;
+  aimY: number;
   health: number;
   alive: boolean;
   shieldActive: boolean;
@@ -238,6 +249,8 @@ export function installWindowProbe(): void {
       score: s.round.scores[p.id] ?? 0,
       fireCooldownMs: p.fireCooldownMs,
       ammo: p.ammo,
+      aimX: p.aimX,
+      aimY: p.aimY,
       cards: p.cards,
       pendingLockCharges: p.pendingLockCharges,
     }));

@@ -251,6 +251,18 @@ export type VenueSummary = {
   lobby: {
     /** Connected lobby sockets — humans standing in the antechamber. */
     present: number;
+    /** Total health across the lobby's practice dummies; -1 when the host
+     *  has no snapshot yet. Falls when something damages one — the only
+     *  server-side witness to venue 2.5. */
+    dummyHealth: number;
+    /** How many player entities the lobby world holds. */
+    players: number;
+    /** x of the first non-bot player in the lobby world, rounded; -1 if none. */
+    humanX: number;
+    /** Fire-bit inputs the LOBBY host has accepted, counted at receipt. */
+    fireInputsSeen: number;
+    /** [x, y] aim on the most recent accepted fire input. */
+    lastFireAim: [number, number];
     /** The lobby world's own round phase. Hangout mode pins this to
      *  "fighting" forever; anything else means hangout semantics are not
      *  actually in force (gospel E2-b). `null` if the host has no summary
@@ -963,6 +975,37 @@ export class VenueHost {
    *  connected humans only; arena carries the human/bot split from Pillar
    *  0.1 plus the bell countdown (shared @sim/round.ts phase-sum math —
    *  the same numbers the death overlay shows). */
+  /** Sum of every destructible's health in the lobby world. */
+  private lobbyDummyHealth(): number {
+    const st = (
+      this.lobbyHost as unknown as { getStateSnapshot?: () => { destructibles: Record<string, { health: number }> } }
+    ).getStateSnapshot?.();
+    if (!st) return -1;
+    let total = 0;
+    for (const id in st.destructibles) total += st.destructibles[id]!.health;
+    return total;
+  }
+
+  private lobbyHumanX(): number {
+    const st = (
+      this.lobbyHost as unknown as {
+        getStateSnapshot?: () => { players: Record<string, { x: number }> };
+      }
+    ).getStateSnapshot?.();
+    if (!st) return -1;
+    for (const id in st.players) {
+      if (!id.startsWith("bot_")) return Math.round(st.players[id]!.x);
+    }
+    return -1;
+  }
+
+  private lobbyPlayerCount(): number {
+    const st = (
+      this.lobbyHost as unknown as { getStateSnapshot?: () => { players: Record<string, unknown> } }
+    ).getStateSnapshot?.();
+    return st ? Object.keys(st.players).length : -1;
+  }
+
   summary(): VenueSummary {
     const arena = this.arenaHost.summary();
     // The LOBBY's own phase, not just the arena's (gospel E2-b). Hangout
@@ -977,6 +1020,25 @@ export class VenueHost {
       lobby: {
         present: this.lobbySockets.size,
         phase: lobbySummary?.phase ?? null,
+        // venue 2.5 — the practice dummies' total health, server-side.
+        // Every client-side probe so far agrees that a visitor firing at
+        // point-blank range never damages one, and every client-side probe
+        // is consistent with BOTH "the shot never reaches the server" and
+        // "the server ignores it". This number discriminates: if it falls
+        // while someone is shooting, the sim is fine and the bug is in the
+        // client's rendering of it; if it never falls, the shot is not
+        // reaching the hit path at all.
+        dummyHealth: this.lobbyDummyHealth(),
+        players: this.lobbyPlayerCount(),
+        // Discriminator for the above: if lastProcessedInputSeq is simply
+        // not maintained on this path, the server will still SEE the human
+        // moving. If both are frozen, input genuinely is not arriving.
+        humanX: this.lobbyHumanX(),
+        fireInputsSeen: (this.lobbyHost as unknown as { fireInputsSeen: number }).fireInputsSeen,
+        lastFireAim: [
+          (this.lobbyHost as unknown as { lastFireAimX: number }).lastFireAimX,
+          (this.lobbyHost as unknown as { lastFireAimY: number }).lastFireAimY,
+        ],
       },
       arena: arena
         ? { ...arena, nextBellMs: Math.round(msUntilNextBell(arena.phase, arena.countdownRemainingMs)) }

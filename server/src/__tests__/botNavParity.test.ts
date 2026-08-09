@@ -10,6 +10,11 @@
 // So this drives both implementations over the real named maps with a grid
 // of positions and compares every answer.
 //
+// Lives in server/ rather than client/ because it imports the real
+// botArenaNav from server/src — pulling that into the CLIENT typecheck
+// broke it (`@sim/*` resolves only under the server tsconfig). The test
+// compares against the actual shipped brain, so it follows the brain.
+//
 // WHAT THIS GATE CATCHES, measured by mutation rather than assumed:
 //   - inverting the flank side (stand on the foe's side instead of away)
 //     fails 3 tests;
@@ -25,8 +30,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { loadSimFromBytes } from "../loader";
-import { WORLD_STATE_TOTAL_SIZE } from "../worldStateBridge";
+import { loadSimFromBytes } from "../../../client/src/sim/wasm/loader.ts";
+import { WORLD_STATE_TOTAL_SIZE } from "../../../client/src/sim/wasm/worldStateBridge.ts";
 import {
   buildArenaNav,
   hasLineOfSight,
@@ -34,14 +39,16 @@ import {
   hopTargetToward,
   megaScale,
   dirTowardX,
-} from "../../../../../server/src/botArenaNav.ts";
-import type { MapDefinition } from "../../types";
-import { boxworksMini } from "../../data/boxworks-mini";
-import { boxworksTower } from "../../data/boxworks-tower";
-import { vesselNexus } from "../../data/vessel-nexus";
-import { skyseam } from "../../data/skyseam";
+} from "../botArenaNav.ts";
+import type { MapDefinition } from "@sim/types.ts";
+import { boxworksMini } from "@sim/data/boxworks-mini.ts";
+import { boxworksTower } from "@sim/data/boxworks-tower.ts";
+import { vesselNexus } from "@sim/data/vessel-nexus.ts";
+import { skyseam } from "@sim/data/skyseam.ts";
 
-const bytes = await readFile(resolve(import.meta.dir, "..", "sim.wasm"));
+const bytes = await readFile(
+  resolve(import.meta.dir, "../../../client/src/sim/wasm/sim.wasm"),
+);
 const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 const sim = await loadSimFromBytes(ab);
 const ex = sim.exports as unknown as {
