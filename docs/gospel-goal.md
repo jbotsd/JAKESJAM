@@ -950,6 +950,27 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (r) · **THE LIVE HOST IS A DAY STALE, and that changes how
+  the flip must be done.** `/health` on :8088 has no `sim` block, so the
+  running process predates today's ENTIRE server lane — the input-routing
+  fix, the index-space fix, the venue work, the /health instrument
+  itself. Client changes ARE live (dist is served per request); the
+  server process is not.
+  - **Consequence: a flip restart would deploy a day of server code AND
+    change authority in one action.** Worse, `e2-flip.sh --rollback`
+    reverts AUTHORITY, not CODE — it relaunches from the working tree
+    with the flag removed, so rolling back a combined change leaves new
+    code running under old authority, a state nobody tested. Recorded in
+    the script header.
+  - **Sequence, revised: DEPLOY FIRST, FLIP SECOND.** Restart :8088 on
+    current code with no flag, watch it, then flip when the soak lands.
+    Two changes, one variable each, and a rollback that means what it
+    says.
+  - **The deploy needs Jake.** Restarting the public host is
+    outward-facing and the harness gates it; the attempt was refused and
+    NOT worked around. Everything up to that line is done and waiting:
+    gates green, soak running clean, flip mechanised.
+
 - 2026-08-09 (q) · **THE FLIP'S CLOCK IS RUNNING — clean soak started
   20:08:55 under systemd, and the freeze is the only thing that can break
   it now.** Two soaks failed for a reason that had nothing to do with the

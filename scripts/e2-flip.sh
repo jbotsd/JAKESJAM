@@ -26,6 +26,18 @@
 #
 #   scripts/e2-flip.sh [--observe 600] [--force]
 #   scripts/e2-flip.sh --rollback     # put TS authority back, now
+#
+# ROLLBACK REVERTS AUTHORITY, NOT CODE — know this before you rely on it.
+# It relaunches the host from the CURRENT working tree with the flag
+# removed. If the same restart also deployed new server code (the live
+# process can be days behind HEAD — verified 2026-08-09: :8088 had no
+# `sim` block in /health, so it predated that day's entire server lane),
+# rolling back leaves that new code running under TS authority. You get
+# the old authority and the new code, which is a state nobody tested.
+#
+# So: DEPLOY FIRST, FLIP SECOND. Restart the live host on current code
+# with no flag, watch it, and only then flip. Two changes, one variable
+# each, and a rollback that means what it says.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
