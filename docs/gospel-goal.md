@@ -552,8 +552,11 @@ teaches the loop.
         frames are captured (`*-charge.png`) but distinguishing a tell
         from the construct needs a per-class expectation the doc does not
         yet state.
-- [~] **4.6 Live killfeed** — BUILT 2026-08-09, live-verification in
-      progress. `client/src/game/ui/killfeed.ts` is a pure model (10
+- [x] **4.6 Live killfeed** — DONE 2026-08-09, verified LIVE in a real
+      arena: `t+131s KILLFEED: BOT · SPARK eliminated BOT · PISTON`, a
+      kill between two OTHER players, correctly worded, observed through
+      the probe. That single line exercises the whole chain — SimEvent →
+      push → TTL → rendered text — so it is proof, not a smoke test. `client/src/game/ui/killfeed.ts` is a pure model (10
       tests): unattributed deaths show the victim only, a suicide
       (killerId === victimId) collapses to the same form rather than
       rendering "Bram eliminated Bram", executes get their own verb, 5 s
@@ -566,10 +569,16 @@ teaches the loop.
       presentation over an existing event, so it stays client-side.
       Observability came first because it had to: a line lives ~5 s, so a
       screenshot can neither prove the feed works nor prove it does not —
-      the first attempt produced exactly that ambiguous frame. Now
+      the first attempt produced exactly that ambiguous frame (arena,
+      score 1-1-0, no feed, kills older than the TTL). Now
       `__killfeedLines()` returns null when no feed is registered and `[]`
-      when one is showing nothing, which made the state readable
-      immediately.
+      when one is showing nothing.
+      Worth remembering for the next timing-bound feature: the first FOUR
+      poll windows showed "registered, 0 lines" and would have read as
+      "broken" to an impatient check. Kills between bots are ~1 per 40 s
+      and most of a session is spent in the venue waiting for the bell, so
+      a 150 s watch was simply too short — the failure was the observation
+      window, not the feature.
 - [x] 4.7 — DONE 2026-08-09. `dvh` pairs at all four viewport-sized rules
       (`.app-shell` plus the three panel caps; line numbers in the old
       item were stale). `html.kiosk` deliberately stays `vh` — fixed
