@@ -222,11 +222,14 @@ now cut the cruellest half of that chain.
         the room read ALIVE are off-camera on phone while short-desktop
         shows them; and short-desktop has a dead black band left of the
         room wall. Venue camera-fit work; sits with Phase 3.
-- [ ] **1.2 Move the email gate to the highest-intent moment** — after
-      the first fight, not before everything (end-of-demo-screen pattern;
-      the Fight Night funnel keeps its ask, aimed at someone who now
-      cares). "Maybe later" becomes localStorage with a cooldown, not
-      per-tab. ⚠ **DECISION 1** — build flag-dark, Jake flips.
+- [x] 1.2 Email gate position — **BUILT DARK** 2026-08-09 (f267c73).
+      End-of-demo pattern implemented; `DEFAULT_GATE_POSITION = "boot"`
+      keeps today's behaviour, `"post-fight"` is the ratification — one
+      line. "Maybe later" becomes persistent + timestamped in that mode
+      instead of per-tab. Demoable without editing source via
+      `?gate-position=post-fight`. ⚠ **DECISION 1 still Jake's** — L4
+      forbids firing it on silence, so the row is machine-complete and
+      consent-open.
 - [x] 1.3 Admission race fixed (merged 7e5639c) — server-authoritative
       admission tickets (30 s TTL, late sockets insert at ANY phase) +
       client pre-open hold; venue tap reordered before the pending drain.
@@ -243,8 +246,24 @@ now cut the cruellest half of that chain.
       zero (honest `--:--` until the first status frame).
       **Gap flagged:** venue KEYBOARD lacks the Emission/dash binds that
       touch now exposes.
-- [ ] **1.5b Round-cap taper when humans are queued.** ⚠ **DECISION 2**
-      (cadence) — untouched by 1.5a on purpose; build flag-dark.
+- [x] 1.5b Bell taper — **BUILT DARK** 2026-08-09 (061fb28).
+      `BELL_TAPER=on` shortens the bout in progress when a human queues;
+      unset keeps today's cadence (a test pins the dark default so cadence
+      cannot change live by accident). Mechanism reuses an existing sim
+      input rather than adding one: `targetScore` is DERIVED from
+      `state.chaosModifierIds`, so swapping the `target-score-N` id retunes
+      the TS round machine and the Zig path in one mutation — no override
+      field, no second source of truth, L1-clean. Steps 7→5→3 and REFUSES
+      any taper landing at or below the leader's score (that would end the
+      bout on the spot — worse for the people fighting than the wait is for
+      the people queued). Fires on queue entry, the only moment the answer
+      can change.
+      ⚠ **DECISION 2 still Jake's**, and it now has a **hard prerequisite**:
+      a replay records `chaosModifierIds` at match START, so a mid-flight
+      taper re-sims against the original target score and diverges at the
+      end. Ratifying requires a mid-match mode-change record alongside
+      ReplayRecorder's `rosterEvents` (same pattern; the Zig `.jjr` reader
+      already skips unknown top-level keys). Harmless while dark.
 - [x] 1.6 `?fight` fast lane + `venueNames.ts` — DONE 2026-08-09
       (0aa1261 + 3b8bebd). Queueing is sim-event driven
       (`launch-requested` from the bell totem), so the fast lane adds a
@@ -710,6 +729,24 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (g) · **DOORS PHASE 1 COMPLETE — every row landed; the two
+  Decisions are built DARK and waiting on Jake, not on machine work.**
+  1.5b (061fb28) was the last: bell taper behind `BELL_TAPER=on`,
+  retuning an EXISTING sim input (`target-score-N` on
+  `state.chaosModifierIds`) so both the TS round machine and the Zig path
+  follow one mutation — no override plumbing, L1-clean. It refuses any
+  taper landing at or below the leader's score. 1.2 (f267c73, the other
+  session) is likewise dark behind a one-line `DEFAULT_GATE_POSITION`.
+  - **Ratifying 1.5b now has a recorded prerequisite:** a replay stores
+    `chaosModifierIds` at match start, so a mid-flight taper re-sims
+    against the original target and diverges at the end. Needs a
+    mid-match mode-change record beside `rosterEvents` before the flag
+    goes on. Written at the call site as well as here.
+  - Per D-priority, Phase 1 was the lane that outranked everything; the
+    algebra now points at **E2 → N0 → D Phase 2–3**.
+  - Soak at 85/130 min: 0 fallback ticks throughout, and the heap
+    question resolved honestly — RSS oscillates 109–137 MB and returns to
+    a ~110 MB floor (sawtooth), so this is GC behaviour, not a leak.
 - 2026-08-09 (f) · **Doors Phase 1 machine lanes CLOSED — 1.6 and 1.8
   done; only the two Jake decisions remain.** Commits 0aa1261 (fast
   lane), 3b8bebd (venueNames), 1557e46 (picker extract), 8dbbbbd (main
