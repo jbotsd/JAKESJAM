@@ -877,6 +877,32 @@ Zig (that's E3's conversation) · Steam before N3.
 
 ## STATUS — ground truth, newest first
 
+- 2026-08-09 (p) · **P2: footage re-studied on POST-FIX code — no dead
+  runs.** Sheet: `docs/clip-sheets/study-2026-08-09-post-fix.md`
+  (clip-sheets are gitignored by convention, so the findings live here).
+  Source is a replay recorded TODAY at 18:37 off HEAD (92,548 ticks,
+  backend=wasm, fallback=0) rather than the remaining 07-31 tapes — only
+  fresh footage can answer whether S1 still reproduces.
+  - Two windows following `bot_spark`: **mean Δluma 8.14 / 8.74, ZERO
+    dead runs**. The 08-05 tape had 7.7 s, 6.6 s and 6.8 s statue runs in
+    one window. **Evidence for the S1 idle-floor fix in footage, not just
+    in a test** — though honestly scoped: two windows, one subject,
+    bots-only. The claim is "does not reproduce here", and re-asking is
+    now cheap.
+  - `tools/footage-study.mjs` is the reusable half — drives the host's
+    own render URL, samples at the 2 Hz the "stationary >1 s" rule
+    implies, writes full-res frames, reports dead runs.
+  - **Four ways it lied before it was trustworthy**, all recorded in the
+    sheet: no `gate=off` (every frame was the email gate — a flat 0.00
+    "19-second dead run" that was a photo of a form); no `follow` (camera
+    frames empty geometry — five phantom dead runs); sampling past the
+    window (tail freeze); forcing `quality=potato` (rig renders as bare
+    limbs, which read as a visual defect and was the flag). Chasing the
+    first one is what found the real splash-over-replay bug (739b948).
+  - The two un-studied 07-31 tapes are now historical: they predate the
+    input-routing, index-space, homing, S1 and S2 fixes. Fresh capture
+    beats them for finding what is weakest NOW.
+
 - 2026-08-09 (m) · **P1 funnel instrument + "stationary > 1 s" as a
   machine-checked invariant** (70698be, 1ade76d).
   - **P1:** all eight funnel steps now fire once per session with elapsed ms

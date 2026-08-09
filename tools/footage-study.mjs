@@ -43,9 +43,20 @@ await mkdir(OUT, { recursive: true });
 // picture of the signup form and the motion metric reads a flat 0.00.
 // (The production render pipeline captures the canvas, so its own URL
 // omitting gate=off is not the same bug — verified separately.)
+// `follow` matters as much as gate=off. The production pipeline always
+// passes one (clipRenderQueue builds it from a kill moment); without it
+// the render camera has no subject and frames empty geometry, which the
+// motion metric then reports as a dead run that is really "nobody told
+// the camera who to watch". Pass --follow <playerId>.
+const FOLLOW = opt("follow", "");
+// Empty = the build's own tier. Forcing `potato` changes what the rig
+// LOOKS like, so a study that judges visuals must not silently pin it.
+const QUALITY = opt("quality", "");
 const url =
   `${BASE}/?replay=${encodeURIComponent(REPLAY)}&render=1` +
-  `&from=${FROM}&ticks=${TICKS}&rs=1&quality=potato&gate=off`;
+  `&from=${FROM}&ticks=${TICKS}&rs=1&gate=off` +
+  (QUALITY ? `&quality=${encodeURIComponent(QUALITY)}` : "") +
+  (FOLLOW ? `&follow=${encodeURIComponent(FOLLOW)}` : "");
 console.log(`[study] ${url}`);
 
 const browser = await chromium.launch({
@@ -64,13 +75,34 @@ await page.waitForTimeout(8_000);
 const frames = [];
 const t0 = Date.now();
 let i = 0;
+let stoppedEarly = false;
 while (Date.now() - t0 < SECONDS * 1000) {
+  // Stop when the render finishes. Sampling past the end freezes on the
+  // last frame and manufactures a dead run out of nothing — the first
+  // version of this tool reported exactly that and it was pure artifact.
+  // ReplayScene publishes its state on window.__replayRender; anything
+  // other than an in-progress status means there is nothing left to watch.
+  const status = await page
+    .evaluate(() => (window.__replayRender ?? {}).status ?? null)
+    .catch(() => null);
+  if (status !== null && status !== "rendering" && status !== "playing" && status !== "loading") {
+    stoppedEarly = true;
+    console.log(`[study] render reported "${status}" — stopping at ${i} frames`);
+    break;
+  }
+
   const buf = await page.screenshot({ type: "png" });
   const name = `${OUT}/f${String(i).padStart(4, "0")}.png`;
   await writeFile(name, buf);
   frames.push({ i, name, png: PNG.sync.read(buf) });
   i += 1;
   await page.waitForTimeout(EVERY_MS);
+}
+if (!stoppedEarly && SECONDS * 60 > TICKS) {
+  console.log(
+    `[study] NOTE: sampled ${SECONDS}s of a ${(TICKS / 60).toFixed(0)}s window — ` +
+      `any dead run at the very end is the render having finished, not the game standing still.`,
+  );
 }
 await browser.close();
 
