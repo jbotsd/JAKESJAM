@@ -16,6 +16,9 @@ import { describe, expect, test } from "bun:test";
 import { VenueHost } from "../venueHost.ts";
 import { WorldHost } from "../worldHost.ts";
 import { PlayerId } from "@sim/types.ts";
+import { isLobbyAllyNpcId } from "@sim/botId.ts";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 type LobbyInternals = {
   stop(): void;
@@ -67,22 +70,33 @@ describe("3.1 — displaced arena bots idle in the venue", () => {
     // rather than by membership would evict a lobby ally that had nothing
     // to do with the arena.
     const { arena, lobby } = makeVenue();
-    const allies = idsIn(lobby).filter((id) => id.startsWith("bot_"));
+    // Real ALLY NPCs specifically — the venue's own idle personas are
+    // `bot_`-prefixed too and ARE venue-owned, so filtering by prefix
+    // alone would pick one of those and prove nothing.
+    const allies = idsIn(lobby).filter(isLobbyAllyNpcId);
     expect(allies.length).toBeGreaterThan(0); // vacuity: there ARE allies
 
     arena.onBotRecalled!(PlayerId(allies[0]!));
     expect(idsIn(lobby)).toEqual(expect.arrayContaining(allies));
   });
 
-  test("the idle population is capped", () => {
+  test("the idle population is capped, and the floor SHARES that cap", () => {
     const { arena, lobby } = makeVenue();
+    // The floor has already taken 3 of the 6 idle slots, so displacement
+    // can only add 3 more. One shared budget, not two — otherwise a busy
+    // server slowly stacks nine bots into the antechamber.
     const before = idsIn(lobby).length;
     for (const n of ["a", "b", "c", "d", "e", "f", "g", "h", "i"]) {
       arena.onBotDisplaced!(PlayerId(`bot_${n}`), n.toUpperCase(), "balanced");
     }
+    expect(idsIn(lobby).length).toBe(before + 3);
     // Six is the arena's own bot cap, so the antechamber can never hold
     // more personas than the fight it feeds.
-    expect(idsIn(lobby).length).toBe(before + 6);
+    // Use the real predicate rather than guessing at the id shape — the
+    // ally prefix is not what I assumed, and a hand-rolled filter here
+    // would just be a second place to get it wrong.
+    const idle = idsIn(lobby).filter((id) => id.startsWith("bot_") && !isLobbyAllyNpcId(id));
+    expect(idle.length).toBe(6);
   });
 
   test("the same bot displaced twice does not double-add", () => {
@@ -91,6 +105,45 @@ describe("3.1 — displaced arena bots idle in the venue", () => {
     arena.onBotDisplaced!(PlayerId("bot_spark"), "SPARK", "balanced");
     arena.onBotDisplaced!(PlayerId("bot_spark"), "SPARK", "balanced");
     expect(idsIn(lobby).length).toBe(before + 1);
+  });
+
+  test("the venue holds a presence floor even with nothing displaced", () => {
+    // The quiet case, which is the one a first visitor is most likely to
+    // walk into: nobody has been displaced, so without a floor the room is
+    // just the practice allies and the tableau.
+    const { lobby } = makeVenue();
+    const idlers = idsIn(lobby).filter((id) => /^bot_(shim|gasket|tappet|pinion)$/.test(id));
+    expect(idlers.length).toBe(3);
+  });
+
+  test("the floor's personas never collide with the ARENA roster", () => {
+    // The venue and the arena name bots independently and neither
+    // coordinates, so a shared pool would eventually stand SPARK in both
+    // rooms at once — a bug, not presence.
+    const arenaRoster = readFileSync(
+      resolve(import.meta.dir, "../worldBots.ts"),
+      "utf8",
+    );
+    const rosterBlock = arenaRoster.slice(
+      arenaRoster.indexOf("const ROSTER = ["),
+      arenaRoster.indexOf("] as const;", arenaRoster.indexOf("const ROSTER = [")),
+    );
+    // Vacuity guard: make sure we actually found the roster.
+    expect(rosterBlock).toContain("SPARK");
+    for (const persona of ["SHIM", "GASKET", "TAPPET", "PINION"]) {
+      expect(rosterBlock).not.toContain(persona);
+    }
+  });
+
+  test("displaced bots and the floor share one cap", () => {
+    // 16 is the hard player cap and the lobby already holds 4 allies, so
+    // the bots must never crowd out the humans this is all for.
+    const { arena, lobby } = makeVenue();
+    for (const n of ["a", "b", "c", "d", "e", "f", "g", "h"]) {
+      arena.onBotDisplaced!(PlayerId(`bot_${n}`), n.toUpperCase(), "balanced");
+    }
+    const bots = idsIn(lobby).filter((id) => id.startsWith("bot_"));
+    expect(bots.length).toBeLessThanOrEqual(10); // 4 allies + 6 idle
   });
 
   test("an arena with no venue attached still runs (the hook is optional)", () => {

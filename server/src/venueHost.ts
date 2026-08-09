@@ -30,7 +30,7 @@ import { decodeMessage, encodeMessage, type ClientMessage, type VenueStatus } fr
 import { sanitizeCharacterId } from "@net/playerCharacter.ts";
 import { crystalRoundsCards, catalogForClass } from "@sim/data/cards.ts";
 import { classIdForArchetype, MAX_ABILITY_SLOTS, type ClassId } from "@sim/data/cardTypes.ts";
-import { lobbyAllyNpcId, LOBBY_PRACTICE_TEAM_ID } from "@sim/botId.ts";
+import { lobbyAllyNpcId, LOBBY_PRACTICE_TEAM_ID, BOT_ID_PREFIX } from "@sim/botId.ts";
 
 export const VENUE_LOBBY_MATCH_ID = "lobby";
 
@@ -104,6 +104,32 @@ function venueLobbyMap(): MapDefinition {
  * Fractions of vessel-nexus's map width; "anchor" is the loadout table/
  * totem position itself (unchanged from pre-tableau LOADOUT_X, totem.ts).
  */
+/**
+ * Persona names for bots that idle in the venue BY DEFAULT (gospel 3.1's
+ * presence floor), as opposed to those displaced from the arena.
+ *
+ * Deliberately disjoint from worldBots' ROSTER. The venue and the arena
+ * name their bots independently and neither coordinates with the other, so
+ * a shared pool would eventually put SPARK in both rooms at once — which
+ * reads as a bug, not as presence. Same machine-part register, no digits
+ * (the tell players catch).
+ */
+const VENUE_IDLE_PERSONAS = ["SHIM", "GASKET", "TAPPET", "PINION"] as const;
+
+/**
+ * How many bots stand around the venue when nothing has displaced any.
+ *
+ * Three, not more: the room already holds four practice allies and the
+ * tableau, and the point is "somebody else is here", not a crowd. Sixteen
+ * is the hard player cap, so 4 allies + at most 6 idle leaves six slots
+ * for actual humans — the people this is all for must never be the ones
+ * who cannot get in.
+ */
+const VENUE_IDLE_FLOOR = 3;
+
+/** How often the floor is topped up. */
+const VENUE_IDLE_CHECK_MS = 5_000;
+
 /** Ceiling on displaced bots idling in the venue. Six is the arena's own
  *  bot cap, so the antechamber can never hold more personas than the fight
  *  it feeds. */
@@ -228,6 +254,10 @@ function pickColor(playerId: string): string {
  *  fixtures, not combatants, so gold (not the arena's combat cyan) is the
  *  correct register per chassis-design-axioms.md CA2. */
 const LOBBY_ALLY_ACCENT = "#c9a84c";
+/** Violet, matching botIdentity.ts's BOT_RIG_COLOR — the Settings copy
+ *  promises every bot is a violet body with a BOT plate, so a venue idler
+ *  wearing the ally's gold would make that sentence false. */
+const BOT_LOBBY_ACCENT = "#c879ff";
 
 /**
  * The loadout table's two flanking "good" (ally) NPCs (index 1/2) PLUS the
@@ -284,6 +314,7 @@ export class VenueHost {
    *  roster so the ally NPCs — which are also `bot_`-prefixed — are never
    *  mistaken for displaced arena personas and evicted. */
   private readonly idleBots = new Set<string>();
+  private idleFloorTimer: ReturnType<typeof setInterval> | null = null;
   /** Eager-created: the venue's front door must never be a null world —
    *  an arriving avatar always lands somewhere (contrast WorldHost's
    *  lazy-boot, which predates the lobby-first landing). */
@@ -467,6 +498,8 @@ export class VenueHost {
       () => this.lobbyHost.respawnDestructibles(),
       DUMMY_RESPAWN_CHECK_MS,
     );
+    this.idleFloorTimer = setInterval(() => this.topUpIdleBots(), VENUE_IDLE_CHECK_MS);
+    this.topUpIdleBots(); // don't make the first visitor wait 5s for company
   }
 
   /** The arena half — index.ts keeps routing /ws/world here unchanged. */
@@ -1030,6 +1063,30 @@ export class VenueHost {
       if (!id.startsWith("bot_")) return Math.round(st.players[id]!.x);
     }
     return -1;
+  }
+
+  /**
+   * Keep at least VENUE_IDLE_FLOOR bots standing in the venue (gospel 3.1's
+   * presence floor). Displaced arena bots count toward it, so a busy server
+   * tops up less — the floor exists for the QUIET case, which is the one a
+   * first visitor is most likely to walk into.
+   */
+  private topUpIdleBots(): void {
+    for (const name of VENUE_IDLE_PERSONAS) {
+      if (this.idleBots.size >= VENUE_IDLE_FLOOR) return;
+      const id = `${BOT_ID_PREFIX}${name.toLowerCase()}`;
+      if (this.idleBots.has(id)) continue;
+      if (this.lobbyHost.hasPlayer(PlayerId(id))) continue;
+      this.idleBots.add(id);
+      this.lobbyHost.addPlayer({
+        playerId: PlayerId(id),
+        characterId: "balanced",
+        name,
+        color: BOT_LOBBY_ACCENT,
+        weaponId: "starter-pistol",
+        cosmetics: { accentColor: BOT_LOBBY_ACCENT },
+      });
+    }
   }
 
   private lobbyPlayerCount(): number {

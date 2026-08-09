@@ -115,11 +115,19 @@ describe("VenueHost lobby lifecycle (Pillar 1.2)", () => {
     // prefixed, never real connections. `venue.summary().lobby.present`
     // (below) is keyed off real WEBSOCKETS, not the sim roster, so it
     // stays a true "2 humans" count regardless.
+    // Plus the venue's PRESENCE FLOOR (gospel 3.1, 2026-08-10): three
+    // idle personas so a first visitor does not walk into an empty room.
+    // Listed exactly rather than filtered out — an exact roster is the
+    // point of this test, and a change to who stands in the lobby should
+    // have to be acknowledged here.
     expect(ids).toEqual([
+      "bot_gasket",
       "bot_practice_ally_1",
       "bot_practice_ally_2",
       "bot_practice_ally_3",
       "bot_practice_ally_4",
+      "bot_shim",
+      "bot_tappet",
       "p_a",
       "p_b",
     ]);

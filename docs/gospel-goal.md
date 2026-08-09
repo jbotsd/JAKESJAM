@@ -401,9 +401,22 @@ teaches the loop.
       - [x] **Violet plates stay honest** — bots render `BOT · NAME` on a
             violet rig, unchanged and verified in the live killfeed
             evidence above.
-      - [ ] **Persona bots idle IN THE VENUE** (the presence floor
-            proper) — still open; today the venue's only inhabitants are
-            the ally NPCs and the tableau.
+      - [x] **Persona bots idle IN THE VENUE** — DONE 2026-08-10. Three
+            named personas stand in the lobby whenever fewer than that
+            have been displaced from the arena, so the QUIET case — the one
+            a first visitor is most likely to walk into — is not an empty
+            room. Displaced bots count toward the same budget, so a busy
+            server tops up less and the two mechanisms cannot stack.
+            Names are a pool DISJOINT from the arena roster (SHIM, GASKET,
+            TAPPET, PINION): the two rooms name bots independently and
+            neither coordinates, so a shared pool would eventually stand
+            SPARK in both at once — a bug, not presence. Pinned by a test
+            that reads the arena's actual ROSTER block.
+            Violet accent, matching BOT_RIG_COLOR, because the Settings
+            copy promises every bot is a violet body with a BOT plate and
+            an idler in ally gold would make that sentence false.
+            Capped so 4 allies + 6 idle leaves six of the sixteen player
+            slots for actual humans.
       - [x] **Displaced arena bots return to the venue** — DONE
             2026-08-10. The old code said so itself ("displaced bots simply
             sit out — no lobby idling this sprint"), and the cost was a
