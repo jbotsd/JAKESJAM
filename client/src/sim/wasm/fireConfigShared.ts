@@ -99,7 +99,15 @@ export function resolveFireConfigsViaZig(
   statePtr: number,
   state: WorldState,
 ): void {
-  const sortedPids = Object.keys(state.players).sort();
+  // `localeCompare`, matching packWorldState — NOT a bare `.sort()`.
+  // Every patch-after-pack writer must use the packer's own comparator or
+  // its index `i` lands on someone else's entity, and this one resolves
+  // WEAPONS: a mismatch hands a player another player's loadout. The two
+  // comparators agree on most ids here and disagree exactly where `_` meets
+  // letters ("bot_z" vs "bota"), so this was a latent trap rather than a
+  // live one — found auditing the whole patcher family after the input
+  // writer was caught misrouting inputs outright (2026-08-09).
+  const sortedPids = Object.keys(state.players).sort((a, b) => a.localeCompare(b));
   // Transient scratch (consumed immediately by each export call, before the
   // statics write reuses the same region). 8 bytes = MAX_PLAYER_CARDS.
   const scratch = statePtr + WORLD_STATE_TOTAL_SIZE + 64;

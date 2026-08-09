@@ -2169,6 +2169,29 @@ function nextEntityIdForPack(state: WorldState): number {
   return Math.max(state.nextEntityId ?? 0, max + 1);
 }
 
+/**
+ * THE player index space. Zig sees players as `state.players[0..n]`, and this
+ * is the order packWorldState writes them in — so every index that crosses
+ * the boundary (round winner, first blood, event `player_idx`) and every
+ * patch-after-pack writer must derive its index from THIS function.
+ *
+ * It exists because the boundary had two conventions that everyone believed
+ * were the same: the player array was packed with `id.localeCompare`, while
+ * the index encoders and the event decoder used a bare `.sort()`. Those
+ * agree on most ids and disagree exactly where `_` meets letters ("bot_z"
+ * vs "bota"). The bridge itself had already noticed and worked around it in
+ * one place (see `playerIdBySlot`'s doc in unpackWorldState) without fixing
+ * the rest. Found 2026-08-09 auditing this family after the input patcher
+ * was caught writing one player's keys into another player's entity.
+ */
+export function packedPlayerOrder(
+  players: WorldState["players"],
+): string[] {
+  return Object.values(players)
+    .map((p) => p.id as string)
+    .sort((a, b) => a.localeCompare(b));
+}
+
 export function packWorldState(state: WorldState): Uint8Array {
   const buf = new Uint8Array(WORLD_STATE_TOTAL_SIZE);
   const view = new DataView(buf.buffer);
@@ -2237,7 +2260,7 @@ export function packWorldState(state: WorldState): Uint8Array {
   // sorted-keys convention as first_blood below; -1 = draw/none.
   const roundWinnerIdx =
     state.round.winnerPlayerId != null
-      ? Object.keys(state.players).sort().indexOf(state.round.winnerPlayerId)
+      ? packedPlayerOrder(state.players).indexOf(state.round.winnerPlayerId)
       : -1;
   view.setInt32(off, roundWinnerIdx, true);
   off += 4;
@@ -2252,9 +2275,7 @@ export function packWorldState(state: WorldState): Uint8Array {
   // own `Object.keys(players).sort()` convention.
   const firstBloodIdx =
     state.round.firstBloodPlayerId !== undefined
-      ? Object.keys(state.players)
-          .sort()
-          .indexOf(state.round.firstBloodPlayerId)
+      ? packedPlayerOrder(state.players).indexOf(state.round.firstBloodPlayerId)
       : -1;
   view.setUint32(off, firstBloodIdx >= 0 ? firstBloodIdx + 1 : 0, true);
   off += 4;
@@ -2777,7 +2798,9 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   const scores: Record<string, number> = {};
   const roundKills: Record<string, number> = {};
   let pi = 0;
-  for (const pid of Object.keys(players).sort()) {
+  // `playerIdBySlot` is what the slots actually contained — re-deriving a
+  // sort here is how this drifted (see its own doc above).
+  for (const pid of playerIdBySlot) {
     // PlayerEntity score is at offset 276 from the player's start;
     // round_kills directly after at 280 (former _reserved bytes).
     const playerStart = playersStart + pi * PLAYER_ENTITY_SIZE;
@@ -2792,7 +2815,7 @@ export function unpackWorldState(buf: Uint8Array): UnpackedWorldState {
   // SAME sorted-keys order the pack side used to encode it (and the score
   // loop above reads). `undefined` (not null) when unclaimed — mirrors
   // round.ts's optional-field convention, same as suddenDeathActive.
-  const sortedIds = Object.keys(players).sort();
+  const sortedIds = playerIdBySlot;
   const firstBloodPlayerId =
     firstBloodIdxPlus1 > 0 && firstBloodIdxPlus1 <= sortedIds.length
       ? PlayerId(sortedIds[firstBloodIdxPlus1 - 1]!)

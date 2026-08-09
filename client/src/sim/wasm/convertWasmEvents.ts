@@ -17,6 +17,7 @@ import {
 // so per-event cost is a WeakMap hit.
 import { resolvePlayerBuild } from "../weapon.js";
 import { cardIdForIndex } from "./fireConfigShared.js";
+import { packedPlayerOrder } from "./worldStateBridge.ts";
 
 export type WasmEvent = {
   kind: number;
@@ -39,9 +40,12 @@ export function convertWasmEventsToTs(
   state: WorldState,
 ): SimEvent[] {
   const out: SimEvent[] = [];
-  // Sort player ids deterministically so player_idx maps to playerId
-  // the same way wasm packs them (Object.keys.sort()).
-  const playerIds = Object.keys(state.players).sort();
+  // player_idx is an index into the PACKED player array, so it must be
+  // resolved with the packer's own order — not a bare `.sort()`, which is
+  // what this used and which disagrees with the packer wherever `_` meets
+  // letters. Getting this wrong misattributes kills, hit-confirms and the
+  // killfeed to the wrong player.
+  const playerIds = packedPlayerOrder(state.players);
   const pidByIdx = (idx: number): PlayerId | null =>
     idx >= 0 && idx < playerIds.length
       ? PlayerId(playerIds[idx]!)
