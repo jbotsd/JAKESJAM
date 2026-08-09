@@ -16,7 +16,7 @@ type CrumbKind = "net" | "perf" | "scene" | "error" | "boot" | "clip";
 
 export type TelemetryEvent = {
   /** Event kind — the server indexes on this. */
-  kind: "error" | "context-loss" | "net" | "perf" | "boot";
+  kind: "error" | "context-loss" | "net" | "perf" | "boot" | "funnel";
   /** Short machine signature for dedupe (message + top app frame). */
   sig: string;
   message: string;

@@ -35,6 +35,8 @@ import {
 } from "./game/highlights/clipConsent";
 import { ShellController } from "./shell/ShellController";
 import { installEmailGate } from "./shell/emailGate";
+// Track P1 — the funnel instrument (docs: gospel-goal Track P).
+import { funnel, initFunnel, flushWrongInputs } from "./shell/funnel";
 // One source of naming — venue-goal Pillar 6.1.
 import { VENUE_CTA, VENUE_TITLE, ARENA_TITLE } from "./venueNames";
 // Doors 1.8 — one class presentation, shared with the venue station.
@@ -708,9 +710,18 @@ attachGlobalRenderGovernor(game);
     rendererString: probeRendererString(),
     touch: isTouchMobile(),
   });
+  // Track P1 — the funnel's origin. Everything downstream is measured as
+  // elapsed ms from HERE, because every north-star gate is a "how long
+  // until" question.
+  initFunnel();
+  funnel("page_load");
   game.events.once(Phaser.Core.Events.READY, () => {
     if (game.canvas) watchContextLoss(game.canvas);
     crumb("boot", `phaser ready rs=${getRenderScale()}`);
+    // "playable" = Phaser is up and a canvas exists to receive input. Not
+    // "assets finished" (they stream) and not "in a match" (that is the next
+    // milestone) — this is the conversion-to-play denominator.
+    funnel("playable");
   });
 }
 
@@ -1627,6 +1638,28 @@ function renderPlayerStats(): void {
 }
 renderPlayerStats();
 window.addEventListener(ShellEvents.MATCH_ENDED, () => renderPlayerStats());
+// Track P1 — the last two funnel milestones.
+//
+// round_end_seen: the cycle-completed beat (the same one Doors 1.2 aims the
+// email ask at), i.e. the player saw a cycle finish rather than quitting
+// mid-fight.
+window.addEventListener(ShellEvents.CYCLE_COMPLETED, () => {
+  funnel("round_end_seen");
+  // The opening-window tally closes long before this; flush it here because
+  // a player who reached a cycle end is a session worth reporting.
+  flushWrongInputs();
+});
+// played_again: a SECOND arena entry in one session — the cheapest honest
+// retention proxy until Pillar 5's ceremony can ask properly. Counting
+// ENTRIES rather than listening for a "replay" click means the Back-to-Lobby
+// round trip and the bell both count, which is what "chose again" means.
+let arenaEntries = 0;
+window.addEventListener(ShellEvents.MATCH_STARTED, (event) => {
+  const mode = (event as CustomEvent<{ mode?: string }>).detail?.mode;
+  if (mode !== "world") return;
+  arenaEntries += 1;
+  if (arenaEntries >= 2) funnel("played_again");
+});
 window.addEventListener(ShellEvents.GOTO, () => renderPlayerStats());
 
 async function pollVenuePresence(): Promise<void> {

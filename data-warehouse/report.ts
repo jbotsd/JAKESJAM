@@ -38,6 +38,82 @@ console.log(
     `${traffic.candidate_real} candidate-real external (${((traffic.candidate_real / traffic.total) * 100).toFixed(1)}%)`,
 );
 
+section("INTERNAL: funnel (Track P1)");
+// Every north-star gate is a "how long until" question, so the funnel reports
+// reach AND median elapsed ms. Split by traffic class deliberately: with
+// ~90% of sessions being Jake's own machine, an unsplit funnel measures the
+// developer, not the audience (the same mistake the signup count made).
+const FUNNEL_STEPS = [
+  "page_load",
+  "playable",
+  "first_input",
+  "first_shot",
+  "first_kill",
+  "first_death",
+  "round_end_seen",
+  "played_again",
+] as const;
+
+function funnelRows(where: string): Array<{ step: string; sessions: number; medianMs: number | null }> {
+  return FUNNEL_STEPS.map((step) => {
+    const rows = db
+      .query(
+        `SELECT t.session AS session,
+                json_extract(t.data_json, '$.ms') AS ms
+           FROM telemetry_events t
+           LEFT JOIN session_fingerprints f ON f.session = t.session
+          WHERE t.kind = 'funnel' AND t.sig = ?${where ? ` AND ${where}` : ""}
+          GROUP BY t.session`,
+      )
+      .all(`funnel:${step}`) as Array<{ session: string; ms: number | null }>;
+    const times = rows
+      .map((r) => r.ms)
+      .filter((m): m is number => typeof m === "number")
+      .sort((a, b) => a - b);
+    return {
+      step,
+      sessions: rows.length,
+      medianMs: times.length > 0 ? times[Math.floor(times.length / 2)]! : null,
+    };
+  });
+}
+
+function printFunnel(label: string, where: string): void {
+  const rows = funnelRows(where);
+  const top = rows[0]?.sessions ?? 0;
+  console.log(`  ${label}:`);
+  if (top === 0) {
+    console.log("    (no funnel events yet — instrument landed 2026-08-09;");
+    console.log("     it needs a dist rebuild + real visitors to say anything)");
+    return;
+  }
+  for (const r of rows) {
+    const pct = top > 0 ? ((r.sessions / top) * 100).toFixed(0) : "0";
+    const t = r.medianMs === null ? "—" : `${(r.medianMs / 1000).toFixed(1)}s`;
+    console.log(
+      `    ${r.step.padEnd(15)} ${String(r.sessions).padStart(5)}  ${pct.padStart(3)}%  median ${t}`,
+    );
+  }
+}
+
+printFunnel("ALL sessions", "");
+printFunnel(
+  "EXTERNAL only (candidate-real)",
+  "COALESCE(f.is_candidate_real_external, 0) = 1",
+);
+
+const wrongInputs = db
+  .query(
+    `SELECT COUNT(*) AS sessions, SUM(CAST(json_extract(data_json,'$.count') AS INTEGER)) AS total
+       FROM telemetry_events WHERE kind='funnel' AND sig='funnel:wrong_inputs'`,
+  )
+  .get() as { sessions: number; total: number | null };
+if ((wrongInputs?.sessions ?? 0) > 0) {
+  console.log(
+    `  confusion signal: ${wrongInputs.total ?? 0} wrong inputs in the first 30s across ${wrongInputs.sessions} session(s)`,
+  );
+}
+
 section("INTERNAL: signups");
 // P5/L8: this line used to read COUNT(*) and announce "20 email signups
 // captured" when all 20 were @example.com test rows — and the one real

@@ -173,6 +173,8 @@ const DESKTOP_CAM_ZOOM = 1.4;
 const TOUCH_LANDSCAPE_CAM_ZOOM = 1.0;
 const PORTRAIT_CAM_Y_BIAS = 150; // world px: camera centres BELOW the player → player rides in the upper third, clear of the bottom control band
 import { PALETTE, ARENA_THEMES } from "../ui/palette";
+// Track P1 — funnel milestones fired from the input path and kill/death events.
+import { funnel } from "../../shell/funnel";
 import type {
   CardDefinition,
   CharacterDefinition,
@@ -974,6 +976,14 @@ export class OnlineMatchScene extends Phaser.Scene {
       keys |= InputBit.Fire;
     }
     if (this.keys.shift.isDown) keys |= InputBit.Shield;
+    // Track P1 — the two funnel milestones that live in the input path.
+    // Measured here rather than on a DOM listener so they mean "an input the
+    // GAME accepted", not "a key the browser saw": the north-star gate is
+    // URL -> first shot FIRED, and a keypress the sim ignores is not that.
+    if (keys !== 0) {
+      funnel("first_input");
+      if ((keys & InputBit.Fire) !== 0) funnel("first_shot");
+    }
     // Shield power-slide bash on RIGHT MOUSE (aimable — slides toward the
     // cursor, blocks on the way in, bashes on contact). C stays as a keyboard
     // alternate. The old timed parry (InputBit.Ability) is subsumed by the
@@ -1843,8 +1853,12 @@ export class OnlineMatchScene extends Phaser.Scene {
       if (event.killerId === this.localPlayerId && event.victimId !== this.localPlayerId) {
         recordKill();
         recordStreak(this.killStreakCount.get(this.localPlayerId) ?? 0);
+        funnel("first_kill"); // Track P1 — the <60 s first-kill gate
       }
-      if (event.victimId === this.localPlayerId) recordDeath();
+      if (event.victimId === this.localPlayerId) {
+        recordDeath();
+        funnel("first_death");
+      }
     }
   }
 

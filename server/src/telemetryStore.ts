@@ -20,7 +20,11 @@ const MAX_CRUMBS = 48;
 const MAX_CRUMB_LEN = 200;
 const MAX_DATA_KEYS = 16;
 
-const VALID_KINDS = new Set(["error", "context-loss", "net", "perf", "boot"]);
+// "funnel" (Track P1) rides the same batched, size-capped path as the error
+// kinds — it is ordinary instrumentation, not a second pipeline. It is
+// deliberately NOT in ALERT_KINDS: a new funnel signature is the instrument
+// working, not an incident.
+const VALID_KINDS = new Set(["error", "context-loss", "net", "perf", "boot", "funnel"]);
 
 export type StoredTelemetryEvent = {
   at: string; // server ISO timestamp
