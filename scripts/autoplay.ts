@@ -6,6 +6,8 @@
 //   bun scripts/autoplay.ts --heavy         # content-testing mode
 //   bun scripts/autoplay.ts --minutes 10    # longer session cap
 //   bun scripts/autoplay.ts --url http://localhost:8088
+//   bun scripts/autoplay.ts --full-match    # footage run: play to the end,
+//                                           # never exit on scenario beats
 //
 // The full loop it drives (the real player journey, not a shortcut):
 //   splash deep-link → VENUE LOBBY → walk to the bell (position-steered,
@@ -44,6 +46,13 @@ const opt = (name: string, fallback: string) => {
 };
 const HEAVY = flag("heavy");
 const DIRECT_ARENA = flag("direct-arena");
+/** Footage mode (P2 cadence): keep piloting until the match ends or the
+ *  minutes cap, instead of ending the tape the moment the scenario's
+ *  authoritative beats are captured. Evidence runs want the short tape;
+ *  clip runs want a whole match, because the host only renders highlights
+ *  from a HUMAN's kill moments (matchHost.ts) and one confirmed hit is not
+ *  a highlight reel. */
+const FULL_MATCH = flag("full-match");
 const BASE_URL = opt("url", "http://localhost:8088");
 const GAME_SERVER = opt("game-server", "");
 const MAX_MINUTES = Number(opt("minutes", HEAVY ? "10" : "6"));
@@ -493,14 +502,14 @@ while (Date.now() < arenaDeadline) {
       if (captured) {
         console.log(`[autoplay] captured authoritative ability:${requiredAbilityKind} — scenario beat satisfied`);
         await page.waitForTimeout(700); // retain the authored recovery on tape
-        break;
+        if (!FULL_MATCH) break;
       }
     }
   }
   // This applies to every package, not only drafted abilities. Once all
   // authoritative beats are present, preserve the recovery sentence and end
   // the tape instead of burning minutes waiting for a whole match result.
-  if (await scenarioBeatsSatisfied()) {
+  if (!FULL_MATCH && (await scenarioBeatsSatisfied())) {
     console.log(`[autoplay] all authoritative beats satisfied for ${SCENARIO.id}`);
     await page.waitForTimeout(700);
     break;

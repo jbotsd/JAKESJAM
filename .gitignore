@@ -73,3 +73,6 @@ scripts/.balance-sim-report.json
 
 # tools/promo-clip-session.mjs raw capture output — regenerated per run.
 tools/.promo-session-out/
+
+# local short-form renders (build artifacts, not source)
+/out/
