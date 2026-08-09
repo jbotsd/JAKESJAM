@@ -724,11 +724,22 @@ section early because it is fun; it is fun, and it is parked.
 
 ## TRACK P — PROOF (runs continuously, never completes)
 
-- [ ] **P1 Funnel telemetry** into the data warehouse: page_load →
-      playable → first_input → first_shot → first_kill → first_death →
-      round_end_seen → played_again, plus quit points and wrong-input
-      count in the first 30 s. Fix the largest absolute drop first;
-      long-duration-then-quit = confusion.
+- [x] **P1 Funnel telemetry — INSTRUMENT LANDED** 2026-08-09 (70698be).
+      All eight steps fire once per session with elapsed ms from page load,
+      on the existing batched/capped telemetry queue; wrong-input count in
+      the first 30 s is tallied locally and reported once. Report splits ALL
+      sessions from EXTERNAL-only, because ~90% of sessions are Jake's own
+      machine and an unsplit funnel measures the developer.
+      Placement notes: `first_input`/`first_shot` come off the assembled
+      input bitfield (an input the GAME accepted, not a key the browser
+      saw — the gate is URL→shot FIRED); `played_again` counts a SECOND
+      arena entry, so the Back-to-Lobby round trip counts too.
+      Honesty rules with tests: milestones are monotonic and back-fill with
+      `backfilled: true` so a missing call site reads as a wiring bug rather
+      than a drop-off.
+      **Still needs DATA to say anything** — a dist rebuild plus real
+      visitors. The report prints that instead of printing zeros as
+      findings. Fixing "the largest absolute drop" starts when there is one.
 - [ ] **P2 Footage-study cadence.** Every phase ends with a re-render of
       the newest replays and an indexed frame critique against the north
       star. Standing rule: re-watch latest footage FIRST on every
