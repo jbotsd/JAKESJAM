@@ -26,6 +26,7 @@
 // UI can render "~41" instead of asserting false precision.
 
 import { DRAFT_WINDOW_MS, msUntilNextBell } from "../../sim/round.js";
+import { BELL_LABEL } from "../../venueNames.ts";
 
 export type RoundPhase = "countdown" | "fighting" | "round-over" | "drafting";
 
@@ -59,7 +60,7 @@ export function deathWaitCountdown(
   }
   // Shared phase-sum math with the server's venue summary (@sim/round.ts).
   return {
-    label: "NEXT BELL",
+    label: BELL_LABEL,
     seconds: toSec(msUntilNextBell(phase, countdownRemainingMs)),
     approx: phase !== "drafting",
   };

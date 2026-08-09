@@ -27,6 +27,7 @@ import {
   type RoundPhase,
 } from "./phaseCountdown.js";
 import { msUntilNextBell } from "../../sim/round.js";
+import { BELL_LABEL } from "../../venueNames.ts";
 
 /** Overlay copy for the parked entrant. Venue vocabulary ("the bell" =
  *  the round boundary where fighters enter, docs/venue-design.md §3);
@@ -85,13 +86,13 @@ export function nextBellCountdown(
 ): DeathWaitCountdown {
   if (phase === "countdown") {
     return {
-      label: "NEXT BELL",
+      label: BELL_LABEL,
       seconds: ceilSec(Math.max(0, countdownRemainingMs)),
       approx: false,
     };
   }
   return {
-    label: "NEXT BELL",
+    label: BELL_LABEL,
     seconds: ceilSec(msUntilNextBell(phase, countdownRemainingMs)),
     // Same honesty rule as deathWaitCountdown: estimates are upper bounds
     // (a round or draft can resolve early) — only drafting is exact.

@@ -69,6 +69,8 @@ import {
 } from "./OnlineMatchScene.js";
 import type { CharacterDefinition, CharacterId } from "../types/game";
 import { setActiveLocalPlayerIdGetter, setActiveStateGetter } from "../../debug/wasmStateProbe.js";
+// One source of naming — venue-goal Pillar 6.1.
+import { ARENA_NAME, VENUE_ASKS_NAME } from "../../venueNames.ts";
 
 export type HangoutSceneInit = {
   /**
@@ -766,7 +768,7 @@ export class HangoutScene extends Phaser.Scene {
       const overlay = document.createElement("div");
       overlay.className = "venue-callsign";
       overlay.innerHTML = `
-        <p class="venue-callsign-kicker">THE VENUE ASKS YOUR NAME</p>
+        <p class="venue-callsign-kicker">${VENUE_ASKS_NAME}</p>
         <div class="splash-name">
           <label for="jj-venue-name" class="splash-name-label">CALLSIGN</label>
           <input id="jj-venue-name" type="text" maxlength="14"
@@ -1258,7 +1260,7 @@ export class HangoutScene extends Phaser.Scene {
     const fighters = s.humans === 1 ? "1 FIGHTER" : `${s.humans} FIGHTERS`;
     const bots = s.bots > 0 ? ` · ${s.bots} BOT${s.bots === 1 ? "" : "S"}` : "";
     this.feedText.setText(
-      `THE ARENA — ${phaseLabel} · ROUND ${s.roundIndex + 1} · ${fighters}${bots}`,
+      `${ARENA_NAME} — ${phaseLabel} · ROUND ${s.roundIndex + 1} · ${fighters}${bots}`,
     );
 
     // Wave-2 QA fix (2026-07-29): C1's fix moved feedText down to y=46 in

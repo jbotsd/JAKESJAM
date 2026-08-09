@@ -18,6 +18,11 @@
 //
 // Pure and engine-free so it's testable under bun:test (HangoutScene
 // can't be constructed there — hangoutRigRebuild.test.ts precedent).
+//
+// The caption itself comes from venueNames.ts (Pillar 6.1, one source of
+// naming); the FORMATTING rules above stay here, where their tests are.
+
+import { BELL_LABEL } from "../../venueNames.ts";
 
 export type VenueArenaPhase = "countdown" | "fighting" | "round-over" | "drafting";
 
@@ -25,10 +30,10 @@ export function formatBellCountdown(
   bellMs: number | null,
   phase?: VenueArenaPhase,
 ): string {
-  if (bellMs === null) return "NEXT BELL --:--";
+  if (bellMs === null) return `${BELL_LABEL} --:--`;
   const sec = Math.max(0, Math.ceil(bellMs / 1000));
   const mm = Math.floor(sec / 60);
   const ss = (sec % 60).toString().padStart(2, "0");
   const approx = phase === "fighting" || phase === "round-over";
-  return `NEXT BELL ${approx ? "~" : ""}${mm}:${ss}`;
+  return `${BELL_LABEL} ${approx ? "~" : ""}${mm}:${ss}`;
 }

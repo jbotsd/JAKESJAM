@@ -332,7 +332,7 @@ app.innerHTML = `
            shell/playerStats.ts on load + every return home. -->
       <div class="splash-stats" data-player-stats aria-label="Your record"></div>
       <button type="button" class="splash-cta-blink" data-splash-cta>
-        ▶ ENTER THE ARENA · FIGHT NIGHT EVERY FRIDAY ◀
+        ▶ ${VENUE_CTA} · FIGHT NIGHT EVERY FRIDAY ◀
       </button>
     </div>
   </section>
