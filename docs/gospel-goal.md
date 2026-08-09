@@ -191,11 +191,23 @@ admission race that can park you as a spectator for a full round and then
 tell you "ELIMINATED" before you ever spawned. Items 1.3/1.4/1.5a have
 now cut the cruellest half of that chain.
 
-- [ ] **1.1 Lobby-first landing** (venue-goal 6.2). Bare URL boots into
-      the venue; splash/menu becomes an overlay surface; ident plays only
-      from an explicit menu action. One callsign prompt total (the splash
-      field and the HangoutScene prompt are two surfaces for one
-      localStorage key).
+- [x] 1.1 Lobby-first landing — DONE 2026-08-09 (7ed8198). Bare URL lands
+      in the venue; ceremony promoted to opt-in (`?intro=1`); escape
+      hatches `?splash=1` + `localStorage jakesjam.lobbyFirst=off`; kiosk
+      keeps the full rite (there the ident IS the content). **Screenshotting
+      the landing caught the real blocker**: the venue gates its own
+      connect on the callsign, so lobby-first alone meant a stranger's
+      whole first impression was a name box over an unconnected black
+      void — `isSharedWorldInvite` now covers the bare URL, so you are in
+      the room in ~2 s and rename later. Still one callsign prompt total
+      (both surfaces write one localStorage key). e2e 4/4 including all
+      four viewports.
+      - **Findings for later, NOT regressions of 1.1** (from the landing
+        screenshots, `tests/e2e/.artifacts/lobby-first/`): portrait
+        framing shows mostly wall — the crowd and loadout table that make
+        the room read ALIVE are off-camera on phone while short-desktop
+        shows them; and short-desktop has a dead black band left of the
+        room wall. Venue camera-fit work; sits with Phase 3.
 - [ ] **1.2 Move the email gate to the highest-intent moment** — after
       the first fight, not before everything (end-of-demo-screen pattern;
       the Fight Night funnel keeps its ask, aimed at someone who now
