@@ -856,6 +856,26 @@ N4 is expensive. macOS last: needs a Mac plus Apple signing and
 notarization, so a Jake row. The L10 hash passport runs **per-target**,
 or "bit-identical" quietly means "on one OS".
 
+**First actual check, 2026-08-09 — both cross-compile clean, zero source
+changes:**
+
+| target | result |
+|---|---|
+| `x86_64-windows` | `jjsim.exe`, PE32+ console binary, 3.3 MB (+ .pdb) |
+| `aarch64-linux` | ARM aarch64 ELF |
+
+So the rule is currently satisfiable rather than aspirational, and the
+sim's portability claim survived contact with a second and third target.
+**What this does NOT show: execution.** A cross-compiled binary that
+builds is not a binary that runs, and L10 wants the passport's hash
+stream verified PER TARGET — that needs a Windows box or an emulator,
+and until then "bit-identical" still means "on x86_64-linux". Recorded
+as the gap it is.
+
+Watch out: building a cross target overwrites `zig-out/bin/jjsim` with
+the foreign binary, which silently breaks `scripts/passport.sh` until
+`zig build native` is re-run for the host. Cost a confused minute here.
+
 ### N4 — DISTRIBUTION (parked)
 
 Packaging, icons, Steam. Out of scope until N3 is real. Every N4 item
