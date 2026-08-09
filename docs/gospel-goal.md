@@ -1022,11 +1022,24 @@ cross-compile; on-box today (`extra/raylib 6.0`).
       `mise exec`** (L2 footgun). A spike that fights the box (L13)
       records that as a finding — and as a live check against ADR-0008's
       GL-instability switch trigger.
-- [~] **1.2 Promote or fall back.** BAR MET (see 1.1), so this promotes:
-      raylib is confirmed and SDL3 stays the named fallback behind its
-      existing switch triggers rather than being re-argued. What remains
-      is the mechanical half — the `sim/native/shell.zig` skeleton and
-      flipping ADR-0008's own wording from spike-gated to confirmed.
+- [x] **1.2 Promote or fall back.** PROMOTED 2026-08-10. ADR-0008's Status
+      block now reads **CONFIRMED** (was "spike-gated"), carries the
+      spike's headline numbers, and records the two findings it produced —
+      the `crt1.o`/`.sframe` link failure and the `.woff2` font gap. SDL3
+      stays the named fallback; its triggers stay live, and the spike
+      checked one directly (GL 3.3 stable across ~2500 frames, so the
+      GL-instability trigger has NOT fired).
+      `sim/src/native/shell.zig` is the skeleton — deliberately thin, and
+      the doc comment says why: the shell owns pixels, sound and the OS
+      and NO behaviour, because that is what keeps the port passport
+      meaningful. A shell that starts deciding things is a second
+      implementation wearing a renderer's clothes.
+      The one piece with real logic is the fixed-timestep `StepClock`:
+      5 tests covering sub-step accumulation, the spiral-of-death cap, a
+      backwards clock, and a steady-60 Hz vacuity guard. Dropped steps are
+      COUNTED, not swallowed — silently discarding sim time is what later
+      reads as "the native build feels different". Mutation-checked (cap
+      → 100000 fails 4 tests), substitution verified first.
       (original row below)
 - [ ] ~~**1.2 Promote or fall back.** Bar met → promote to~~
       `sim/native/shell.zig` skeleton, ADR-0008 flips from spike-gated
