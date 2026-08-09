@@ -117,6 +117,12 @@ export type VenueSummary = {
   arena: { humans: number };
 };
 
+/** Arena liveness for the splash strip (Doors 3.4). `bots` is deliberately
+ *  a SEPARATE number from `humans` and must stay that way: the item exists
+ *  because the front door showed seven zeros, and the fix must not swing to
+ *  the other lie by folding AI into a player count. */
+export type WorldLiveness = { humans: number; bots: number };
+
 /** True when a hostname is in a private/local address space per Chromium's
  *  Local Network Access rules (RFC1918, loopback, CGNAT/Tailscale 100.x,
  *  .local/.ts.net). Fetching one of these from a PUBLIC page throws the
@@ -148,6 +154,37 @@ export async function fetchVenueSummary(): Promise<VenueSummary | null> {
     const res = await fetch(`${httpBase}/venue/summary`, { method: "GET" });
     if (!res.ok) return null;
     return ((await res.json()) as VenueSummary | null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Arena liveness for the splash strip (Doors 3.4) — humans AND bots.
+ *
+ * Reads `/health` rather than `/venue/summary` because the summary carries
+ * no bot count and adding one is a server change; `/health` has published
+ * `world.humans` / `world.bots` all along. Same private-host guard and the
+ * same null-on-anything-wrong contract as fetchVenueSummary: a splash
+ * decoration must never trigger the browser's local-network permission
+ * prompt, and must never throw into the boot path.
+ */
+export async function fetchWorldLiveness(): Promise<WorldLiveness | null> {
+  const httpBase = wsToHttp(readGameServerWsBase());
+  try {
+    const pageHost = browserLocation()?.hostname ?? "";
+    const baseHost = new URL(httpBase).hostname;
+    if (!isPrivateHost(pageHost) && isPrivateHost(baseHost)) return null;
+  } catch {
+    return null;
+  }
+  try {
+    const res = await fetch(`${httpBase}/health`, { method: "GET" });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { world?: { humans?: number; bots?: number } } | null;
+    const world = body?.world;
+    if (!world) return null;
+    return { humans: world.humans ?? 0, bots: world.bots ?? 0 };
   } catch {
     return null;
   }

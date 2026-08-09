@@ -364,10 +364,19 @@ teaches the loop.
       controls reference in Settings; first-storm and first-cycle-end get
       FTUE lines like the first-draft one. Class verbs taught on first
       pick of that class, not up front.
-- [ ] **3.4 Seven-zeros splash fix** — the stats strip on a fresh browser
-      is seven zeros as the front door's social proof. Show arena
-      liveness honestly ("4 fighters warming up · AI"); never count bots
-      as players.
+- [x] 3.4 Seven-zeros splash fix — DONE 2026-08-09. A visitor with no
+      history no longer sees five counters they could not have earned
+      plus ONLINE 0 / IN MATCH 0; they see arena liveness instead.
+      Measured before: seven zeros. After, newcomer with 4 bots live:
+      `["4 FIGHTERS WARMING UP · AI"]`. Returning player is unchanged —
+      `["12 KILLS","7 DEATHS","4 BEST STREAK","3 MATCHES","1 WINS",
+      "4 FIGHTERS WARMING UP · AI"]`.
+      - Honest in BOTH directions: bots never join a player count, they
+        carry their own label saying what they are. Real humans, when
+        present, lead the strip and bots demote to "AI SPARRING".
+      - Bots come from `/health` (`world.bots`), not `/venue/summary`
+        which has no bot count — deliberately avoided a server change so
+        the E2 soak's freeze clock kept running.
 - [ ] **3.5 Silent-failure sweep** — callsign-gate no-op at the bell
       totem (`venueHost.ts:604-611`), 1 s blank venue feed, lobby
       disconnect with no retry affordance, venue visitors unable to reach

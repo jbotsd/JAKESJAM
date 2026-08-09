@@ -16,7 +16,7 @@ import { announce, setAnnouncerVolume, silenceAnnouncer } from "./game/audio/Ann
 import { setSfxVolume01 } from "./game/audio/sfxVolume";
 import { LobbyController } from "./game/ui/LobbyController";
 import { loadPlayerStats, statLines } from "./shell/playerStats";
-import { fetchVenueSummary } from "./net/worldClient";
+import { fetchVenueSummary, fetchWorldLiveness } from "./net/worldClient";
 import { sanitizePlayerName, stripDisallowedChars } from "./net/playerName";
 import { SceneKeys } from "./game/scenes/SceneKeys";
 import {
@@ -1614,14 +1614,39 @@ const playerStatsMount = queryRequired<HTMLElement>("[data-player-stats]");
 // and current players in a match in the stats"): ONLINE = lobby + arena
 // humans, IN MATCH = arena humans, from /venue/summary. Polled only while
 // the splash is actually on screen, at the old status-badge cadence.
-let venuePresence: { online: number; inMatch: number } | null = null;
+let venuePresence: { online: number; inMatch: number; bots: number } | null = null;
 function renderPlayerStats(): void {
-  const lines = statLines(loadPlayerStats());
+  // Doors 3.4 — the front door used to greet a first-time visitor with
+  // SEVEN ZEROS: five personal counters they could not possibly have
+  // earned yet, plus ONLINE 0 / IN MATCH 0. As social proof that is worse
+  // than nothing; it is an empty trophy case with the lights on.
+  //
+  // A player who has never finished a match gets ARENA LIVENESS instead —
+  // and it stays honest in both directions. Bots are never folded into a
+  // player count: they get their own label saying what they are, because
+  // the fix for "looks dead" must not be "lie about the crowd".
+  const stats = loadPlayerStats();
+  const isNewcomer = stats.matches === 0;
+  const lines = isNewcomer ? [] : statLines(stats);
+
   if (venuePresence !== null) {
-    lines.push(
-      { label: "ONLINE", value: String(venuePresence.online) },
-      { label: "IN MATCH", value: String(venuePresence.inMatch) },
-    );
+    const { online, inMatch, bots } = venuePresence;
+    if (online > 0) {
+      // Real people present — they are the proof, so lead with them.
+      lines.push({ label: online === 1 ? "PLAYER ONLINE" : "PLAYERS ONLINE", value: String(online) });
+      if (inMatch > 0) lines.push({ label: "IN MATCH", value: String(inMatch) });
+      if (isNewcomer && bots > 0) {
+        lines.push({ label: "AI SPARRING", value: String(bots) });
+      }
+    } else if (bots > 0) {
+      // Nobody here yet. The arena IS live — say so in the arena's own
+      // terms rather than reporting a zero that reads as "abandoned".
+      lines.push({ label: "FIGHTERS WARMING UP · AI", value: String(bots) });
+    } else if (!isNewcomer) {
+      // A returning player with a genuinely empty, botless arena gets the
+      // honest zero — they have context for it.
+      lines.push({ label: "PLAYERS ONLINE", value: "0" });
+    }
   }
   playerStatsMount.replaceChildren(
     ...lines.map(({ label, value }) => {
@@ -1668,9 +1693,15 @@ async function pollVenuePresence(): Promise<void> {
   if (document.visibilityState !== "visible" || playerStatsMount.offsetParent === null) return;
   const venue = await fetchVenueSummary();
   if (venue === null) return; // unreachable/not live — keep the last read
+  // Doors 3.4 — bots come from /health because the venue summary has no
+  // bot count. Fetched alongside, not instead: humans stay authoritative
+  // from the venue (it knows the lobby too), bots are decoration. A null
+  // liveness read just means the strip shows no AI line this tick.
+  const liveness = await fetchWorldLiveness();
   venuePresence = {
     online: (venue.lobby?.present ?? 0) + (venue.arena?.humans ?? 0),
     inMatch: venue.arena?.humans ?? 0,
+    bots: liveness?.bots ?? 0,
   };
   renderPlayerStats();
 }
