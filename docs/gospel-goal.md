@@ -357,7 +357,20 @@ the sim-side halves land in Zig.
 - [~] **2.4 Pillar 2/3 residuals** — audited row by row 2026-08-09:
       - [x] orphan-ceremony regression test — DONE (f64661b).
       - [ ] lobby presence floor — genuinely open, see 3.1 (frozen path).
-      - [ ] the unmeasured dummy-hit-<8 s half of venue 2.5 — open.
+      - [ ] the unmeasured dummy-hit-<8 s half of venue 2.5 — MEASURED
+            2026-08-09, and the answer is that it does not happen at all:
+            a visitor closes to 18px of a practice dummy, on the same
+            floor, firing an 880px hitscan continuously, and no
+            destructible ever loses health. Spec committed as
+            `tests/e2e/timeToDummyHit.spec.ts`, marked `test.fail()` so
+            the suite goes RED when it starts working. Ruled out:
+            not-in-venue (lobby.present=1), not-firing (fireCooldownMs
+            non-zero 133/162), range, ammo, and intended behaviour
+            (World.ts:3018 says destructibles stay hittable in hangout).
+            **UNCONFIRMED hypothesis:** the lobby is not in hangout mode —
+            it defines 8 dummies and shows 1, and sits at phase
+            "round-over" while the arena cycles to "fighting". Chasing it
+            touches frozen paths, so it waits for the flip.
       - [ ] ready-totem linger debounce — open.
 
 ### Phase 3 — ALIVE AND UNDERSTANDABLE (empty room + onboarding)
@@ -979,11 +992,14 @@ section early because it is fun; it is fun, and it is parked.
       - Corollary for whoever runs the real test: from one machine you
         measure the LIMITER, not the server. A genuine capacity number
         needs multiple source IPs.
-- [ ] **P5 Fix the lying meter (L8 violation, found 2026-08-09).**
-      `data-warehouse/report.ts` reports "20 email signups captured";
-      all 20 rows are `@example.com` UUID addresses from 2026-07-13/14
-      test runs. Real signups ≈ 0–1. Filter test rows or the report will
-      keep flattering the funnel it exists to measure.
+- [x] **P5 Fix the lying meter (L8 violation, found 2026-08-09).** DONE
+      2026-08-09. Report now reads "1 REAL email signup (20 test rows
+      excluded of 21 captured)" and names it. The filter is guarded by
+      probes GENERATED from the rule, not hand-written: the first guard
+      was itself vacuous — a mutation adding a domain to the TS list but
+      not the SQL passed 18/18 — and the generated version now fails on
+      exactly that mutation. `data-warehouse` was not a workspace member,
+      so the test would never have run; added. 30 pass / 0 fail.
 - **Engine meters (continuous):** divergence sweep · bench · replay
   hashes · native-vs-wasm passport per-target · frame p50/p99 + input
   latency on the N2 soak · binary+pack size and cold-start-to-lobby
