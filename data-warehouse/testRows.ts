@@ -15,7 +15,7 @@
 /** Reserved / non-deliverable domains — RFC 2606 + RFC 6761. Nothing real
  *  can ever arrive from these, so matching them cannot produce a false
  *  positive against a genuine signup. */
-const RESERVED_DOMAINS = [
+export const RESERVED_DOMAINS = [
   "example.com",
   "example.org",
   "example.net",

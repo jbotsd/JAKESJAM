@@ -5,7 +5,8 @@
   "type": "module",
   "workspaces": [
     "client",
-    "server"
+    "server",
+    "data-warehouse"
   ],
   "scripts": {
     "dev": "bun run --filter client dev",
