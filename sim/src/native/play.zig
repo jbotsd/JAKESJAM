@@ -546,6 +546,89 @@ const InputLatency = struct {
     }
 };
 
+/// gospel N2.4 (first slice) — a PLAYABLE native sandbox.
+///
+/// Not a replay: the world is built natively (`world_state_load_named_map`
+/// + `world_init_roster`, no packed state from TS), the frame loop owns
+/// the clock, real device input drives player 0 through the tested
+/// dialect, and `step_world` is the same core the browser and server run.
+///
+/// This is the first time the game is playable outside a browser. Scope
+/// stated rather than implied: no bots yet (N-BOT's stateful half is not
+/// ported), so the arena is you and the geometry. That is enough to feel
+/// movement, shooting and the camera on native input, which is what the
+/// row needs before bots make sense.
+fn runSandbox(state_buf: []u8, ctx: *RenderCtx, map_id: []const u8, tick_limit: u64) !void {
+    const state: *WorldState = @ptrCast(@alignCast(state_buf.ptr));
+
+    // Build the world in the CORE. No TS, no packed state.
+    const statics = sim.world.world_state_load_named_map(state, map_id.ptr, @intCast(map_id.len));
+    if (statics == 0) {
+        std.debug.print("unknown map '{s}' — try vessel-nexus or boxworks-tower\n", .{map_id});
+        return error.UnknownMap;
+    }
+    const archetypes = [_]u8{0};
+    _ = sim.world.world_init_roster(state, &archetypes, 1, 20260810);
+    // world_init_roster zeroes the state, which clears the statics the map
+    // just wrote — so the map goes in AGAIN after the roster. Found by the
+    // arena rendering empty and the player falling forever.
+    _ = sim.world.world_state_load_named_map(state, map_id.ptr, @intCast(map_id.len));
+    state.header.round_phase = @intFromEnum(sim.world_state.RoundPhase.fighting);
+
+    ctx.world_w = 3000;
+    ctx.world_h = 1200;
+    ctx.follow_scale = 1;
+
+    var clock = shell.StepClock{};
+    var prev = Lerpable.capture(state);
+    var curr = prev;
+    var ticks: u64 = 0;
+
+    std.debug.print("sandbox: {s}, {d} statics, 1 player — WASD/SPACE, mouse aims+fires, ESC quits\n", .{ map_id, statics });
+
+    while (!c.WindowShouldClose() and (tick_limit == 0 or ticks < tick_limit)) {
+        const owed = clock.stepsFor(@as(f64, @floatCast(c.GetFrameTime())) * 1000.0);
+        var s2: u32 = 0;
+        while (s2 < owed) : (s2 += 1) {
+            const raw = pollRaw(ctx, false);
+            const fi = shell.mapInput(raw);
+            const p0 = &state.players[0];
+            p0.prev_keys = p0.current_keys;
+            p0.current_keys = fi.keys;
+            p0.aim_x = fi.aim_x;
+            p0.aim_y = fi.aim_y;
+
+            prev = curr;
+            _ = sim.world.step_world(state, shell.STEP_MS);
+            curr = Lerpable.capture(state);
+            ticks += 1;
+        }
+
+        ctx.frames_drawn += 1;
+        ctx.track(state);
+        const a = @as(f32, @floatCast(clock.alpha()));
+        c.BeginDrawing();
+        drawWorld(state, ctx, .{ .prev = &prev, .curr = &curr, .a = a });
+        var buf: [160]u8 = undefined;
+        const label = std.fmt.bufPrintZ(&buf, "SANDBOX  tick {d}  hp {d:.0}  proj {d}", .{
+            ticks,
+            state.players[0].health,
+            state.projectile_count,
+        }) catch "?";
+        c.DrawText(label, 16, 16, 20, .{ .r = 210, .g = 225, .b = 245, .a = 255 });
+        c.EndDrawing();
+    }
+    const p = state.players[0];
+    std.debug.print("sandbox: {d} ticks, {d} frames, {d} steps dropped\n", .{ ticks, ctx.frames_drawn, clock.dropped_steps });
+    // "It ran" is not "it worked". A player who fell through the world
+    // has a y far below the arena and a huge downward velocity; one
+    // standing on geometry does not. Report it rather than assume.
+    std.debug.print("player0: pos ({d:.0}, {d:.0}) vel ({d:.1}, {d:.1}) hp {d:.0} — {s}\n", .{
+        p.x, p.y, p.vx, p.vy, p.health,
+        if (p.y > 2000 or p.vy > 500) "FELL THROUGH THE WORLD" else "resting on geometry",
+    });
+}
+
 pub fn main() !void {
     var gpa_state = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa_state.deinit();
@@ -556,6 +639,8 @@ pub fn main() !void {
     var headless_check = false;
     var fit_arena = false;
     var smooth = false;
+    var sandbox_map: ?[]const u8 = null;
+    var sandbox_ticks: u64 = 0; // 0 = until the window closes
 
     var args = try std.process.argsWithAllocator(gpa);
     defer args.deinit();
@@ -571,9 +656,31 @@ pub fn main() !void {
             fit_arena = true;
         } else if (std.mem.eql(u8, a, "--smooth")) {
             smooth = true;
+        } else if (std.mem.eql(u8, a, "--ticks")) {
+            if (args.next()) |v| sandbox_ticks = std.fmt.parseInt(u64, v, 10) catch 0;
+        } else if (std.mem.eql(u8, a, "--sandbox")) {
+            sandbox_map = if (args.next()) |v| try gpa.dupe(u8, v) else try gpa.dupe(u8, "vessel-nexus");
         }
     }
     defer if (replay_path) |rp| gpa.free(rp);
+
+    // Sandbox needs no replay — it builds its own world.
+    if (sandbox_map) |mid| {
+        defer gpa.free(mid);
+        const sp = sim.alloc_state();
+        const sb = sp[0..sim.state_size()];
+        c.SetTraceLogLevel(c.LOG_WARNING);
+        // Pace to the display. Uncapped meant 132k frames for 600 sim
+        // ticks — ~220 draws per tick, a full core burnt to render the
+        // same world over and over. StepClock decouples the SIM from the
+        // frame rate; it does not mean the frame rate should be infinite.
+        c.SetConfigFlags(c.FLAG_VSYNC_HINT);
+        c.InitWindow(WIN_W, WIN_H, "JAKESJAM · native sandbox");
+        defer c.CloseWindow();
+        var sctx = RenderCtx{ .follow = true };
+        try runSandbox(sb, &sctx, mid, sandbox_ticks);
+        return;
+    }
 
     const path = replay_path orelse {
         std.debug.print("usage: jjplay --replay <file.jjr> [--speed N] [--headless-check]\n", .{});

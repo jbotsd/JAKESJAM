@@ -1150,7 +1150,30 @@ cross-compile; on-box today (`extra/raylib 6.0`).
       not the shell), emission compose/cast, ceremony, "again". The
       draft overlay is the one genuinely new UI build — functional-ugly
       first per L11.
-- [ ] **2.4 Bots + offline match.** N-BOT brains fill the roster; full
+- [~] **2.4 Bots + offline match.** PLAYABLE SANDBOX DONE 2026-08-10 —
+      the first time the game runs outside a browser.
+      `jjplay --sandbox <map>` builds the world in the CORE
+      (`world_state_load_named_map` + `world_init_roster`, no packed state
+      from TS), the frame loop owns the clock, real device input drives
+      player 0 through the tested dialect, and `step_world` is the same
+      core the browser and server run. Verified on every named map:
+      vessel-nexus 39 statics, skyseam 44, boxworks-tower 14, all with the
+      player resting on geometry at full health.
+      Two things it reports rather than assumes: whether the player FELL
+      THROUGH THE WORLD (a run that "completed" while the rig fell forever
+      would otherwise look like a pass), and the frame/tick ratio — which
+      caught a busy-spin drawing **132,135 frames for 600 ticks**, ~220
+      draws per tick burning a core. StepClock decouples the sim from the
+      frame rate; it does not mean the frame rate should be infinite.
+      Vsync now paces it: 753 frames for 600 ticks.
+      Gotcha worth keeping: `world_init_roster` ZEROES the state, so the
+      map has to be loaded AGAIN after the roster. Found by the arena
+      rendering empty and the player falling forever.
+      STILL OPEN: no bots (N-BOT's stateful half is not ported) and no
+      round cycle, so it is a movement/shooting sandbox rather than a
+      match. Bots are the rest of this row.
+      (original row below)
+- [ ] ~~**2.4 Bots + offline match.**~~ N-BOT brains fill the roster; full
       FFA cycle with all four classes present (chassis rule: the
       Geometrician stays raycast, in any shell, forever). Acceptance:
       the N2 gate numbers over a scripted 5-minute soak, logged per L8.
