@@ -910,9 +910,21 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       `comptime { _ = ...; }` block and a new module must be added to it or
       its exports silently vanish from sim.wasm while every Zig test still
       passes.
-      STILL OPEN: `worldBots.ts` itself (765 lines — targeting, mode
-      machine, per-bot memory, the stateful half). That is the rest of
-      N-BOT and needs seeded lockstep parity, not argument comparison.
+      **TARGETING half also DONE 2026-08-11** (`sim/src/bot_target.zig`):
+      `nearestFoe`, `headingTowardMe`, `inboundThreat`. `nearestFoe` is
+      the one that needed a real gate — four running bests resolved by the
+      bot-on-bot preference (a bot within 1.55x of the nearest human wins)
+      and the newcomer grace window, every comparison a strict `<`. Wrong
+      by a little does not throw; it makes the gang dogpile the wrong
+      player, or the first-timer the grace window exists to protect.
+      `botTargetParity.test.ts` drives the REAL private methods (reached
+      by cast — testing a copy would prove nothing) against the export:
+      401 assertions including 300 seeded-random layouts, with a vacuity
+      guard that more than one KIND of target got chosen. Mutation-checked
+      by moving the factor 1.55 → 1.20, which fails 2.
+      STILL OPEN: the mode machine (`decide`) and per-bot memory — the
+      genuinely stateful part, which needs seeded lockstep rather than
+      argument comparison.
       (original row below)
 - [ ] ~~**N-BOT · Bot brain into the core.**~~ Port `worldBots.ts` +
       `botArenaNav.ts` (~900 lines) to `sim/src/bot.zig` with parity
