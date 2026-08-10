@@ -976,7 +976,21 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       - out of range with a full meter KEEPS the timer; only spending the
         charge disarms. That is what lets a bot chase and cast on arrival
         rather than restarting its delay at the door.
-      STILL OPEN: aim/fire output, the melee branch, the draft, and the
+      **AIM also DONE 2026-08-11** (`AimState`): weak lead (0.4 of the true
+      intercept), a slow 0.16/tick EMA, and per-target error multipliers.
+      Every term exists to make the bot WORSE on purpose — under-lead so
+      it can be strafed away from, lag so a direction change beats it, and
+      3.19x error against a newcomer (1.45 human × 2.2 fresh) so a first
+      fight is survivable.
+      That compounding is the rule the tests protect: reading the two
+      multipliers as alternatives instead of a product makes a newcomer's
+      first fight far deadlier than intended, and nothing would fail.
+      Mutation-checked — making fresh REPLACE human fails 2.
+      Also pinned: exactly two draws per step, x then y, jittering
+      independently. One shared draw would correlate the axes into a
+      diagonal bias — cheap to write, visible as bots that always miss the
+      same way.
+      STILL OPEN: the fire gate, the melee branch, the draft, and the
       remaining per-bot memory.
       (original row below)
 - [ ] ~~**N-BOT · Bot brain into the core.**~~ Port `worldBots.ts` +

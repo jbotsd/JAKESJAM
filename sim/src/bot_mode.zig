@@ -669,3 +669,149 @@ test "EmissionCast: an idle bot never draws" {
     while (t < 20_000) : (t += 100) _ = e.step(10, 100, 300, t, countingRand, &c);
     try std.testing.expectEqual(@as(u32, 0), c.draws);
 }
+
+// ── gospel N-BOT · aim ───────────────────────────────────────────────────
+//
+// Weak lead + a slow EMA + per-target error multipliers. This is the
+// single biggest lever on how a bot FEELS, and every term in it is there
+// to make the bot worse on purpose:
+//
+//   - lead is only 0.4 of the true intercept, so it under-leads and can
+//     be strafed away from;
+//   - the EMA tracks at 0.16/tick, so it lags a target that changes
+//     direction — a perfect tracker is unfun to fight;
+//   - humans get 1.45x the aim error, and a NEWCOMER 2.2x on top of that
+//     (3.19x total), which is the difference between "I got shot" and
+//     "I never had a chance".
+//
+// Getting any of those wrong makes bots feel wrong without failing
+// anything, so the tests pin the multipliers compounding rather than
+// replacing.
+
+pub const AIM_ERROR_PX: f64 = 78;
+pub const LEAD_FACTOR: f64 = 0.4;
+pub const PROJECTILE_SPEED: f64 = 650;
+pub const HUMAN_AIM_ERROR_MUL: f64 = 1.45;
+pub const FRESH_AIM_ERROR_MUL: f64 = 2.2;
+pub const AIM_EMA: f64 = 0.16;
+
+pub const AimState = struct {
+    x: f64 = 0,
+    y: f64 = 0,
+
+    /// Advance the aim EMA and return the jittered aim point.
+    ///
+    /// TWO draws, always, in x-then-y order. Both are unconditional here,
+    /// which is worth stating because most of this brain's draws are not:
+    /// swapping the order or collapsing them to one shared jitter changes
+    /// the stream and correlates the axes into a diagonal bias.
+    pub fn step(
+        self: *AimState,
+        foe_x: f64,
+        foe_y: f64,
+        foe_vx: f64,
+        foe_vy: f64,
+        dist: f64,
+        foe_is_human: bool,
+        foe_is_fresh: bool,
+        rand: *const fn (ctx: ?*anyopaque) f64,
+        rand_ctx: ?*anyopaque,
+    ) struct { x: f64, y: f64 } {
+        const flight_sec = dist / PROJECTILE_SPEED;
+        const lead_x = foe_x + foe_vx * flight_sec * LEAD_FACTOR;
+        const lead_y = foe_y + foe_vy * flight_sec * LEAD_FACTOR;
+        self.x += (lead_x - self.x) * AIM_EMA;
+        self.y += (lead_y - self.y) * AIM_EMA;
+
+        var err_mul: f64 = 1;
+        if (foe_is_human) err_mul *= HUMAN_AIM_ERROR_MUL;
+        // COMPOUNDS with the human multiplier rather than replacing it —
+        // a fresh human gets 1.45 * 2.2 = 3.19x, not 2.2x.
+        if (foe_is_fresh) err_mul *= FRESH_AIM_ERROR_MUL;
+        const err = AIM_ERROR_PX * err_mul;
+
+        return .{
+            .x = self.x + (rand(rand_ctx) - 0.5) * err,
+            .y = self.y + (rand(rand_ctx) - 0.5) * err,
+        };
+    }
+};
+
+test "AimState: the EMA lags rather than snapping" {
+    var a = AimState{ .x = 0, .y = 0 };
+    var c = Counter{ .next = 0.5 }; // zero jitter
+    const out = a.step(1000, 0, 0, 0, 1000, false, false, countingRand, &c);
+    // One tick moves 16% of the way, not all of it. A bot that snapped
+    // would be unmissable.
+    try std.testing.expectApproxEqAbs(@as(f64, 160), out.x, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 160), a.x, 1e-9);
+}
+
+test "AimState: it converges toward a stationary target over time" {
+    var a = AimState{ .x = 0, .y = 0 };
+    var c = Counter{ .next = 0.5 };
+    var i: usize = 0;
+    while (i < 60) : (i += 1) _ = a.step(1000, 0, 0, 0, 1000, false, false, countingRand, &c);
+    // Vacuity guard for the lag test: it must actually arrive eventually,
+    // or "lags" would be indistinguishable from "broken".
+    try std.testing.expect(a.x > 990);
+}
+
+test "AimState: lead is weak on purpose — 0.4 of the true intercept" {
+    var a = AimState{ .x = 0, .y = 0 };
+    var c = Counter{ .next = 0.5 };
+    // 650px away = 1s flight; a foe at 100px/s would truly need +100 lead.
+    _ = a.step(650, 0, 100, 0, 650, false, false, countingRand, &c);
+    // Target point is 650 + 100*1*0.4 = 690; EMA takes 16% of it.
+    try std.testing.expectApproxEqAbs(@as(f64, 690 * AIM_EMA), a.x, 1e-9);
+}
+
+test "AimState: error multipliers COMPOUND for a fresh human" {
+    // The rule that protects newcomers. A fresh human must get
+    // 1.45 * 2.2 = 3.19x error, not 2.2x — reading these as alternatives
+    // would make a first fight far deadlier than intended.
+    var c = Counter{ .next = 1.0 }; // max positive jitter → err/2
+    var bot_foe = AimState{ .x = 0, .y = 0 };
+    const vs_bot = bot_foe.step(0, 0, 0, 0, 0, false, false, countingRand, &c);
+    var human = AimState{ .x = 0, .y = 0 };
+    const vs_human = human.step(0, 0, 0, 0, 0, true, false, countingRand, &c);
+    var fresh = AimState{ .x = 0, .y = 0 };
+    const vs_fresh = fresh.step(0, 0, 0, 0, 0, true, true, countingRand, &c);
+
+    try std.testing.expectApproxEqAbs(AIM_ERROR_PX / 2, vs_bot.x, 1e-9);
+    try std.testing.expectApproxEqAbs(AIM_ERROR_PX * HUMAN_AIM_ERROR_MUL / 2, vs_human.x, 1e-9);
+    try std.testing.expectApproxEqAbs(
+        AIM_ERROR_PX * HUMAN_AIM_ERROR_MUL * FRESH_AIM_ERROR_MUL / 2,
+        vs_fresh.x,
+        1e-9,
+    );
+    // And they are genuinely different, so the assertions above are not
+    // all quietly comparing the same number.
+    try std.testing.expect(vs_fresh.x > vs_human.x);
+    try std.testing.expect(vs_human.x > vs_bot.x);
+}
+
+test "AimState: exactly two draws per step, x then y" {
+    var a = AimState{};
+    var c = Counter{ .next = 0.5 };
+    _ = a.step(100, 100, 0, 0, 100, false, false, countingRand, &c);
+    try std.testing.expectEqual(@as(u32, 2), c.draws);
+    _ = a.step(100, 100, 0, 0, 100, false, false, countingRand, &c);
+    try std.testing.expectEqual(@as(u32, 4), c.draws);
+}
+
+test "AimState: the two axes jitter independently" {
+    // Collapsing to one shared draw would correlate them into a diagonal
+    // bias — cheap to write, and visible as bots that always miss the
+    // same way.
+    const Alt = struct {
+        var flip: bool = false;
+        fn r(_: ?*anyopaque) f64 {
+            flip = !flip;
+            return if (flip) 1.0 else 0.0;
+        }
+    };
+    var a = AimState{ .x = 0, .y = 0 };
+    const out = a.step(0, 0, 0, 0, 0, false, false, Alt.r, null);
+    try std.testing.expect(out.x != out.y);
+}
