@@ -43,8 +43,8 @@ OBSIDIAN="0x0a0c10"; BONE="0xf2ece0"; GOLD="0xb08d3f"; TEAL="0x4fd8d8"
 # characters actually read at phone size, the arena keeps its context, and the
 # band clears both safe zones. zoom 1.0 keeps every pixel but the fighters are
 # too small to follow on a phone.
-IN=""; OUT=""; HOOK=""; ZOOM="2.0"; FROM=""; TO=""; MUSIC=""; MUSIC_START="0"; VO=""; CAPS=""
-MARK="play.elyad.io"; HOOK_DUR="2.6"
+IN=""; OUT=""; HOOK=""; ZOOM="2.4"; FROM=""; TO=""; MUSIC=""; MUSIC_START="0"; VO=""; CAPS=""
+MARK="play.elyad.io"; HOOK_DUR="3.2"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -123,32 +123,29 @@ BAND_BOT=$((BAND_TOP + BAND_H))
 
 # Hook sits in the freed space ABOVE the band when there's room for it, else
 # just inside the band's top edge. Same idea for the mark below.
-HOOK_Y=$(awk -v t="$BAND_TOP" 'BEGIN{ y = t - 210; if (y < 230) y = t + 40; printf "%d", y }')
-if [ -n "$CAPS" ]; then
-  # Captions own the band-to-CTA gap; the mark sits below them.
-  MARK_Y=$(awk -v h="$H" 'BEGIN{ printf "%d", h-90 }')
-else
-  MARK_Y=$(awk -v b="$BAND_BOT" -v h="$H" 'BEGIN{ y = b + 96; if (y > h-300) y = h-360; printf "%d", y }')
-fi
-NAME_Y=$((MARK_Y - 74))
-# Sits in the top dead space, clear of the 10% platform-UI safe zone.
-WORDMARK_Y=$(awk -v t="$BAND_TOP" 'BEGIN{ y = t - 62; if (y < 210) y = 210; printf "%d", y }')
+HOOK_Y=$(awk -v t="$BAND_TOP" 'BEGIN{ y = t + 78; if (y < 236) y = 236; printf "%d", y }')
+MARK_Y=0 # brand moved to the top line (platform safe box: no text below y~1470)
+NAME_Y=0
+# Brand line sits just inside the band top, below the 220px platform zone.
+BRAND_Y=$(awk -v t="$BAND_TOP" 'BEGIN{ y = t + 26; if (y < 228) y = 228; printf "%d", y }')
 echo "[short] plate: band ${W}x${BAND_H} at y=${BAND_TOP}..${BAND_BOT} | hook y=${HOOK_Y} | mark y=${MARK_Y}"
 
 ESC_MARK=$(printf '%s' "$MARK" | sed "s/'/\\\\'/g; s/:/\\\\:/g")
 FILTER="
 color=c=${OBSIDIAN}:s=${W}x${H}:r=${FPS}[bg];
-[0:v]scale=${W}*${ZOOM}:-2:flags=lanczos,crop='min(iw,${W})':ih,unsharp=5:5:0.35:5:5:0[fg];
+[0:v]scale=${W}*${ZOOM}:-2:flags=lanczos,crop='min(iw,${W})':ih,unsharp=5:5:0.35:5:5:0,colorlevels=romin=0.055:gomin=0.055:bomin=0.055[fg];
 [bg][fg]overlay=x=(W-w)/2:y=(H-h)/2:shortest=1[plate];
 [plate]
   drawbox=x=0:y=${BAND_TOP}-3:w=iw:h=3:color=${GOLD}@0.75:t=fill,
   drawbox=x=0:y=${BAND_BOT}:w=iw:h=3:color=${GOLD}@0.75:t=fill,
-  drawtext=fontfile=${FONT_MARK}:text='${ESC_MARK}':fontsize=52:
-    fontcolor=${TEAL}:x=(w-text_w)/2:y=${MARK_Y}:borderw=4:bordercolor=black@0.85,
-  drawtext=fontfile=${FONT_HOOK}:text='JAKESJAM':fontsize=40:
-    fontcolor=${GOLD}:x=(w-text_w)/2:y=${WORDMARK_Y}:
-    alpha='0.9*clip((t-${HOOK_DUR}+0.3)/0.6,0,1)':
-    borderw=3:bordercolor=black@0.7
+  drawtext=fontfile=${FONT_HOOK}:text='JAKESJAM':fontsize=38:
+    fontcolor=${GOLD}:x=540-text_w-14:y=${BRAND_Y}:
+    alpha='0.92*clip((t-${HOOK_DUR}+0.3)/0.6,0,1)':
+    borderw=3:bordercolor=black@0.75,
+  drawtext=fontfile=${FONT_MARK}:text='${ESC_MARK}':fontsize=38:
+    fontcolor=${TEAL}:x=554:y=${BRAND_Y}:
+    alpha='0.95*clip((t-${HOOK_DUR}+0.3)/0.6,0,1)':
+    borderw=3:bordercolor=black@0.75
 "
 # NOTE: the host render already bakes a small "JAKESJAM . play.elyad.io"
 # stamp into the gameplay frame (clip-goal B11). A second wordmark here read
@@ -229,7 +226,10 @@ echo "[short] $IN -> $OUT (zoom=${ZOOM} audio=$([ -n "$HAS_AUDIO" ] && echo game
 "$FFMPEG" -y "${LOOP[@]}" "${TRIM[@]}" -i "$IN" "${AUDIO_IN[@]}" \
   -filter_complex "$FILTER" \
   -map "[v]" "${AMAP[@]}" \
-  -c:v libx264 -crf 18 -preset slow -pix_fmt yuv420p \
+  -c:v libx264 -crf 16 -preset slow -maxrate 16M -bufsize 32M \
+  -profile:v high -level:v 4.2 -pix_fmt yuv420p \
+  -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv \
+  -x264-params colormatrix=bt709:transfer=bt709:colorprim=bt709:range=tv \
   -movflags +faststart ${VO_DUR:+-t $VO_DUR} $([ -z "$VO_DUR" ] && echo -shortest) "${ACODEC[@]}" \
   "$OUT" -loglevel error
 

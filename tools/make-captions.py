@@ -21,11 +21,11 @@ def arg(name, default):
 # Distance from the BOTTOM edge to the caption. Alignment 2 (bottom-centre)
 # is what a viewer expects of a caption and it keeps the top of the frame free
 # for the hook.
-MARGINV = int(arg("--marginv", "170"))
+MARGINV = int(arg("--marginv", "460"))
 W = int(arg("--width", "1080"))
 H = int(arg("--height", "1920"))
 MAX_WORDS = int(arg("--words", "3"))
-FONTSIZE = int(arg("--size", "52"))
+FONTSIZE = int(arg("--size", "66"))
 
 from faster_whisper import WhisperModel
 
@@ -79,7 +79,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: cap,Space Grotesk,{FONTSIZE},{BONE},{OUTLINE},{OUTLINE},-1,0,0,0,100,100,0.6,0,1,4,0,2,60,60,{MARGINV},1
+Style: cap,Space Grotesk,{FONTSIZE},{BONE},{OUTLINE},{OUTLINE},-1,0,0,0,100,100,0.6,0,1,3,2,2,60,60,{MARGINV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
