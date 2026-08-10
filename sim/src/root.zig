@@ -26,6 +26,7 @@ pub const map_gen = @import("data/map_gen.zig");
 pub const bot_nav = @import("bot_nav.zig");
 pub const aim_dialect = @import("aim_dialect.zig");
 pub const bot_target = @import("bot_target.zig");
+pub const bot_mode = @import("bot_mode.zig");
 pub const weapon_build = @import("weapon_build.zig");
 pub const cards_gen = @import("data/cards_gen.zig");
 pub const draft = @import("draft.zig");
@@ -56,6 +57,7 @@ comptime {
     _ = bot_nav;
     _ = aim_dialect;
     _ = bot_target;
+    _ = bot_mode;
 }
 
 // 128 KB — sized for the full WorldState extern struct (72 KB

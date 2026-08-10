@@ -172,6 +172,15 @@ pub fn build(b: *std.Build) void {
         .target = test_target,
         .optimize = optimize,
     });
+    // Bot mode selection is pure given its inputs + an rng callback, so
+    // it tests here rather than needing a live host.
+    const botmode_test_module = b.createModule(.{
+        .root_source_file = b.path("src/bot_mode.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
+    const botmode_tests = b.addTest(.{ .root_module = botmode_test_module });
+
     // The asset-pack reader is pure parsing — no raylib, no display — so
     // it belongs in `test` like the shell clock.
     const pack_test_module = b.createModule(.{
@@ -204,6 +213,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(native_tests).step);
     test_step.dependOn(&b.addRunArtifact(shell_tests).step);
     test_step.dependOn(&b.addRunArtifact(pack_tests).step);
+    test_step.dependOn(&b.addRunArtifact(botmode_tests).step);
 
     const msgpack_test_module = b.createModule(.{
         .root_source_file = b.path("src/native/msgpack.zig"),

@@ -922,9 +922,24 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       401 assertions including 300 seeded-random layouts, with a vacuity
       guard that more than one KIND of target got chosen. Mutation-checked
       by moving the factor 1.55 → 1.20, which fails 2.
-      STILL OPEN: the mode machine (`decide`) and per-bot memory — the
-      genuinely stateful part, which needs seeded lockstep rather than
-      argument comparison.
+      **MODE SELECTION also DONE 2026-08-11** (`sim/src/bot_mode.zig`):
+      retreat / commit / cover / chase / hold, plus the anti-standoff
+      commit timer and its human-vs-bot delay. 9 tests.
+      The subtlety this slice is really about: the cover branch calls
+      `rand()` in the MIDDLE of a short-circuited `||` chain, so whether
+      the RNG is consumed depends on `dist` and on which earlier operands
+      were true. Writing it the obvious way — hoist the draw, then
+      evaluate — advances the stream on ticks the TS leaves alone, and
+      every later bot decision diverges. Nothing crashes; the bots just
+      stop matching the browser's. So the port takes a `rand` CALLBACK
+      and the tests assert draw COUNTS (0 when a map-blind bot skips
+      cover, 0 when `coverUntil` is already active, exactly 1 in the roll
+      band, 0 outside it). Mutation-checked: the hoisted-draw refactor
+      fails 8.
+      STILL OPEN: the rest of `decide` — movement/aim output, the melee
+      branch, the draft, and per-bot memory across ticks. That part is
+      genuinely stateful and wants seeded lockstep, not argument
+      comparison.
       (original row below)
 - [ ] ~~**N-BOT · Bot brain into the core.**~~ Port `worldBots.ts` +
       `botArenaNav.ts` (~900 lines) to `sim/src/bot.zig` with parity
