@@ -815,3 +815,103 @@ test "AimState: the two axes jitter independently" {
     const out = a.step(0, 0, 0, 0, 0, false, false, Alt.r, null);
     try std.testing.expect(out.x != out.y);
 }
+
+// ── gospel N-BOT · fire gate ─────────────────────────────────────────────
+//
+// Bursty, not a held trigger. The comment in the TS is blunt about why
+// ("was 'hard as nails'"): a bot that fires every tick it has line of
+// sight is not difficult, it is exhausting, and it removes the pauses a
+// player uses to reposition.
+//
+// The blind-fire branch is the interesting one. A bot in COVER still
+// takes the occasional shot (8%) at a target it cannot see, which is what
+// makes cover feel like a standoff rather than a safe pause — but ONLY in
+// cover, and only at that low rate.
+
+pub const FIRE_CHANCE_LOS: f64 = 0.55;
+pub const FIRE_CHANCE_BLIND: f64 = 0.08;
+pub const SHIELD_RETREAT_MIN_CHARGE: f64 = 20;
+
+pub const FireDecision = struct {
+    fire: bool,
+    shield: bool,
+};
+
+pub fn decideFire(
+    dist: f64,
+    fire_range: f64,
+    retreating: bool,
+    los: bool,
+    in_cover: bool,
+    shield_charge: ?f64,
+    rand: *const fn (ctx: ?*anyopaque) f64,
+    rand_ctx: ?*anyopaque,
+) FireDecision {
+    var fire = false;
+    if (dist < fire_range and !retreating) {
+        if (los) {
+            fire = rand(rand_ctx) < FIRE_CHANCE_LOS;
+        } else if (in_cover) {
+            // Note the asymmetry: no LOS and NOT in cover draws nothing
+            // at all. Only a bot that chose cover takes blind shots.
+            fire = rand(rand_ctx) < FIRE_CHANCE_BLIND;
+        }
+    }
+
+    var shield = false;
+    if (retreating) {
+        if (shield_charge) |sc| shield = sc > SHIELD_RETREAT_MIN_CHARGE;
+    }
+    return .{ .fire = fire, .shield = shield };
+}
+
+test "decideFire: out of range never fires and never draws" {
+    var c = Counter{ .next = 0.0 };
+    const d = decideFire(900, 640, false, true, false, 100, countingRand, &c);
+    try std.testing.expect(!d.fire);
+    try std.testing.expectEqual(@as(u32, 0), c.draws);
+}
+
+test "decideFire: retreating suppresses fire entirely, without a draw" {
+    var c = Counter{ .next = 0.0 };
+    const d = decideFire(100, 640, true, true, false, 100, countingRand, &c);
+    try std.testing.expect(!d.fire);
+    try std.testing.expectEqual(@as(u32, 0), c.draws);
+    // ...and raises the shield instead, if there is charge for it.
+    try std.testing.expect(d.shield);
+}
+
+test "decideFire: retreating on a flat shield does nothing" {
+    var c = Counter{ .next = 0.0 };
+    try std.testing.expect(!decideFire(100, 640, true, true, false, 10, countingRand, &c).shield);
+    try std.testing.expect(!decideFire(100, 640, true, true, false, null, countingRand, &c).shield);
+}
+
+test "decideFire: with LOS it is bursty at 55 percent, one draw" {
+    var hit = Counter{ .next = 0.2 };
+    const a = decideFire(100, 640, false, true, false, 100, countingRand, &hit);
+    try std.testing.expect(a.fire);
+    try std.testing.expectEqual(@as(u32, 1), hit.draws);
+
+    var miss = Counter{ .next = 0.9 };
+    const b = decideFire(100, 640, false, true, false, 100, countingRand, &miss);
+    // The point of the whole gate: sometimes it just does not shoot.
+    try std.testing.expect(!b.fire);
+    try std.testing.expectEqual(@as(u32, 1), miss.draws);
+}
+
+test "decideFire: blind fire happens ONLY in cover" {
+    // No LOS, not in cover: no shot and, importantly, no draw.
+    var c1 = Counter{ .next = 0.0 };
+    try std.testing.expect(!decideFire(100, 640, false, false, false, 100, countingRand, &c1).fire);
+    try std.testing.expectEqual(@as(u32, 0), c1.draws);
+
+    // No LOS, in cover: draws once, and the 8% band is much tighter than
+    // the LOS one — 0.2 fires with sight and does not blind.
+    var c2 = Counter{ .next = 0.2 };
+    try std.testing.expect(!decideFire(100, 640, false, false, true, 100, countingRand, &c2).fire);
+    try std.testing.expectEqual(@as(u32, 1), c2.draws);
+
+    var c3 = Counter{ .next = 0.05 };
+    try std.testing.expect(decideFire(100, 640, false, false, true, 100, countingRand, &c3).fire);
+}

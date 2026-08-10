@@ -990,8 +990,20 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       independently. One shared draw would correlate the axes into a
       diagonal bias — cheap to write, visible as bots that always miss the
       same way.
-      STILL OPEN: the fire gate, the melee branch, the draft, and the
-      remaining per-bot memory.
+      **FIRE GATE also DONE 2026-08-11** (`decideFire`): bursty, not a
+      held trigger — the TS is blunt about why ("was 'hard as nails'"). A
+      bot that fires every tick it has LOS is not difficult, it is
+      exhausting, and it removes the pauses a player repositions in. 55%
+      with sight, 8% blind, and blind fire ONLY from cover — which is what
+      makes cover a standoff instead of a safe pause. No LOS and no cover
+      draws nothing at all.
+      Mutation-checked, and the first attempt taught something: `else if
+      (in_cover)` → `else if (true)` does not COMPILE (unused parameter),
+      so the run reported zero failures because no tests ran. Redone as
+      `in_cover or true`, it fails the right test. Recorded in memory —
+      always check the build SUCCEEDED before reading a mutation result.
+      STILL OPEN: the melee branch, the draft slots, and the remaining
+      per-bot memory.
       (original row below)
 - [ ] ~~**N-BOT · Bot brain into the core.**~~ Port `worldBots.ts` +
       `botArenaNav.ts` (~900 lines) to `sim/src/bot.zig` with parity
