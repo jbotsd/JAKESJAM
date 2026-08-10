@@ -137,18 +137,17 @@ echo "[short] plate: band ${W}x${BAND_H} at y=${BAND_TOP}..${BAND_BOT} | hook y=
 
 ESC_MARK=$(printf '%s' "$MARK" | sed "s/'/\\\\'/g; s/:/\\\\:/g")
 FILTER="
-[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},
-     boxblur=32:3,eq=brightness=-0.14:saturation=0.60,
-     drawbox=x=0:y=0:w=iw:h=ih:color=${OBSIDIAN}@0.30:t=fill[bg];
-[0:v]scale=${W}*${ZOOM}:-2:flags=lanczos,crop='min(iw,${W})':ih[fg];
+color=c=${OBSIDIAN}:s=${W}x${H}:r=${FPS}[bg];
+[0:v]scale=${W}*${ZOOM}:-2:flags=lanczos,crop='min(iw,${W})':ih,unsharp=5:5:0.35:5:5:0[fg];
 [bg][fg]overlay=x=(W-w)/2:y=(H-h)/2:shortest=1[plate];
 [plate]
-  drawbox=x=0:y=${BAND_TOP}-3:w=iw:h=3:color=${GOLD}@0.55:t=fill,
-  drawbox=x=0:y=${BAND_BOT}:w=iw:h=3:color=${GOLD}@0.55:t=fill,
+  drawbox=x=0:y=${BAND_TOP}-3:w=iw:h=3:color=${GOLD}@0.75:t=fill,
+  drawbox=x=0:y=${BAND_BOT}:w=iw:h=3:color=${GOLD}@0.75:t=fill,
   drawtext=fontfile=${FONT_MARK}:text='${ESC_MARK}':fontsize=52:
     fontcolor=${TEAL}:x=(w-text_w)/2:y=${MARK_Y}:borderw=4:bordercolor=black@0.85,
-  drawtext=fontfile=${FONT_HOOK}:text='JAKESJAM':fontsize=34:
-    fontcolor=${GOLD}:x=(w-text_w)/2:y=${WORDMARK_Y}:alpha=0.75:
+  drawtext=fontfile=${FONT_HOOK}:text='JAKESJAM':fontsize=40:
+    fontcolor=${GOLD}:x=(w-text_w)/2:y=${WORDMARK_Y}:
+    alpha='0.9*clip((t-${HOOK_DUR}+0.3)/0.6,0,1)':
     borderw=3:bordercolor=black@0.7
 "
 # NOTE: the host render already bakes a small "JAKESJAM . play.elyad.io"

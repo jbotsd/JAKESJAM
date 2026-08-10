@@ -42,10 +42,18 @@ for s in segments:
 
 # Group into short chunks, breaking on sentence punctuation so a caption
 # never straddles two sentences.
+# Break on punctuation or length, but never END a chunk on a function word
+# ("1v1 me / this is / where you take" reads broken; "this is where / you
+# take them" reads spoken). One extra word is allowed to finish the phrase.
+FUNCTION_WORDS = {"a","an","the","this","that","is","are","was","and","or",
+                  "of","to","in","on","at","you","your","my","we","i","it","no","not"}
 chunks, cur = [], []
 for st, en, t in words:
     cur.append((st, en, t))
-    if len(cur) >= MAX_WORDS or t.endswith((".", "!", "?", ",")):
+    punct = t.endswith((".", "!", "?", ","))
+    full = len(cur) >= MAX_WORDS
+    dangling = t.lower().strip(".,!?\"'") in FUNCTION_WORDS
+    if punct or (full and not dangling) or len(cur) >= MAX_WORDS + 2:
         chunks.append(cur)
         cur = []
 if cur:
@@ -77,10 +85,15 @@ Style: cap,Space Grotesk,{FONTSIZE},{BONE},{OUTLINE},{OUTLINE},-1,0,0,0,100,100,
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
+# Each caption holds until the next begins (capped at +1.2s past its own
+# words) so the reader never stares at an empty caption zone mid-sentence.
 lines = []
-for c in chunks:
+for i, c in enumerate(chunks):
     st = c[0][0]
     en = c[-1][1]
+    if i + 1 < len(chunks):
+        nxt = chunks[i + 1][0][0]
+        en = min(max(en, nxt), en + 1.2, nxt)
     if en - st < 0.28:
         en = st + 0.28
     text = " ".join(t for _, _, t in c).replace("\n", " ")
