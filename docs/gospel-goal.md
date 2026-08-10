@@ -962,6 +962,20 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       surfaced. Left matching the TS: diverging on a timer is how bots
       stop behaving identically. I also first wrote the trap down as
       "never fires", and the test corrected me to "loses one tick".
+      **OFFENSIVE SLIDE + EMISSION CAST also DONE 2026-08-11.** Both are
+      "should I press this" decisions with a rule that is easy to get
+      subtly wrong:
+      - the slide's `rand()` is LAST in its `&&` chain, so it is consumed
+        only after every cheap condition passes. Tier 0 (the FTUE gate)
+        and a fresh foe both reject before any draw — a newcomer's first
+        fight does not even roll for a bot power-sliding into them.
+      - the emission delay is drawn ONCE at arm time. Re-rolling per tick
+        — the tidier-looking shape — collapses a uniform 1–3 s delay into
+        a geometric one and bots would fire almost immediately.
+        Mutation-checked: re-arming every tick fails 2.
+      - out of range with a full meter KEEPS the timer; only spending the
+        charge disarms. That is what lets a bot chase and cast on arrival
+        rather than restarting its delay at the door.
       STILL OPEN: aim/fire output, the melee branch, the draft, and the
       remaining per-bot memory.
       (original row below)

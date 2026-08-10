@@ -521,3 +521,151 @@ test "BodyThreatWatch: the timer resets when the threat passes" {
     try std.testing.expectEqual(Reaction.none, w.step(true, 10_200, true, 100, countingRand, &c));
     try std.testing.expectEqual(Reaction.dash_away, w.step(true, 10_600, true, 100, countingRand, &c));
 }
+
+// ── gospel N-BOT · offensive slide + emission cast ───────────────────────
+//
+// Two more "should I press this" decisions, both RNG-sensitive and both
+// with a rule that is easy to get subtly wrong.
+
+pub const DASH_BASH_RANGE: f64 = 200;
+/// Indexed by slideTier. Tier 0 never slides — it is the FTUE gate, so a
+/// newcomer's first fight has no bot power-sliding into them.
+pub const DASH_OFFENSE_CHANCE = [3]f64{ 0, 0.02, 0.07 };
+
+/// Should the bot power-slide into the foe this tick?
+///
+/// The `rand()` is LAST in the `&&` chain, so it is only consumed when
+/// every cheap condition already passed. Hoisting it — the tidier-looking
+/// order — would draw on every tick for every bot and desync the stream.
+pub fn wantsOffensiveSlide(
+    slide_tier: u8,
+    foe_is_fresh: bool,
+    move_dir: i32,
+    toward_foe: i32,
+    dist: f64,
+    rand: *const fn (ctx: ?*anyopaque) f64,
+    rand_ctx: ?*anyopaque,
+) bool {
+    if (slide_tier == 0) return false;
+    if (foe_is_fresh) return false;
+    if (move_dir != toward_foe) return false;
+    if (dist > DASH_BASH_RANGE) return false;
+    const tier = @min(slide_tier, DASH_OFFENSE_CHANCE.len - 1);
+    return rand(rand_ctx) < DASH_OFFENSE_CHANCE[tier];
+}
+
+/// Emission cast timing. Bots must exercise the cast path — "the bots are
+/// the only ones never testing this" is how a whole ability rots.
+pub const EmissionCast = struct {
+    /// Absolute time the cast is due; null = not armed.
+    cast_at: ?f64 = null,
+
+    pub const Out = enum { idle, armed, cast };
+
+    pub fn step(
+        self: *EmissionCast,
+        charge: f64,
+        charge_max: f64,
+        dist: f64,
+        now_ms: f64,
+        rand: *const fn (ctx: ?*anyopaque) f64,
+        rand_ctx: ?*anyopaque,
+    ) Out {
+        if (charge >= charge_max and dist <= 600) {
+            if (self.cast_at == null) {
+                // Humanising delay: 1-3s. Drawn ONCE at arm time, not per
+                // tick — re-rolling every tick would make the cast land on
+                // a geometric distribution instead of a uniform one, and
+                // bots would fire almost immediately.
+                self.cast_at = now_ms + 1000 + rand(rand_ctx) * 2000;
+                return .armed;
+            }
+            if (now_ms >= self.cast_at.?) {
+                self.cast_at = null;
+                return .cast;
+            }
+            return .armed;
+        }
+        // Only DISARM on low charge. Out of range with a full meter keeps
+        // the timer, which is what lets a bot chase and then cast on
+        // arrival rather than restarting its delay at the door.
+        if (charge < charge_max) self.cast_at = null;
+        return .idle;
+    }
+};
+
+test "wantsOffensiveSlide: tier 0 never slides, and costs no draw" {
+    var c = Counter{ .next = 0.0 };
+    try std.testing.expect(!wantsOffensiveSlide(0, false, 1, 1, 50, countingRand, &c));
+    // The FTUE gate is first, so a newcomer's fight does not even roll.
+    try std.testing.expectEqual(@as(u32, 0), c.draws);
+}
+
+test "wantsOffensiveSlide: a FRESH foe is never slid into" {
+    var c = Counter{ .next = 0.0 };
+    try std.testing.expect(!wantsOffensiveSlide(2, true, 1, 1, 50, countingRand, &c));
+    try std.testing.expectEqual(@as(u32, 0), c.draws);
+}
+
+test "wantsOffensiveSlide: only when already moving AT the foe, and in range" {
+    var c = Counter{ .next = 0.0 };
+    try std.testing.expect(!wantsOffensiveSlide(2, false, -1, 1, 50, countingRand, &c));
+    try std.testing.expect(!wantsOffensiveSlide(2, false, 1, 1, 400, countingRand, &c));
+    // Neither cheap rejection consumed a draw — that is the contract.
+    try std.testing.expectEqual(@as(u32, 0), c.draws);
+}
+
+test "wantsOffensiveSlide: rolls exactly once when everything else passes" {
+    var hit = Counter{ .next = 0.01 };
+    try std.testing.expect(wantsOffensiveSlide(2, false, 1, 1, 50, countingRand, &hit));
+    try std.testing.expectEqual(@as(u32, 1), hit.draws);
+    var miss = Counter{ .next = 0.5 };
+    try std.testing.expect(!wantsOffensiveSlide(2, false, 1, 1, 50, countingRand, &miss));
+    try std.testing.expectEqual(@as(u32, 1), miss.draws);
+}
+
+test "wantsOffensiveSlide: tier 2 is likelier than tier 1" {
+    // Vacuity guard on the tier table: if both tiers read the same slot
+    // the FTUE ramp would be decorative.
+    var c = Counter{ .next = 0.05 }; // between tier1 (.02) and tier2 (.07)
+    try std.testing.expect(!wantsOffensiveSlide(1, false, 1, 1, 50, countingRand, &c));
+    try std.testing.expect(wantsOffensiveSlide(2, false, 1, 1, 50, countingRand, &c));
+}
+
+test "EmissionCast: arms once with ONE draw, then fires after the delay" {
+    var e = EmissionCast{};
+    var c = Counter{ .next = 0.5 }; // → 1000 + 1000 = 2000ms delay
+    try std.testing.expectEqual(EmissionCast.Out.armed, e.step(100, 100, 300, 10_000, countingRand, &c));
+    try std.testing.expectEqual(@as(u32, 1), c.draws);
+    // Ticking while armed must NOT re-draw; re-rolling each tick would
+    // collapse the delay toward zero.
+    try std.testing.expectEqual(EmissionCast.Out.armed, e.step(100, 100, 300, 11_000, countingRand, &c));
+    try std.testing.expectEqual(@as(u32, 1), c.draws);
+    try std.testing.expectEqual(EmissionCast.Out.cast, e.step(100, 100, 300, 12_000, countingRand, &c));
+    // And it disarms after casting, ready to re-arm next charge.
+    try std.testing.expectEqual(@as(?f64, null), e.cast_at);
+}
+
+test "EmissionCast: an empty meter disarms; out of range does NOT" {
+    var e = EmissionCast{};
+    var c = Counter{ .next = 0.5 };
+    _ = e.step(100, 100, 300, 10_000, countingRand, &c);
+    try std.testing.expect(e.cast_at != null);
+
+    // Out of range with a full meter KEEPS the timer — a bot that chases
+    // then casts on arrival, rather than restarting its delay at the door.
+    _ = e.step(100, 100, 900, 10_500, countingRand, &c);
+    try std.testing.expect(e.cast_at != null);
+
+    // Charge spent → disarmed.
+    _ = e.step(10, 100, 300, 10_600, countingRand, &c);
+    try std.testing.expectEqual(@as(?f64, null), e.cast_at);
+}
+
+test "EmissionCast: an idle bot never draws" {
+    var e = EmissionCast{};
+    var c = Counter{ .next = 0.5 };
+    var t: f64 = 10_000;
+    while (t < 20_000) : (t += 100) _ = e.step(10, 100, 300, t, countingRand, &c);
+    try std.testing.expectEqual(@as(u32, 0), c.draws);
+}
