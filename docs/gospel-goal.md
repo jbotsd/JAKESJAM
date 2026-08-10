@@ -946,9 +946,24 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       is weighted 0.35 so sliding down a wall still counts as stuck.
       Mutation-checked: dropping the "only if it WANTED to move" guard
       fails 4 — a bot deliberately holding position must not be hopped.
-      STILL OPEN: the rest of `decide` — aim/fire output, the melee
-      branch, the draft, and the remaining per-bot memory. Wants seeded
-      lockstep, not argument comparison.
+      **BODY-THREAT REACTION also DONE 2026-08-11** (`BodyThreatWatch`):
+      someone dashing at us, close and closing → after a 320 ms reaction
+      delay, ONE draw picks shield / dash-away / jump. 8 tests asserting
+      draw counts, not just outcomes.
+      The subtle rule pinned here: a flat shield does NOTHING. The TS
+      falls through to no action, and reading the chain as "shield, else
+      dash" would quietly make low-shield bots more evasive than they
+      are. Mutation-checked — adding that fallthrough fails 2.
+      **Latent trap found and DOCUMENTED rather than silently fixed:**
+      `bodyThreatSince === 0` uses zero as both the sentinel and a
+      timestamp, so a threat beginning at exactly `now_ms == 0` starts its
+      timer one tick late. Unreachable live (monotonic clock), reachable
+      in any test or replay whose clock starts at zero — which is how it
+      surfaced. Left matching the TS: diverging on a timer is how bots
+      stop behaving identically. I also first wrote the trap down as
+      "never fires", and the test corrected me to "loses one tick".
+      STILL OPEN: aim/fire output, the melee branch, the draft, and the
+      remaining per-bot memory.
       (original row below)
 - [ ] ~~**N-BOT · Bot brain into the core.**~~ Port `worldBots.ts` +
       `botArenaNav.ts` (~900 lines) to `sim/src/bot.zig` with parity

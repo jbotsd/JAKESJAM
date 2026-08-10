@@ -360,3 +360,164 @@ test "StuckWatch: zero intent is never reversed into movement" {
         try std.testing.expectEqual(@as(i32, 0), o.move_dir);
     }
 }
+
+// ── gospel N-BOT · body-threat reaction ──────────────────────────────────
+//
+// Port of the "bodyThreat" block in `decide`: someone is dashing at us,
+// close, and closing. After a reaction delay the bot picks ONE of shield
+// / dash-away / jump.
+//
+// Two things make this worth porting carefully rather than eyeballing:
+//
+// 1. ONE rand draw feeds a three-way branch (`< 0.4` shield, `< 0.75`
+//    dash, else jump). Drawing twice, or drawing when the delay has not
+//    elapsed, desyncs the stream — same class of bug as the cover roll.
+// 2. The shield arm is CONDITIONAL on charge, and the TS does not re-roll
+//    when it fails: a bot with a flat shield and a roll of 0.2 does
+//    NOTHING that tick. Reading the chain as "shield, else dash" would
+//    quietly make bots more evasive than they are.
+
+pub const BODY_THREAT_RADIUS: f64 = 240;
+pub const BODY_THREAT_REACTION_MS: f64 = 320;
+pub const SHIELD_MIN_CHARGE: f64 = 25;
+
+pub const Reaction = enum { none, shield, dash_away, jump };
+
+pub const BodyThreatWatch = struct {
+    /// Timestamp the current threat began; 0 means "no threat".
+    ///
+    /// FAITHFUL TO THE TS, INCLUDING ITS TRAP: `bot.bodyThreatSince === 0`
+    /// uses zero as both the sentinel and a possible timestamp, so a
+    /// threat beginning at exactly now_ms == 0 is not recorded and the
+    /// timer starts one tick late instead. Harmless live — the clock is
+    /// monotonic wall time and never 0 — but reachable in any test or
+    /// replay whose clock starts at zero, which is how it was found.
+    /// Left matching rather than "fixed": diverging from the TS on a
+    /// timer is how bots stop behaving identically.
+    since: f64 = 0,
+
+    /// `threat` is the caller's already-computed "dashing, in radius, and
+    /// heading toward me" — kept out of here because `headingTowardMe`
+    /// lives in bot_target and duplicating it would be a second opinion.
+    pub fn step(
+        self: *BodyThreatWatch,
+        threat: bool,
+        now_ms: f64,
+        grounded: bool,
+        shield_charge: ?f64,
+        rand: *const fn (ctx: ?*anyopaque) f64,
+        rand_ctx: ?*anyopaque,
+    ) Reaction {
+        if (threat) {
+            if (self.since == 0) self.since = now_ms;
+        } else {
+            self.since = 0;
+        }
+        if (!threat or (now_ms - self.since) < BODY_THREAT_REACTION_MS) return .none;
+
+        const roll = rand(rand_ctx);
+        if (roll < 0.4) {
+            // No re-roll on a flat shield — the TS falls THROUGH to
+            // nothing, and inventing a fallback would make bots dodge
+            // more than they do.
+            if (shield_charge) |sc| {
+                if (sc > SHIELD_MIN_CHARGE) return .shield;
+            }
+            return .none;
+        }
+        if (roll < 0.75) return .dash_away;
+        if (grounded) return .jump;
+        return .none;
+    }
+};
+
+test "BodyThreatWatch: no threat means no draw and no reaction" {
+    var c = Counter{ .next = 0.1 };
+    var w = BodyThreatWatch{};
+    try std.testing.expectEqual(Reaction.none, w.step(false, 1000, true, 100, countingRand, &c));
+    try std.testing.expectEqual(@as(u32, 0), c.draws);
+}
+
+test "BodyThreatWatch: the reaction delay must elapse first" {
+    var c = Counter{ .next = 0.1 };
+    var w = BodyThreatWatch{};
+    // Threat starts at t=1000.
+    try std.testing.expectEqual(Reaction.none, w.step(true, 1000, true, 100, countingRand, &c));
+    try std.testing.expectEqual(Reaction.none, w.step(true, 1200, true, 100, countingRand, &c));
+    // Not a single draw yet — reacting instantly is inhuman, and drawing
+    // early would desync the stream even when the reaction is suppressed.
+    try std.testing.expectEqual(@as(u32, 0), c.draws);
+    try std.testing.expectEqual(Reaction.shield, w.step(true, 1330, true, 100, countingRand, &c));
+    try std.testing.expectEqual(@as(u32, 1), c.draws);
+}
+
+test "BodyThreatWatch: the three-way split uses ONE draw" {
+    var w = BodyThreatWatch{};
+    var c = Counter{ .next = 0.2 };
+    _ = w.step(true, 10_000, true, 100, countingRand, &c);
+    try std.testing.expectEqual(Reaction.shield, w.step(true, 10_400, true, 100, countingRand, &c));
+    try std.testing.expectEqual(@as(u32, 1), c.draws);
+
+    var w2 = BodyThreatWatch{};
+    var c2 = Counter{ .next = 0.6 };
+    _ = w2.step(true, 10_000, true, 100, countingRand, &c2);
+    try std.testing.expectEqual(Reaction.dash_away, w2.step(true, 10_400, true, 100, countingRand, &c2));
+    try std.testing.expectEqual(@as(u32, 1), c2.draws);
+
+    var w3 = BodyThreatWatch{};
+    var c3 = Counter{ .next = 0.9 };
+    _ = w3.step(true, 10_000, true, 100, countingRand, &c3);
+    try std.testing.expectEqual(Reaction.jump, w3.step(true, 10_400, true, 100, countingRand, &c3));
+    try std.testing.expectEqual(@as(u32, 1), c3.draws);
+}
+
+test "BodyThreatWatch: a flat shield does NOTHING — it does not fall through to dash" {
+    // The subtle one. Reading the chain as "shield, else dash" would make
+    // low-shield bots dodge on rolls where the real brain just eats it.
+    var w = BodyThreatWatch{};
+    var c = Counter{ .next = 0.2 };
+    _ = w.step(true, 10_000, true, 10, countingRand, &c);
+    try std.testing.expectEqual(Reaction.none, w.step(true, 10_400, true, 10, countingRand, &c));
+    // Absent charge behaves the same as a flat one.
+    var w2 = BodyThreatWatch{};
+    var c2 = Counter{ .next = 0.2 };
+    _ = w2.step(true, 10_000, true, null, countingRand, &c2);
+    try std.testing.expectEqual(Reaction.none, w2.step(true, 10_400, true, null, countingRand, &c2));
+}
+
+test "BodyThreatWatch: airborne cannot jump" {
+    var w = BodyThreatWatch{};
+    var c = Counter{ .next = 0.9 };
+    _ = w.step(true, 10_000, false, 100, countingRand, &c);
+    try std.testing.expectEqual(Reaction.none, w.step(true, 10_400, false, 100, countingRand, &c));
+}
+
+test "BodyThreatWatch: a threat beginning at now_ms == 0 loses one tick (documented trap)" {
+    // Precise about what the trap actually is, having first written down
+    // a stronger claim ("never fires") and been corrected by the test.
+    // Zero doubles as the "no threat" sentinel, so a threat starting at
+    // exactly t=0 is not recorded; the NEXT tick starts the timer, and
+    // the reaction is late by that one tick. Unreachable live (monotonic
+    // wall clock), reachable in any test or replay whose clock starts at
+    // zero — which is how it turned up.
+    var w = BodyThreatWatch{};
+    var c = Counter{ .next = 0.6 };
+    try std.testing.expectEqual(Reaction.none, w.step(true, 0, true, 100, countingRand, &c));
+    try std.testing.expectEqual(@as(f64, 0), w.since); // swallowed
+    _ = w.step(true, 100, true, 100, countingRand, &c);
+    try std.testing.expectEqual(@as(f64, 100), w.since); // starts here instead
+    // So the reaction lands at 100 + 320, not 0 + 320.
+    try std.testing.expectEqual(Reaction.none, w.step(true, 380, true, 100, countingRand, &c));
+    try std.testing.expectEqual(Reaction.dash_away, w.step(true, 420, true, 100, countingRand, &c));
+}
+
+test "BodyThreatWatch: the timer resets when the threat passes" {
+    var w = BodyThreatWatch{};
+    var c = Counter{ .next = 0.6 };
+    _ = w.step(true, 10_000, true, 100, countingRand, &c);
+    _ = w.step(false, 10_100, true, 100, countingRand, &c); // threat gone
+    try std.testing.expectEqual(@as(f64, 0), w.since);
+    // A new threat has to serve the full delay again, not inherit credit.
+    try std.testing.expectEqual(Reaction.none, w.step(true, 10_200, true, 100, countingRand, &c));
+    try std.testing.expectEqual(Reaction.dash_away, w.step(true, 10_600, true, 100, countingRand, &c));
+}
