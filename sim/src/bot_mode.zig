@@ -243,3 +243,120 @@ test "selectMode: hold band — chase outside 70px, hold inside" {
     // And symmetrically on the near side.
     try std.testing.expectEqual(Mode.chase, selectMode(base(.{ .dist = 229 }), countingRand, &c).mode);
 }
+
+// ── gospel N-BOT · unstick detection ─────────────────────────────────────
+//
+// Port of the "Unstick" block in `decide`. Small, but it is the first
+// genuinely STATEFUL piece to cross: `stuck_ticks` accumulates across
+// ticks, so it cannot be verified by feeding one snapshot — the tests
+// below drive sequences.
+//
+// What it is for: a bot pressed against a wall reports movement intent
+// every tick and goes nowhere. Without this it grinds there forever,
+// which is the single most visible way a bot looks broken.
+
+/// Movement counts as "moved" above this, per tick. Vertical is weighted
+/// down because falling is not progress.
+pub const STUCK_MOVE_EPSILON: f64 = 0.7;
+pub const VERTICAL_WEIGHT: f64 = 0.35;
+/// Three ticks of no progress = probably a wall; hop.
+pub const ON_WALL_TICKS: u32 = 3;
+/// Prolonged stick = a real corner; reverse out of it.
+pub const REVERSE_TICKS: u32 = 48;
+/// ...and give the reversal 6 ticks before re-arming, or it oscillates.
+pub const REVERSE_CLEAR_TICKS: u32 = 54;
+
+pub const StuckWatch = struct {
+    last_x: f64 = 0,
+    last_y: f64 = 0,
+    stuck_ticks: u32 = 0,
+
+    pub const Out = struct {
+        move_dir: i32,
+        want_jump: bool,
+        on_wall: bool,
+    };
+
+    /// Feed this tick's position and movement intent.
+    pub fn step(self: *StuckWatch, x: f64, y: f64, move_dir: i32) Out {
+        const moved = @abs(x - self.last_x) + @abs(y - self.last_y) * VERTICAL_WEIGHT;
+        if (move_dir != 0 and moved < STUCK_MOVE_EPSILON) {
+            self.stuck_ticks += 1;
+        } else {
+            self.stuck_ticks = 0;
+        }
+        self.last_x = x;
+        self.last_y = y;
+
+        var dir = move_dir;
+        const on_wall = self.stuck_ticks >= ON_WALL_TICKS;
+        const want_jump = on_wall;
+        if (self.stuck_ticks >= REVERSE_TICKS) {
+            dir = -dir;
+            if (self.stuck_ticks >= REVERSE_CLEAR_TICKS) self.stuck_ticks = 0;
+        }
+        return .{ .move_dir = dir, .want_jump = want_jump, .on_wall = on_wall };
+    }
+};
+
+test "StuckWatch: standing still with NO intent is not stuck" {
+    // The distinction that matters: a bot deliberately holding position
+    // is not stuck, and hopping it would look like a twitch.
+    var w = StuckWatch{};
+    var i: usize = 0;
+    while (i < 20) : (i += 1) {
+        const o = w.step(100, 100, 0);
+        try std.testing.expect(!o.on_wall);
+        try std.testing.expect(!o.want_jump);
+    }
+    try std.testing.expectEqual(@as(u32, 0), w.stuck_ticks);
+}
+
+test "StuckWatch: pressing into a wall hops after three ticks" {
+    var w = StuckWatch{ .last_x = 100, .last_y = 100 };
+    try std.testing.expect(!w.step(100, 100, 1).want_jump); // 1
+    try std.testing.expect(!w.step(100, 100, 1).want_jump); // 2
+    try std.testing.expect(w.step(100, 100, 1).want_jump); //  3 → hop
+}
+
+test "StuckWatch: real movement clears the counter" {
+    var w = StuckWatch{ .last_x = 100, .last_y = 100 };
+    _ = w.step(100, 100, 1);
+    _ = w.step(100, 100, 1);
+    _ = w.step(140, 100, 1); // moved
+    try std.testing.expectEqual(@as(u32, 0), w.stuck_ticks);
+    try std.testing.expect(!w.step(140, 100, 1).want_jump);
+}
+
+test "StuckWatch: falling alone does not count as progress" {
+    // Vertical is weighted 0.35, so a 1px fall is 0.35 — under the 0.7
+    // epsilon. A bot sliding down a wall is still stuck against it.
+    var w = StuckWatch{ .last_x = 100, .last_y = 100 };
+    _ = w.step(100, 101, 1);
+    _ = w.step(100, 102, 1);
+    try std.testing.expect(w.step(100, 103, 1).want_jump);
+}
+
+test "StuckWatch: a long stick reverses, then re-arms rather than oscillating" {
+    var w = StuckWatch{ .last_x = 0, .last_y = 0 };
+    var last: StuckWatch.Out = undefined;
+    var i: u32 = 0;
+    while (i < REVERSE_TICKS) : (i += 1) last = w.step(0, 0, 1);
+    // At 48 ticks the direction flips out of the corner.
+    try std.testing.expectEqual(@as(i32, -1), last.move_dir);
+    // It keeps reversing for a few ticks, THEN clears — clearing
+    // immediately would flip back and forth every other tick.
+    while (i < REVERSE_CLEAR_TICKS) : (i += 1) last = w.step(0, 0, 1);
+    try std.testing.expectEqual(@as(u32, 0), w.stuck_ticks);
+}
+
+test "StuckWatch: zero intent is never reversed into movement" {
+    // -0 is still 0: a held-still bot must not be pushed anywhere by the
+    // corner logic.
+    var w = StuckWatch{ .last_x = 0, .last_y = 0 };
+    var i: u32 = 0;
+    while (i < 60) : (i += 1) {
+        const o = w.step(0, 0, 0);
+        try std.testing.expectEqual(@as(i32, 0), o.move_dir);
+    }
+}

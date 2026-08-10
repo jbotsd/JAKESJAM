@@ -936,10 +936,19 @@ browser client and the Bun server keep existing; de-TS-ing *them* is E3.
       cover, 0 when `coverUntil` is already active, exactly 1 in the roll
       band, 0 outside it). Mutation-checked: the hoisted-draw refactor
       fails 8.
-      STILL OPEN: the rest of `decide` — movement/aim output, the melee
-      branch, the draft, and per-bot memory across ticks. That part is
-      genuinely stateful and wants seeded lockstep, not argument
-      comparison.
+      **UNSTICK also DONE 2026-08-11** (`StuckWatch` in bot_mode.zig) —
+      the first genuinely STATEFUL piece to cross, so its 6 tests drive
+      SEQUENCES rather than snapshots. A bot pressed against a wall
+      reports movement intent every tick and goes nowhere; without this it
+      grinds there forever, which is the most visible way a bot looks
+      broken. Hops at 3 stuck ticks, reverses at 48, re-arms at 54 rather
+      than immediately (immediate clearing oscillates). Vertical movement
+      is weighted 0.35 so sliding down a wall still counts as stuck.
+      Mutation-checked: dropping the "only if it WANTED to move" guard
+      fails 4 — a bot deliberately holding position must not be hopped.
+      STILL OPEN: the rest of `decide` — aim/fire output, the melee
+      branch, the draft, and the remaining per-bot memory. Wants seeded
+      lockstep, not argument comparison.
       (original row below)
 - [ ] ~~**N-BOT · Bot brain into the core.**~~ Port `worldBots.ts` +
       `botArenaNav.ts` (~900 lines) to `sim/src/bot.zig` with parity
