@@ -1,6 +1,7 @@
-# House + game only — no multi-app creep.
+# House + games only — no multi-app creep.
 #   elyad.io / www  → apex house landing (:8090)
 #   play / jakesjam → JAKESJAM origin (:8088)
+#   benipe          → Benipe static host (:8091, benipe-host.service, gamejam/benipe-host/)
 #
 # tunnel: jakesjam
 # id:     4019d70d-f4ae-4423-941b-a13ae9a0112a
@@ -27,6 +28,10 @@ ingress:
       connectTimeout: 30s
   - hostname: jakesjam.elyad.io
     service: http://127.0.0.1:8088
+    originRequest:
+      connectTimeout: 30s
+  - hostname: benipe.elyad.io
+    service: http://127.0.0.1:8091
     originRequest:
       connectTimeout: 30s
   - service: http_status:404
