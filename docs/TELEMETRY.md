@@ -39,7 +39,7 @@ hard quotas. Specifically:
 | `context-loss` | WebGL context lost/restored events |
 | `net` | ws close code + reason (`stale-on-resume`, supervisor reconnect outcomes), connect latency |
 | `perf` | governor step-downs (frame-dt EMA at the time), tier, renderScale floor hits, fps snapshot on death of the session (pagehide) |
-| `boot` | tier decision, renderer string, screen/DPR, load-to-match ms |
+| `boot` | tier decision, renderer string, screen/DPR, load-to-match ms, acquisition (below) |
 
 Each event carries the session UUID, a monotonic sequence number, game build
 hash, and the last ~40 breadcrumbs (ring buffer) when it's an error.
