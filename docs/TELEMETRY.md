@@ -62,7 +62,7 @@ store, reproduces via the deterministic replay substrate, and proposes fixes.
 | Field | Meaning |
 | --- | --- |
 | `src` | `utm_source` if tagged, else the referrer host, else `direct` — the one field to read |
-| `refGroup` | `direct` \| `social` \| `search` \| `self` \| `other` |
+| `refGroup` | `direct` \| `social` \| `search` \| `self` \| `apex` \| `other` |
 | `ref` | referrer HOST only, `www.` stripped (omitted when absent) |
 | `utmMedium`, `utmCampaign` | our own tags (omitted when absent) |
 | `landing` | our path, no query |
@@ -79,11 +79,14 @@ in-app browsers send no referrer at all, so an untagged post from either is
 indistinguishable from direct traffic. `utm_source` is the only thing that
 attributes those, which is why it outranks the referrer host.
 
+Point them at **`play.elyad.io`**, not the apex — see the known gap below;
+the apex drops the query on its way into the game, taking the tag with it.
+
 ```
-https://elyad.io/?utm_source=reddit&utm_medium=social&utm_campaign=<what-you-posted>
-https://elyad.io/?utm_source=instagram&utm_medium=social&utm_campaign=<what-you-posted>
-https://elyad.io/?utm_source=tiktok&utm_medium=social&utm_campaign=<what-you-posted>
-https://elyad.io/?utm_source=discord&utm_medium=social&utm_campaign=<what-you-posted>
+https://play.elyad.io/?utm_source=reddit&utm_medium=social&utm_campaign=<what-you-posted>
+https://play.elyad.io/?utm_source=instagram&utm_medium=social&utm_campaign=<what-you-posted>
+https://play.elyad.io/?utm_source=tiktok&utm_medium=social&utm_campaign=<what-you-posted>
+https://play.elyad.io/?utm_source=discord&utm_medium=social&utm_campaign=<what-you-posted>
 ```
 
 Keep `utm_campaign` stable per post (e.g. `fight-night-aug`) so repeat
