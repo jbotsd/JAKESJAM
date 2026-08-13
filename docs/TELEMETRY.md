@@ -54,3 +54,55 @@ index `server/.telemetry/signatures.json` (first-seen, last-seen, count) →
 
 The later step (not in this pass): a kept-alive Claude session tails the
 store, reproduces via the deterministic replay substrate, and proposes fixes.
+
+## Acquisition — "did the post do anything"
+
+`client/src/acquisition.ts`, carried on the `boot` event:
+
+| Field | Meaning |
+| --- | --- |
+| `src` | `utm_source` if tagged, else the referrer host, else `direct` — the one field to read |
+| `refGroup` | `direct` \| `social` \| `search` \| `self` \| `other` |
+| `ref` | referrer HOST only, `www.` stripped (omitted when absent) |
+| `utmMedium`, `utmCampaign` | our own tags (omitted when absent) |
+| `landing` | our path, no query |
+
+Two reductions keep the privacy contract above intact: only the referrer's
+**host** is kept — never its path or query, which can carry the visitor's
+search terms or a private group's URL — and the `utm_*` values are ours,
+read from our own URL, describing the campaign rather than the person.
+
+### Tag the links you post
+
+**Do this, or half the campaign stays invisible.** Instagram and TikTok
+in-app browsers send no referrer at all, so an untagged post from either is
+indistinguishable from direct traffic. `utm_source` is the only thing that
+attributes those, which is why it outranks the referrer host.
+
+```
+https://elyad.io/?utm_source=reddit&utm_medium=social&utm_campaign=<what-you-posted>
+https://elyad.io/?utm_source=instagram&utm_medium=social&utm_campaign=<what-you-posted>
+https://elyad.io/?utm_source=tiktok&utm_medium=social&utm_campaign=<what-you-posted>
+https://elyad.io/?utm_source=discord&utm_medium=social&utm_campaign=<what-you-posted>
+```
+
+Keep `utm_campaign` stable per post (e.g. `fight-night-aug`) so repeat
+shares of the same thing group into one row. Values are lowercased and
+reduced to `[a-z0-9_-]` on arrival, so pick slugs.
+
+### Read it
+
+```
+bun data-warehouse/ingest.ts && bun data-warehouse/report.ts
+```
+
+The **acquisition** section is scoped to candidate-real external sessions —
+Jake's own machine reloading the site is not acquisition and would swamp
+every row. Sessions that booted before this shipped report as
+`(un-instrumented)`, deliberately NOT as `direct`: the referrer was never
+asked for, and calling that "direct" would invent a finding out of a blind
+spot.
+
+**This only measures builds that carry it.** A deployed host running an
+older bundle keeps producing un-instrumented sessions no matter what the
+warehouse schema says.
