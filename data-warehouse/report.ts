@@ -38,6 +38,47 @@ console.log(
     `${traffic.candidate_real} candidate-real external (${((traffic.candidate_real / traffic.total) * 100).toFixed(1)}%)`,
 );
 
+section("INTERNAL: acquisition — where external visitors came from");
+// The question this exists to answer: "did the post do anything". Scoped to
+// candidate-real external sessions, because Jake's own machine reloading the
+// site is not acquisition and would swamp every row here.
+//
+// Un-instrumented sessions get their own line rather than being folded into
+// "direct". Before acquisition.ts shipped the referrer was never asked for,
+// and calling that "direct" would manufacture a finding out of a blind spot.
+const acq = db
+  .query(
+    `SELECT COALESCE(ref_group, '(un-instrumented)') AS grp, COUNT(*) AS n
+     FROM session_fingerprints
+     WHERE is_candidate_real_external = 1
+     GROUP BY grp ORDER BY n DESC`,
+  )
+  .all() as Array<{ grp: string; n: number }>;
+const attributed = acq.filter((r) => r.grp !== "(un-instrumented)").reduce((s, r) => s + r.n, 0);
+for (const r of acq) console.log(`  ${r.grp}: ${r.n}`);
+if (attributed === 0) {
+  console.log(
+    "  -> NO attributed external sessions yet. Either none have arrived since\n" +
+      "     acquisition.ts shipped, or the live build still predates it.",
+  );
+} else {
+  const bySrc = db
+    .query(
+      `SELECT src, COALESCE(utm_campaign, '-') AS camp, COUNT(*) AS n,
+              MIN(at) AS first_at, MAX(at) AS last_at
+       FROM session_fingerprints
+       WHERE is_candidate_real_external = 1 AND src IS NOT NULL
+       GROUP BY src, camp ORDER BY n DESC LIMIT 25`,
+    )
+    .all() as Array<{ src: string; camp: string; n: number; first_at: string; last_at: string }>;
+  console.log("\n  by source / campaign:");
+  for (const r of bySrc) {
+    console.log(
+      `    ${r.src} [${r.camp}]: ${r.n}  (${r.first_at.slice(0, 16)} -> ${r.last_at.slice(0, 16)})`,
+    );
+  }
+}
+
 section("INTERNAL: funnel (Track P1)");
 // Every north-star gate is a "how long until" question, so the funnel reports
 // reach AND median elapsed ms. Split by traffic class deliberately: with

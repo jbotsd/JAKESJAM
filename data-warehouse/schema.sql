@@ -42,7 +42,18 @@ CREATE TABLE IF NOT EXISTS session_fingerprints (
   dpr REAL,
   is_jake_rtx4080 INTEGER DEFAULT 0,
   is_automation_signature INTEGER DEFAULT 0,
-  is_candidate_real_external INTEGER DEFAULT 0
+  is_candidate_real_external INTEGER DEFAULT 0,
+  -- Acquisition (client/src/acquisition.ts). NULL for every session booted
+  -- before that shipped, which is the honest value: those sessions were not
+  -- un-attributed, they were UN-INSTRUMENTED. Never coalesce these to
+  -- 'direct' in a report — that invents a fact the data never held, and
+  -- would make the pre-instrument era look like a wall of direct traffic.
+  src TEXT,
+  ref_group TEXT,
+  ref TEXT,
+  utm_medium TEXT,
+  utm_campaign TEXT,
+  landing TEXT
 );
 
 CREATE TABLE IF NOT EXISTS signups (

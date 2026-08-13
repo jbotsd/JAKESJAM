@@ -6,11 +6,16 @@
 //     persisted, never correlated across sessions
 //   - device facts limited to the tier-debugging set the game already
 //     derives (renderer string, tier, screen, DPR, touch/desktop)
+//   - acquisition facts limited to the referrer HOST (never its path or
+//     query) and our own utm_* tags — see acquisition.ts for why that
+//     reduction is what keeps the contract intact
 //   - offline/failed batches are DROPPED, not hoarded in storage
 //
 // Capture: window.onerror, unhandledrejection, WebGL context loss, plus
 // breadcrumbs pushed by the engine (connects, closes, governor steps,
 // scene changes). Errors ship with the last BREADCRUMB_MAX crumbs.
+
+import { readAcquisition } from "./acquisition";
 
 type CrumbKind = "net" | "perf" | "scene" | "error" | "boot" | "clip";
 
@@ -229,19 +234,28 @@ export function installTelemetry(deps: {
     if (document.visibilityState === "hidden") void flush(true);
   });
 
-  record({
-    kind: "boot",
-    sig: "boot",
-    message: "boot",
-    data: {
-      tier: deps.tier,
-      renderer: deps.rendererString.slice(0, 120),
-      touch: deps.touch,
-      w: window.screen.width,
-      h: window.screen.height,
-      dpr: window.devicePixelRatio,
-    },
-  });
+  // Acquisition rides the boot event rather than a second event: it is a
+  // fact about the session, and one event means it can never go missing
+  // for a visitor who bounced before the next flush.
+  const acq = readAcquisition(document.referrer, window.location.href);
+  const data: Record<string, string | number | boolean> = {
+    tier: deps.tier,
+    renderer: deps.rendererString.slice(0, 120),
+    touch: deps.touch,
+    w: window.screen.width,
+    h: window.screen.height,
+    dpr: window.devicePixelRatio,
+    src: acq.src,
+    refGroup: acq.refGroup,
+    landing: acq.landing,
+  };
+  // Only carry the optional fields when set — an empty utm_campaign on
+  // every untagged visit is noise in the store and in every query over it.
+  if (acq.ref) data.ref = acq.ref;
+  if (acq.utmMedium) data.utmMedium = acq.utmMedium;
+  if (acq.utmCampaign) data.utmCampaign = acq.utmCampaign;
+
+  record({ kind: "boot", sig: "boot", message: "boot", data });
 }
 
 /** Watch a canvas for WebGL context loss (Phaser hands us its canvas). */

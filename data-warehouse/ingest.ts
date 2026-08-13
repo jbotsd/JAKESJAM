@@ -13,7 +13,12 @@ import { isTestEmail } from "./testRows.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
-const DB_PATH = resolve(HERE, "jakesjam.db");
+// Overridable so the pipeline can be exercised end-to-end against a
+// throwaway DB + fixture telemetry. Without this the only way to check
+// that a boot field actually reaches its column is to eyeball the live
+// warehouse, where "NULL" and "the ingest is broken" look identical.
+const DB_PATH = process.env.JAKESJAM_WAREHOUSE_DB ?? resolve(HERE, "jakesjam.db");
+const TELEMETRY_DIR = process.env.JAKESJAM_TELEMETRY_DIR ?? resolve(ROOT, "server/.telemetry");
 
 const db = new Database(DB_PATH, { create: true });
 db.exec(readFileSync(resolve(HERE, "schema.sql"), "utf8"));
@@ -22,11 +27,27 @@ function log(msg: string): void {
   console.log(`[ingest] ${msg}`);
 }
 
+// schema.sql is all CREATE TABLE IF NOT EXISTS, so a column added to an
+// existing table there reaches a FRESH database and silently misses every
+// existing one — the ingest would keep running green while inserting into
+// columns that are not there. Additive columns need this to actually land.
+function addColumnIfMissing(table: string, column: string, decl: string): void {
+  const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
+  if (cols.length === 0) return; // table absent — schema.sql just created it
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+  log(`migrated: ${table}.${column} added`);
+}
+
+for (const col of ["src", "ref_group", "ref", "utm_medium", "utm_campaign", "landing"]) {
+  addColumnIfMissing("session_fingerprints", col, "TEXT");
+}
+
 // ---------------------------------------------------------------
 // Telemetry: server/.telemetry/events-*.jsonl
 // ---------------------------------------------------------------
 function ingestTelemetry(): number {
-  const dir = resolve(ROOT, "server/.telemetry");
+  const dir = TELEMETRY_DIR;
   if (!existsSync(dir)) return 0;
   const files = readdirSync(dir).filter((f) => f.startsWith("events-") && f.endsWith(".jsonl"));
   const insert = db.prepare(
@@ -76,9 +97,13 @@ function buildFingerprints(): number {
     .all();
   const insert = db.prepare(
     `INSERT OR REPLACE INTO session_fingerprints
-     (session, at, build, tier, renderer, touch, w, h, dpr, is_jake_rtx4080, is_automation_signature, is_candidate_real_external)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (session, at, build, tier, renderer, touch, w, h, dpr, is_jake_rtx4080, is_automation_signature, is_candidate_real_external,
+      src, ref_group, ref, utm_medium, utm_campaign, landing)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  /** Absent field -> NULL, never "" or "direct": un-instrumented is not
+   *  the same fact as un-referred, and only NULL says which one it was. */
+  const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
   let n = 0;
   for (const row of rows) {
     let data: Record<string, unknown>;
@@ -104,6 +129,12 @@ function buildFingerprints(): number {
       isRtx4080 ? 1 : 0,
       isAutomation ? 1 : 0,
       isCandidateReal ? 1 : 0,
+      str(data.src),
+      str(data.refGroup),
+      str(data.ref),
+      str(data.utmMedium),
+      str(data.utmCampaign),
+      str(data.landing),
     );
     n++;
   }
