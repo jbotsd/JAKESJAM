@@ -19,8 +19,24 @@
 // Neither is correlatable across sessions, so this changes nothing about
 // the "never persisted, never correlated" guarantee.
 
-/** Coarse bucket — the field that actually answers "is the campaign working". */
-export type RefGroup = "direct" | "social" | "search" | "self" | "other";
+/**
+ * Coarse bucket — the field that actually answers "is the campaign working".
+ *
+ * `apex` is separate from `self` on purpose. elyad.io is a DIFFERENT page
+ * from the game (an Elm landing page carrying no telemetry at all) and it
+ * links through to play.elyad.io/?world=1 without forwarding the query. So
+ * a visitor who clicks a shared apex link arrives at the game looking like
+ * ordinary internal navigation, with their real origin already gone.
+ * Folding that into `self` would report the most likely campaign path as
+ * "someone moving around inside the site" — the instrument lying quietly,
+ * which is the exact failure this file exists to prevent.
+ *
+ * Reading `apex` correctly: it is an UPPER BOUND on apex-referred arrivals
+ * and says nothing about where they were before that hop. Until the apex
+ * page forwards utm_* through to the game, that earlier step is
+ * unrecoverable — no query here can reconstruct it.
+ */
+export type RefGroup = "direct" | "social" | "search" | "self" | "apex" | "other";
 
 export type Acquisition = {
   /** Referrer host, e.g. "t.co", "l.facebook.com". "" when there is none. */
@@ -82,8 +98,11 @@ const SEARCH_HOSTS = [
 /** Google has ~190 ccTLDs; enumerating them would guarantee misses. */
 const GOOGLE_HOST = /^google\.(com?|[a-z]{2})(\.[a-z]{2})?$/;
 
-/** Our own properties — a self-referral is navigation, not acquisition. */
-const SELF_HOSTS = ["elyad.io", "localhost", "127.0.0.1"];
+/** The game itself — a referral from here is genuine internal navigation. */
+const SELF_HOSTS = ["play.elyad.io", "localhost", "127.0.0.1"];
+
+/** The Elm landing page that funnels into the game. See RefGroup above. */
+const APEX_HOSTS = ["elyad.io"];
 
 function hostMatches(host: string, domain: string): boolean {
   return host === domain || host.endsWith(`.${domain}`);
@@ -92,7 +111,10 @@ function hostMatches(host: string, domain: string): boolean {
 /** Bucket a referrer host. An empty host means no referrer was sent. */
 export function classifyRef(host: string): RefGroup {
   if (host === "") return "direct";
+  // SELF before APEX: play.elyad.io is a dot-suffix of elyad.io, so the
+  // narrower match has to win or every in-game navigation reads as apex.
   if (SELF_HOSTS.some((d) => hostMatches(host, d))) return "self";
+  if (APEX_HOSTS.some((d) => hostMatches(host, d))) return "apex";
   if (SOCIAL_HOSTS.some((d) => hostMatches(host, d))) return "social";
   if (GOOGLE_HOST.test(host)) return "search";
   if (SEARCH_HOSTS.some((d) => hostMatches(host, d))) return "search";

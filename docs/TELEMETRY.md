@@ -106,3 +106,16 @@ spot.
 **This only measures builds that carry it.** A deployed host running an
 older bundle keeps producing un-instrumented sessions no matter what the
 warehouse schema says.
+
+### Known gap: the apex hop loses the origin
+
+`elyad.io` is a separate Elm landing page that carries **no telemetry** and
+links into the game as `play.elyad.io/?world=1` — dropping the query. A
+visitor who clicks a shared apex link therefore reaches the game with
+`refGroup: apex` and their real origin already gone.
+
+`apex` is reported as its own bucket rather than folded into `self` so this
+is visible instead of silently reading as internal navigation. But the fix
+is on the apex side: forward `utm_*` through to the play link. Until that
+happens, post links **straight to `play.elyad.io`** if you want them
+attributed.

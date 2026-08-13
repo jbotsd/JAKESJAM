@@ -35,10 +35,24 @@ describe("classifyRef — the bucket the campaign question is answered in", () =
     expect(classifyRef("")).toBe("direct");
   });
 
-  test("our own hosts are self, so navigation is not counted as acquisition", () => {
-    expect(classifyRef("elyad.io")).toBe("self");
+  test("the game's own host is self — navigation is not acquisition", () => {
     expect(classifyRef("play.elyad.io")).toBe("self");
     expect(classifyRef("localhost")).toBe("self");
+    expect(classifyRef("127.0.0.1")).toBe("self");
+  });
+
+  test("the apex landing page is 'apex', NOT 'self'", () => {
+    // elyad.io is a separate Elm page with no telemetry that links into
+    // the game. Counting its referrals as internal navigation would hide
+    // the most likely path a shared link actually takes.
+    expect(classifyRef("elyad.io")).toBe("apex");
+  });
+
+  test("ORDERING: play.elyad.io is a dot-suffix of elyad.io and must stay self", () => {
+    // If the apex check ran first, every in-game navigation would be
+    // reported as an apex referral — inventing a funnel that isn't there.
+    expect(classifyRef("play.elyad.io")).toBe("self");
+    expect(classifyRef("play.elyad.io")).not.toBe("apex");
   });
 
   test("the social hosts a grassroots campaign actually uses", () => {
@@ -75,9 +89,11 @@ describe("classifyRef — the bucket the campaign question is answered in", () =
     // Vacuity guard. If a refactor collapsed the return to a constant,
     // every agreement test above would still pass.
     const seen = new Set(
-      ["", "elyad.io", "reddit.com", "google.com", "someblog.example"].map(classifyRef),
+      ["", "play.elyad.io", "elyad.io", "reddit.com", "google.com", "someblog.example"].map(
+        classifyRef,
+      ),
     );
-    expect(seen.size).toBe(5);
+    expect(seen.size).toBe(6);
   });
 });
 
